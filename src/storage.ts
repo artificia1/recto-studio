@@ -1,0 +1,2 @@
+// Papercut Studio Storage / Persistence Bridge
+export * from './state/persistence';
