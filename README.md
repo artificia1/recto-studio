@@ -6,10 +6,13 @@
 [![Tests](https://img.shields.io/badge/Tests-100%25%20Passing-brightgreen.svg)](#development)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict-blue.svg)](#architecture)
 [![Telemetry](https://img.shields.io/badge/Telemetry-0%20KB-red.svg)](#philosophy)
+[![Live Studio](https://img.shields.io/badge/%E2%96%B6%20Live%20Studio-Try%20in%20Browser-0d99ff.svg)](https://artificia1.github.io/papercut-studio/)
 
 > **"Why should the craft of arranging thought upon paper require rent paid to a landlord in San Jose?"**
 
 Papercut Studio is a high-performance, open-source desktop publishing suite built from the ground up for independent book designers, editorial typographers, zine publishers, and printmakers. Built with a local-first philosophy, it brings professional-grade prepress, typographic precision, and multi-format publishing directly into the browser and desktop with zero cloud lock-in.
+
+[**▶ Launch Papercut Studio in your browser (No account, no sign-up)**](https://artificia1.github.io/papercut-studio/)
 
 ---
 

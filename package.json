@@ -2,6 +2,25 @@
   "name": "papercut-studio",
   "private": true,
   "version": "0.1.0",
+  "description": "The open-source, web-first desktop publishing alternative to Adobe InDesign. Zero subscriptions, zero cloud telemetry, locked 60 FPS canvas, with InDesign shortcuts, IDML import, and print-ready PDF/X export.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/artificia1/papercut-studio.git"
+  },
+  "homepage": "https://artificia1.github.io/papercut-studio/",
+  "keywords": [
+    "desktop-publishing",
+    "indesign-alternative",
+    "dtp",
+    "typography",
+    "pdf-export",
+    "prepress",
+    "open-source",
+    "local-first",
+    "editorial-design",
+    "zine"
+  ],
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",
