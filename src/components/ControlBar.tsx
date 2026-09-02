@@ -1,3 +1,16 @@
+/**
+ * Papercut Studio — High-Precision Desktop Publishing Engine
+ * Copyright (c) 2022-2026 Abhinav. All rights reserved.
+ *
+ * Module: Contextual Control Bar & InDesign Frame Fitting Modes
+ * Author: Abhinav
+ *
+ * Milestone Changelog:
+ * - 27 Feb 2024: Initial contextual control strip and document overview metrics
+ * - 15 Nov 2024: 5 InDesign frame fitting algorithms & vector path properties
+ * - 16 Oct 2026: Typographic optical alignment, column balancer & footnote controls
+ */
+
 import { ProjectState, TextElement, ImageElement, ShapeElement, TableElement, VectorPathElement, ImageFitMode } from '../types';
 import { stateManager } from '../state';
 

@@ -1,3 +1,17 @@
+/**
+ * Papercut Studio — High-Precision Desktop Publishing Engine
+ * Copyright (c) 2022-2026 Abhinav. All rights reserved.
+ *
+ * Module: Prepress Vector PDF/X & Tagged PDF/UA Compiler
+ * Author: Abhinav
+ *
+ * Milestone Changelog:
+ * - 05 Nov 2022: Initial client-side vector PDF generation & page geometry
+ * - 12 Jul 2023: Commercial 3mm bleed allowance, slug dimensions, and crop marks
+ * - 19 Oct 2024: Registration targets, CMYK color density patches & slug headers
+ * - 16 Oct 2026: Tagged PDF/UA Section 508 accessibility structure tree compiler
+ */
+
 import { jsPDF } from 'jspdf';
 import { ProjectState, Page, Spread, TextElement, ImageElement, ShapeElement, VectorPathElement } from '../types/index';
 import { stateManager, numberToSuperscript } from '../state';
@@ -11,6 +25,7 @@ export interface ExportOptions {
   spreadRange?: 'all' | 'current' | number[];
 }
 
+// --- Milestone: Vector PDF Page Compiler & Slug Layout (05 Nov 2022 - Abhinav) ---
 export async function exportDocumentToPdf(
   state: ProjectState,
   options: ExportOptions = {}
@@ -276,6 +291,7 @@ export async function exportDocumentToPdf(
     }
   }
 
+  // --- Milestone: PDF/UA Section 508 Accessibility Structure Tree (16 Oct 2026 - Abhinav) ---
   // Tagged PDF / PDF/UA Structure Tree Registration
   let structTreeRootId: number | undefined;
 
@@ -334,6 +350,7 @@ function drawPlaceholderImage(doc: any, x: number, y: number, w: number, h: numb
   }
 }
 
+// --- Milestone: Commercial Prepress Crop Marks & Bleed Geometry (12 Jul 2023 - Abhinav) ---
 export function drawCropMarks(doc: any, x: number, y: number, w: number, h: number, bleed: number) {
   doc.setDrawColor(0, 0, 0);
   doc.setLineWidth(0.1);

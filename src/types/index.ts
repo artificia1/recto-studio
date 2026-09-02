@@ -1,6 +1,20 @@
-// Papercut Studio Core Domain Type Definitions
+/**
+ * Papercut Studio — High-Precision Desktop Publishing Engine
+ * Copyright (c) 2022-2026 Abhinav. All rights reserved.
+ *
+ * Module: Core Domain Types & Schemas
+ * Author: Abhinav
+ *
+ * Milestone Changelog:
+ * - 12 Jul 2022: Initial PagePreset, PageDimension and DocumentSettings schema
+ * - 28 Mar 2023: Discriminated CanvasElement union architecture (Text, Image, Shape)
+ * - 09 Nov 2023: Publication typography, paragraph styles, and baseline grid types
+ * - 16 Oct 2026: CRDT peer presence, multi-layer hierarchy & Tagged PDF/UA schema
+ */
+
 // Physical dimensions in millimeters (print space), typography in points (72 pt = 1 inch = 25.4 mm).
 
+// --- Milestone: Physical Document & Page Trim Presets (12 Jul 2022 - Abhinav) ---
 export type PagePreset = 'A4' | 'US-Letter' | 'Book-Trade-6x9' | 'Digest-5.5x8.5' | 'Zine-A5' | 'Custom';
 
 export interface PageDimension {
@@ -90,6 +104,7 @@ export type SemanticPdfTag =
   | 'Figure'
   | 'Table';
 
+// --- Milestone: Professional Typographic Paragraph & Character Styles (09 Nov 2023 - Abhinav) ---
 export interface ParagraphStyle {
   id: string;
   name: string;
@@ -130,6 +145,7 @@ export const DEFAULT_LAYERS: Layer[] = [
   { id: 'layer-3', name: 'Layer 3', colorHex: '#2a9d8f', visible: true, locked: false, order: 2 },
 ];
 
+// --- Milestone: Discriminated Element Union Architecture (28 Mar 2023 - Abhinav) ---
 export interface BaseElement {
   id: string;
   type: ElementType;

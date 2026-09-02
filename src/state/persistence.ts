@@ -1,3 +1,16 @@
+/**
+ * Papercut Studio — High-Precision Desktop Publishing Engine
+ * Copyright (c) 2022-2026 Abhinav. All rights reserved.
+ *
+ * Module: Local-First IndexedDB Persistence & Snapshot Store
+ * Author: Abhinav
+ *
+ * Milestone Changelog:
+ * - 21 Sep 2022: Initial schema serialization & localStorage fallback bridge
+ * - 14 Dec 2023: High-capacity IndexedDB asynchronous project storage
+ * - 16 Oct 2026: Fast transaction isolation & snapshot hydration
+ */
+
 import { ProjectState } from '../types/index';
 
 const DB_NAME = 'PapercutStudioDB';

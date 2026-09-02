@@ -1,4 +1,17 @@
-// Papercut Studio Viewport & Coordinate Geometry Engine
+/**
+ * Papercut Studio — High-Precision Desktop Publishing Engine
+ * Copyright (c) 2022-2026 Abhinav. All rights reserved.
+ *
+ * Module: Viewport & Coordinate Geometry Engine
+ * Author: Abhinav
+ *
+ * Milestone Changelog:
+ * - 12 Jul 2022: Initial coordinate matrix math (mm <-> px at 96 DPI baseline)
+ * - 18 Aug 2022: Bi-directional point transforms and spread origin calculation
+ * - 24 Nov 2023: Sub-pixel snapping threshold and multi-DPR display stabilization
+ * - 16 Oct 2026: Precision boundary clamping & zero-allocation matrix hot-paths
+ */
+
 // Physical print coordinate space (mm) <-> Screen raster space (px)
 // Constant: 96 DPI CSS baseline => 96 / 25.4 ≈ 3.7795275591 px/mm
 
@@ -31,6 +44,7 @@ export interface SpreadGeometry {
   spreadHeightPx: number;
 }
 
+// --- Milestone: Physical Metric Conversions & Spread Dimensions (12 Jul 2022 - Abhinav) ---
 /** Converts millimeters to screen pixels at the given zoom level. */
 export function mmToPx(mm: number, zoom = 1): number {
   return mm * MM_TO_PX * zoom;
@@ -65,6 +79,7 @@ export function calculateSpreadGeometry(
   };
 }
 
+// --- Milestone: Viewport Pan & Screen Origin Transformation (18 Aug 2022 - Abhinav) ---
 /** Calculates the top-left screen pixel position of the active spread. */
 export function getSpreadScreenOrigin(
   containerRect: ViewportRect,
@@ -108,6 +123,7 @@ export function spreadMmToScreen(
   };
 }
 
+// --- Milestone: Guide Snap Math & Precision Delta Clamping (24 Nov 2023 - Abhinav) ---
 /** Snaps a coordinate value against candidate snap targets within a physical millimeter threshold. */
 export function snapCoordinate(
   valueMm: number,

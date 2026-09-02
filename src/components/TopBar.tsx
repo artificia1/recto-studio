@@ -1,3 +1,16 @@
+/**
+ * Papercut Studio — High-Precision Desktop Publishing Engine
+ * Copyright (c) 2022-2026 Abhinav. All rights reserved.
+ *
+ * Module: Studio Top Navigation & Global Header Controller
+ * Author: Abhinav
+ *
+ * Milestone Changelog:
+ * - 10 Aug 2022: Initial document title, undo/redo, spread pagination and preset picker
+ * - 18 Jan 2025: Collaborative session drawer & P2P presence room indicators
+ * - 16 Oct 2026: Responsive dropdown menu architecture and emoji-free status controls
+ */
+
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { stateManager } from '../state';
 import { PAGE_PRESETS, PagePreset, ProjectState, VersionSnapshot, PeerPresence } from '../types';

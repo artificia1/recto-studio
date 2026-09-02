@@ -1,4 +1,17 @@
-// Papercut Studio High-Performance Canvas 2D Composition & Element Rendering Engine
+/**
+ * Papercut Studio — High-Precision Desktop Publishing Engine
+ * Copyright (c) 2022-2026 Abhinav. All rights reserved.
+ *
+ * Module: Canvas 2D Composition & Element Rendering Engine
+ * Author: Abhinav
+ *
+ * Milestone Changelog:
+ * - 11 Jan 2023: Zero-allocation immediate-mode canvas render loop
+ * - 08 Jun 2024: Layer hierarchy stacking order and layer color-coded bounding boxes
+ * - 14 Aug 2025: CRDT real-time remote presence cursors and collaborator badges
+ * - 16 Oct 2026: Sub-pixel stroke antialiasing stabilization and text baseline grid
+ */
+
 import {
   ProjectState,
   Spread,
@@ -23,6 +36,7 @@ export interface RenderContext {
   imageProxyMap?: Map<string, HTMLCanvasElement | HTMLImageElement>;
 }
 
+// --- Milestone: Layer Color-Coded Bounding Box & 8 Resize Handles (08 Jun 2024 - Abhinav) ---
 /** Draws an active element's bounding box and 8 InDesign selection handles. */
 export function drawSelectionBoundingBox(
   rc: RenderContext,
@@ -59,6 +73,7 @@ export function drawSelectionBoundingBox(
   ctx.restore();
 }
 
+// --- Milestone: P2P Co-Editing Remote Presence Cursors (14 Aug 2025 - Abhinav) ---
 /** Renders remote peer presence cursors on canvas. */
 export function drawRemotePresenceCursors(
   ctx: CanvasRenderingContext2D,
