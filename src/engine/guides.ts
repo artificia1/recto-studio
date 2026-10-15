@@ -1,15 +1,7 @@
 /**
  * Papercut Studio — High-Precision Desktop Publishing Engine
  * Copyright (c) 2022-2026 Abhinav. All rights reserved.
- *
- * Module: Print Guides, Baseline Grids & Metric Rulers Engine
- * Author: Abhinav
- *
- * Milestone Changelog:
- * - 19 Oct 2022: Initial bleed perimeter and magenta margin guide rendering
- * - 15 Feb 2024: Dynamic multi-column gutters and spine fold visualization
- * - 09 Jun 2025: Typographic baseline grid calculation and sub-pixel alignment
- * - 16 Oct 2026: Millimeter ruler ticks & dynamic cursor tracking projections
+ * Licensed under the MIT License.
  */
 
 // InDesign-standard magenta margins (#d82676), cyan column gutters (#00c8d7), and bleed perimeter (#e63946)
@@ -32,7 +24,6 @@ export const DEFAULT_GUIDE_COLORS: GuideColors = {
   baseline: 'rgba(70, 130, 255, 0.15)', // Baseline grid pitch
 };
 
-// --- Milestone: Commercial Bleed Boundary Allowance (19 Oct 2022 - Abhinav) ---
 /** Renders the commercial print bleed box surrounding the spread. */
 export function drawBleedPerimeter(
   ctx: CanvasRenderingContext2D,
@@ -62,7 +53,6 @@ export function drawBleedPerimeter(
   ctx.restore();
 }
 
-// --- Milestone: Margin Box Orientation & Column Gutters (15 Feb 2024 - Abhinav) ---
 /** Renders facing-page margin boundaries, column grid guides, and spine fold. */
 export function drawSpreadGuides(
   ctx: CanvasRenderingContext2D,
@@ -134,7 +124,6 @@ export function drawSpreadGuides(
   ctx.restore();
 }
 
-// --- Milestone: Typographic Baseline Grid Pitch Alignment (09 Jun 2025 - Abhinav) ---
 /** Renders the typographic baseline grid across page areas. */
 export function drawBaselineGrid(
   ctx: CanvasRenderingContext2D,

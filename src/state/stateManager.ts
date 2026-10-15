@@ -1,15 +1,7 @@
 /**
  * Papercut Studio — High-Precision Desktop Publishing Engine
  * Copyright (c) 2022-2026 Abhinav. All rights reserved.
- *
- * Module: Central Reactive State Manager & Document Store
- * Author: Abhinav
- *
- * Milestone Changelog:
- * - 15 Aug 2022: Initial state store, 30-step undo/redo stack & autosave
- * - 10 May 2023: Multi-selection transformations & spatial alignment operators
- * - 19 Sep 2024: Automated copyfit optimizer & column balance engine
- * - 16 Oct 2026: Git snapshot checkpoints & collaborative state hydration
+ * Licensed under the MIT License.
  */
 
 import {
