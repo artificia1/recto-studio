@@ -244,6 +244,9 @@ export class SpreadCanvas {
   // Text layout memoization
   private textLayoutCache: Map<string, any> = new Map();
 
+  // Active in-place canvas overlay editor (WordPad/Figma style)
+  private activeInlineEditor: { elementId: string; el: HTMLElement } | null = null;
+
   constructor(
     container: HTMLElement,
     canvas: HTMLCanvasElement,
@@ -439,6 +442,9 @@ export class SpreadCanvas {
   }
 
   private handleMouseDown(e: MouseEvent) {
+    if (this.activeInlineEditor) {
+      this.closeInlineTextEditor(true);
+    }
     const state = stateManager.getState();
     const rect = this.canvas.getBoundingClientRect();
     const screenX = e.clientX - rect.left;
@@ -1037,6 +1043,9 @@ export class SpreadCanvas {
 
   private handleWheel(e: WheelEvent) {
     e.preventDefault();
+    if (this.activeInlineEditor) {
+      this.closeInlineTextEditor(true);
+    }
     const state = stateManager.getState();
     if (e.ctrlKey || e.metaKey) {
       const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
@@ -1046,19 +1055,322 @@ export class SpreadCanvas {
     }
   }
 
-  private handleDoubleClick() {
+  public openInlineTextEditor(elementId: string): void {
+    const spread = stateManager.getActiveSpread();
+    const el = spread.elements.find((item) => item.id === elementId);
+    if (!el || el.type !== 'text') return;
+    const textEl = el as TextElement;
+
+    this.closeInlineTextEditor(true);
+
+    const pageIdx = spread.pages.findIndex((p) => p.id === textEl.pageId);
+    if (pageIdx === -1) return;
+
+    const state = stateManager.getState();
+    const origin = this.getSpreadScreenOrigin(state);
+    const pxPerMm = MM_TO_PX * state.zoom;
+    const pageWidthMm = state.settings.widthMm;
+    const pageStartMm = pageIdx * pageWidthMm;
+
+    const elScreenX = origin.x + ((pageStartMm + textEl.x) * pxPerMm);
+    const elScreenY = origin.y + (textEl.y * pxPerMm);
+    const elScreenW = textEl.width * pxPerMm;
+    const elScreenH = textEl.height * pxPerMm;
+    const paddingPx = (textEl.paddingMm || 2) * pxPerMm;
+    const fontSizePx = Math.max(9, (textEl.fontSizePt * (96 / 72)) * state.zoom);
+
+    const textarea = document.createElement('textarea');
+    textarea.className = 'canvas-inline-editor';
+    textarea.value = textEl.text || '';
+    textarea.placeholder = 'Type text here...';
+    textarea.spellcheck = false;
+
+    const bg =
+      textEl.backgroundColor && textEl.backgroundColor !== 'transparent'
+        ? textEl.backgroundColor
+        : '#ffffff';
+    const textColor = textEl.color || '#111111';
+
+    textarea.style.position = 'absolute';
+    textarea.style.left = `${Math.round(elScreenX)}px`;
+    textarea.style.top = `${Math.round(elScreenY)}px`;
+    textarea.style.width = `${Math.max(80, Math.round(elScreenW))}px`;
+    textarea.style.height = `${Math.max(40, Math.round(elScreenH))}px`;
+    textarea.style.fontSize = `${fontSizePx}px`;
+    textarea.style.fontFamily = textEl.fontFamily || 'Inter, system-ui, sans-serif';
+    textarea.style.lineHeight = String(textEl.lineHeight || 1.3);
+    textarea.style.letterSpacing = textEl.letterSpacingPt ? `${textEl.letterSpacingPt * state.zoom}px` : 'normal';
+    textarea.style.textAlign = textEl.alignment || 'left';
+    textarea.style.color = textColor;
+    textarea.style.backgroundColor = bg;
+    textarea.style.padding = `${Math.max(4, paddingPx)}px`;
+    textarea.style.boxSizing = 'border-box';
+    textarea.style.border = '2px solid #00b4d8';
+    textarea.style.boxShadow = '0 0 16px rgba(0, 180, 216, 0.55), inset 0 0 4px rgba(0, 0, 0, 0.05)';
+    textarea.style.borderRadius = '3px';
+    textarea.style.outline = 'none';
+    textarea.style.resize = 'both';
+    textarea.style.overflow = 'auto';
+    textarea.style.zIndex = '1000';
+    textarea.style.transformOrigin = 'top left';
+    if (textEl.rotation) {
+      textarea.style.transform = `rotate(${textEl.rotation}deg)`;
+    }
+
+    let isClosed = false;
+    const finish = (commit: boolean) => {
+      if (isClosed) return;
+      isClosed = true;
+      const updatedText = textarea.value;
+      textarea.remove();
+      this.activeInlineEditor = null;
+      if (commit && updatedText !== textEl.text) {
+        stateManager.updateElement(textEl.id, { text: updatedText });
+      }
+      this.render();
+    };
+
+    textarea.addEventListener('keydown', (ke: KeyboardEvent) => {
+      ke.stopPropagation();
+      if (ke.key === 'Escape') {
+        ke.preventDefault();
+        finish(false);
+      } else if ((ke.ctrlKey || ke.metaKey) && ke.key === 'Enter') {
+        ke.preventDefault();
+        finish(true);
+      }
+    });
+
+    textarea.addEventListener('blur', () => {
+      finish(true);
+    });
+
+    const parent = this.canvas.parentElement || this.container;
+    parent.appendChild(textarea);
+
+    this.activeInlineEditor = {
+      elementId: textEl.id,
+      el: textarea,
+    };
+
+    textarea.focus();
+    textarea.select();
+    this.render();
+  }
+
+  public closeInlineTextEditor(commit: boolean = true): void {
+    if (!this.activeInlineEditor) return;
+    const { elementId, el } = this.activeInlineEditor;
+    this.activeInlineEditor = null;
+    const text = (el as HTMLTextAreaElement | HTMLInputElement).value;
+    el.remove();
+    if (commit) {
+      const spread = stateManager.getActiveSpread();
+      const currentEl = spread.elements.find((item) => item.id === elementId);
+      if (currentEl && currentEl.type === 'text' && (currentEl as TextElement).text !== text) {
+        stateManager.updateElement(elementId, { text });
+      }
+    }
+    this.render();
+  }
+
+  public openInlineTableCellEditor(tableId: string, e?: MouseEvent): void {
+    const spread = stateManager.getActiveSpread();
+    const el = spread.elements.find((item) => item.id === tableId);
+    if (!el || el.type !== 'table') return;
+    const table = el as TableElement;
+    const rows = Math.max(1, table.rows || 1);
+    const cols = Math.max(1, table.cols || 1);
+
+    const pageIdx = spread.pages.findIndex((p) => p.id === table.pageId);
+    if (pageIdx === -1) return;
+
+    const state = stateManager.getState();
+    const origin = this.getSpreadScreenOrigin(state);
+    const pxPerMm = MM_TO_PX * state.zoom;
+    const pageWidthMm = state.settings.widthMm;
+    const pageStartMm = pageIdx * pageWidthMm;
+
+    const elScreenX = origin.x + ((pageStartMm + table.x) * pxPerMm);
+    const elScreenY = origin.y + (table.y * pxPerMm);
+    const elScreenW = table.width * pxPerMm;
+    const elScreenH = table.height * pxPerMm;
+
+    let targetR = 0;
+    let targetC = 0;
+
+    if (e) {
+      const rect = this.canvas.getBoundingClientRect();
+      const clickX = e.clientX - rect.left - elScreenX;
+      const clickY = e.clientY - rect.top - elScreenY;
+      const cellW = elScreenW / cols;
+      const cellH = elScreenH / rows;
+      targetC = Math.max(0, Math.min(cols - 1, Math.floor(clickX / cellW)));
+      targetR = Math.max(0, Math.min(rows - 1, Math.floor(clickY / cellH)));
+    }
+
+    const cellW = elScreenW / cols;
+    const cellH = elScreenH / rows;
+    const cellScreenX = elScreenX + targetC * cellW;
+    const cellScreenY = elScreenY + targetR * cellH;
+
+    const currentText = table.cells?.[targetR]?.[targetC]?.text || '';
+
+    this.closeInlineTextEditor(true);
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'canvas-inline-cell-editor';
+    input.value = currentText;
+
+    input.style.position = 'absolute';
+    input.style.left = `${Math.round(cellScreenX)}px`;
+    input.style.top = `${Math.round(cellScreenY)}px`;
+    input.style.width = `${Math.max(40, Math.round(cellW))}px`;
+    input.style.height = `${Math.max(20, Math.round(cellH))}px`;
+    input.style.fontSize = `${Math.max(9, (table.fontSizePt || 10) * (96 / 72) * state.zoom)}px`;
+    input.style.fontFamily = table.fontFamily || 'Inter, sans-serif';
+    input.style.boxSizing = 'border-box';
+    input.style.border = '2px solid #00b4d8';
+    input.style.boxShadow = '0 0 10px rgba(0, 180, 216, 0.5)';
+    input.style.background = '#ffffff';
+    input.style.color = '#111111';
+    input.style.padding = '2px 4px';
+    input.style.zIndex = '1000';
+    input.style.outline = 'none';
+
+    let finished = false;
+    const commit = () => {
+      if (finished) return;
+      finished = true;
+      const val = input.value;
+      input.remove();
+      stateManager.updateTableCell(table.id, targetR, targetC, val);
+      this.render();
+    };
+
+    input.addEventListener('keydown', (ke: KeyboardEvent) => {
+      ke.stopPropagation();
+      if (ke.key === 'Enter') {
+        ke.preventDefault();
+        commit();
+      } else if (ke.key === 'Escape') {
+        ke.preventDefault();
+        finished = true;
+        input.remove();
+      }
+    });
+
+    input.addEventListener('blur', () => {
+      commit();
+    });
+
+    const parent = this.canvas.parentElement || this.container;
+    parent.appendChild(input);
+    input.focus();
+    input.select();
+  }
+
+  public openInlineTextOnPathEditor(pathId: string): void {
+    const spread = stateManager.getActiveSpread();
+    const el = spread.elements.find((item) => item.id === pathId);
+    if (!el || el.type !== 'path') return;
+    const pathEl = el as VectorPathElement;
+    const currentText = pathEl.textOnPath?.text || '';
+
+    const pageIdx = spread.pages.findIndex((p) => p.id === pathEl.pageId);
+    if (pageIdx === -1) return;
+
+    const state = stateManager.getState();
+    const origin = this.getSpreadScreenOrigin(state);
+    const pxPerMm = MM_TO_PX * state.zoom;
+    const pageWidthMm = state.settings.widthMm;
+    const pageStartMm = pageIdx * pageWidthMm;
+
+    const startNode = pathEl.nodes[0] || { x: pathEl.x, y: pathEl.y };
+    const elScreenX = origin.x + ((pageStartMm + startNode.x) * pxPerMm);
+    const elScreenY = origin.y + (startNode.y * pxPerMm);
+
+    this.closeInlineTextEditor(true);
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'canvas-inline-cell-editor';
+    input.value = currentText;
+    input.placeholder = 'Text on path...';
+
+    input.style.position = 'absolute';
+    input.style.left = `${Math.round(elScreenX)}px`;
+    input.style.top = `${Math.round(elScreenY - 30)}px`;
+    input.style.width = '180px';
+    input.style.height = '28px';
+    input.style.fontSize = '12px';
+    input.style.fontFamily = 'Inter, sans-serif';
+    input.style.boxSizing = 'border-box';
+    input.style.border = '2px solid #00b4d8';
+    input.style.boxShadow = '0 0 10px rgba(0, 180, 216, 0.5)';
+    input.style.background = '#ffffff';
+    input.style.color = '#111111';
+    input.style.padding = '4px 8px';
+    input.style.borderRadius = '4px';
+    input.style.zIndex = '1000';
+    input.style.outline = 'none';
+
+    let finished = false;
+    const commit = () => {
+      if (finished) return;
+      finished = true;
+      const val = input.value.trim();
+      input.remove();
+      if (val) {
+        stateManager.updateElement(pathEl.id, {
+          textOnPath: {
+            text: val,
+            fontSizePt: pathEl.textOnPath?.fontSizePt || 14,
+            fontFamily: pathEl.textOnPath?.fontFamily || 'Inter, sans-serif',
+            color: pathEl.textOnPath?.color || '#111111',
+            align: pathEl.textOnPath?.align || 'left',
+            startOffsetMm: pathEl.textOnPath?.startOffsetMm || 0,
+          },
+        });
+      } else {
+        stateManager.updateElement(pathEl.id, { textOnPath: undefined });
+      }
+      this.render();
+    };
+
+    input.addEventListener('keydown', (ke: KeyboardEvent) => {
+      ke.stopPropagation();
+      if (ke.key === 'Enter') {
+        ke.preventDefault();
+        commit();
+      } else if (ke.key === 'Escape') {
+        ke.preventDefault();
+        finished = true;
+        input.remove();
+      }
+    });
+
+    input.addEventListener('blur', () => {
+      commit();
+    });
+
+    const parent = this.canvas.parentElement || this.container;
+    parent.appendChild(input);
+    input.focus();
+    input.select();
+  }
+
+  private handleDoubleClick(e?: MouseEvent) {
     const state = stateManager.getState();
     if (!state.selectedElementId) return;
 
     const spread = stateManager.getActiveSpread();
-    const el = spread.elements.find(item => item.id === state.selectedElementId);
+    const el = spread.elements.find((item) => item.id === state.selectedElementId);
     if (!el) return;
 
     if (el.type === 'text') {
-      const newText = prompt('Edit Text Content (use Enter for new paragraphs):', (el as TextElement).text);
-      if (newText !== null) {
-        stateManager.updateElement(el.id, { text: newText });
-      }
+      this.openInlineTextEditor(el.id);
     } else if (el.type === 'image') {
       const input = document.createElement('input');
       input.type = 'file';
@@ -1076,43 +1388,9 @@ export class SpreadCanvas {
       };
       input.click();
     } else if (el.type === 'table') {
-      const table = el as TableElement;
-      const cellCoords = prompt(
-        `Edit Table Cell (format: row,col:text e.g. "1,1:Title"):`,
-        `1,1:${table.cells[0]?.[0]?.text || ''}`
-      );
-      if (cellCoords) {
-        const colonIdx = cellCoords.indexOf(':');
-        if (colonIdx !== -1) {
-          const [rStr, cStr] = cellCoords.slice(0, colonIdx).split(',');
-          const newText = cellCoords.slice(colonIdx + 1);
-          const r = parseInt(rStr.trim()) - 1;
-          const c = parseInt(cStr.trim()) - 1;
-          if (!isNaN(r) && !isNaN(c) && r >= 0 && r < table.rows && c >= 0 && c < table.cols) {
-            stateManager.updateTableCell(table.id, r, c, newText);
-          }
-        }
-      }
+      this.openInlineTableCellEditor(el.id, e);
     } else if (el.type === 'path') {
-      const pathEl = el as VectorPathElement;
-      const currentText = pathEl.textOnPath?.text || '';
-      const newText = prompt('Edit Text-on-a-Path (leave blank to remove):', currentText);
-      if (newText !== null) {
-        if (newText.trim()) {
-          stateManager.updateElement(el.id, {
-            textOnPath: {
-              text: newText.trim(),
-              fontSizePt: pathEl.textOnPath?.fontSizePt || 14,
-              fontFamily: pathEl.textOnPath?.fontFamily || 'Inter, sans-serif',
-              color: pathEl.textOnPath?.color || '#111111',
-              align: pathEl.textOnPath?.align || 'left',
-              startOffsetMm: pathEl.textOnPath?.startOffsetMm || 0,
-            },
-          });
-        } else {
-          stateManager.updateElement(el.id, { textOnPath: undefined });
-        }
-      }
+      this.openInlineTextOnPathEditor(el.id);
     }
   }
 
@@ -1950,6 +2228,10 @@ export class SpreadCanvas {
         }
       } else if (el.type === 'text') {
         const text = el as TextElement;
+        if (this.activeInlineEditor && this.activeInlineEditor.elementId === el.id) {
+          ctx.restore();
+          continue;
+        }
         if (text.backgroundColor && text.backgroundColor !== 'transparent') {
           ctx.fillStyle = text.backgroundColor;
           ctx.fillRect(elScreenX, elScreenY, elScreenW, elScreenH);

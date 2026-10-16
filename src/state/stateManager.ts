@@ -2133,18 +2133,76 @@ export class StateManager {
     }
 
     if (issue.code === 'OVERSET_TEXT' && el.type === 'text') {
-      this.copyfitTextFrame(el.id);
+      const textEl = el as TextElement;
+      try {
+        this.copyfitTextFrame(textEl.id);
+      } catch {
+        // Continue to robust auto-expansion
+      }
+
+      const textContent = textEl.text || '';
+      const padding = textEl.paddingMm ?? 2;
+      const cols = Math.max(1, textEl.columns || 1);
+      const gutter = textEl.columnGutterMm ?? 4;
+      const fontPt = textEl.fontSizePt || 10;
+      const lineH = textEl.lineHeight || 1.3;
+      const lineSpacingMm = (fontPt * lineH * 25.4) / 72;
+      const availW = Math.max(10, (textEl.width - (padding * 2) - ((cols - 1) * gutter)) / cols);
+      const avgCharWidthMm = (fontPt * 0.45 * 25.4) / 72;
+      const charsPerLine = Math.max(10, Math.floor(availW / avgCharWidthMm));
+
+      const explicitLines = textContent.split('\n');
+      let approxRenderedLines = 0;
+      for (const line of explicitLines) {
+        approxRenderedLines += Math.max(1, Math.ceil(line.length / charsPerLine));
+      }
+
+      const requiredTotalLines = Math.max(approxRenderedLines, Math.ceil(textContent.length / (charsPerLine * 1.15)));
+      const requiredLinesPerCol = Math.ceil(requiredTotalLines / cols);
+      const requiredHeightMm = Math.ceil((requiredLinesPerCol * lineSpacingMm + (padding * 2) + 2) * 10) / 10;
+
+      const pageH = this.state.settings.heightMm;
+      const maxAllowedH = pageH - 5 - textEl.y;
+
+      if (requiredHeightMm <= maxAllowedH) {
+        textEl.height = Math.max(textEl.height, requiredHeightMm);
+      } else {
+        const availH = Math.max(10, maxAllowedH - (padding * 2));
+        const targetLineSpacingMm = availH / requiredLinesPerCol;
+        const targetFontPt = Math.max(6, Math.floor((targetLineSpacingMm * 72 / (lineH * 25.4)) * 10) / 10);
+        textEl.fontSizePt = targetFontPt;
+        textEl.height = Math.max(15, maxAllowedH);
+      }
+
+      this.pushHistory();
+      this.notify();
       return true;
     }
 
     if (issue.code === 'TRIM_HAZARD') {
-      const trimMargin = 4;
+      const trimMargin = 5;
       const pageW = this.state.settings.widthMm;
       const pageH = this.state.settings.heightMm;
-      if (el.x < trimMargin) el.x = trimMargin;
-      if (el.y < trimMargin) el.y = trimMargin;
-      if (el.x + el.width > pageW - trimMargin) el.width = Math.max(10, pageW - trimMargin - el.x);
-      if (el.y + el.height > pageH - trimMargin) el.height = Math.max(10, pageH - trimMargin - el.y);
+
+      if (el.width > pageW - (trimMargin * 2)) {
+        el.width = Math.round((pageW - (trimMargin * 2)) * 10) / 10;
+      }
+      if (el.height > pageH - (trimMargin * 2)) {
+        el.height = Math.round((pageH - (trimMargin * 2)) * 10) / 10;
+      }
+
+      if (el.x < trimMargin) {
+        el.x = trimMargin;
+      } else if (el.x + el.width > pageW - trimMargin) {
+        el.x = Math.max(trimMargin, Math.round((pageW - trimMargin - el.width) * 10) / 10);
+      }
+
+      if (el.y < trimMargin) {
+        el.y = trimMargin;
+      } else if (el.y + el.height > pageH - trimMargin) {
+        el.y = Math.max(trimMargin, Math.round((pageH - trimMargin - el.height) * 10) / 10);
+      }
+
       this.pushHistory();
       this.notify();
       return true;
@@ -2185,14 +2243,20 @@ export class StateManager {
   }
 
   public autoFixAllPreflightIssues(): number {
-    const issues = this.runPreflightCheck();
-    let fixed = 0;
-    for (const issue of issues) {
-      if (this.autoFixPreflightIssue(issue)) {
-        fixed++;
+    let issues = this.runPreflightCheck();
+    let totalFixed = 0;
+    for (let pass = 0; pass < 3 && issues.length > 0; pass++) {
+      let passFixed = 0;
+      for (const issue of issues) {
+        if (this.autoFixPreflightIssue(issue)) {
+          passFixed++;
+        }
       }
+      totalFixed += passFixed;
+      if (passFixed === 0) break;
+      issues = this.runPreflightCheck();
     }
-    return fixed;
+    return totalFixed;
   }
 
   public exportProjectFile() {

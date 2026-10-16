@@ -1305,4 +1305,39 @@ kbd {
   }
 }
 
+/* INLINE CANVAS TEXT EDITOR (WORDPAD / FIGMA STYLE) */
+.canvas-inline-editor {
+  position: absolute;
+  box-sizing: border-box;
+  outline: none;
+  border: 2px solid #00b4d8 !important;
+  box-shadow: 0 0 16px rgba(0, 180, 216, 0.55), inset 0 0 4px rgba(0, 0, 0, 0.05) !important;
+  border-radius: 3px;
+  resize: both;
+  overflow: auto;
+  z-index: 1000;
+  caret-color: #00b4d8;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-smooth: antialiased;
+  -webkit-font-smoothing: antialiased;
+}
+
+.canvas-inline-editor:focus {
+  border-color: #0d99ff !important;
+  box-shadow: 0 0 20px rgba(13, 153, 255, 0.65) !important;
+}
+
+.canvas-inline-cell-editor {
+  position: absolute;
+  box-sizing: border-box;
+  outline: none;
+  border: 2px solid #00b4d8 !important;
+  box-shadow: 0 0 12px rgba(0, 180, 216, 0.5) !important;
+  border-radius: 3px;
+  z-index: 1000;
+  caret-color: #00b4d8;
+}
+
+
 
