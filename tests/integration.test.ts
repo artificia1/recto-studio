@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { execSync } from 'child_process';
 
-describe('Papercut Studio Phases 1-20 Core Engine Verification', () => {
+describe('Recto Studio Phases 1-20 Core Engine Verification', () => {
   it(
     'executes and passes all 33 engine integration suites flawlessly',
     () => {

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to **Papercut Studio** will be documented in this file.
+All notable changes to **Recto Studio** will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Continuous footnote renumbering across complex threaded text frames.
   - Running headers with token replacement (`{{page}}`, `{{totalPages}}`, `{{chapterTitle}}`) resolving dynamically to the active section heading.
 - **One-Click Prepress Packaging**:
-  - Client-side `.zip` package generation bundling `.papercut` source JSON, print-ready PDF/X-1a, high-res assets, and `Instructions.txt` prepress report.
+  - Client-side `.zip` package generation bundling `.recto` source JSON, print-ready PDF/X-1a, high-res assets, and `Instructions.txt` prepress report.
 - **Dynamic Font Management**:
   - Live Google Fonts engine with search and on-demand browser caching for 1,600+ typefaces.
   - Drag-and-drop custom font loader supporting `.woff2`, `.ttf`, and `.otf` files registered via the browser `FontFace` API.

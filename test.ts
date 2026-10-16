@@ -15,7 +15,7 @@ import { collabSession } from './src/collab';
 import { packageDocument } from './src/packageExport';
 import { fontManager } from './src/fontManager';
 
-console.log('Running Papercut Core Engine TypeScript Verification Tests...\n');
+console.log('Running Recto Core Engine TypeScript Verification Tests...\n');
 
 // 1. Initial State & Dimensions
 const state = stateManager.getState();
@@ -559,18 +559,18 @@ assert.strictEqual(
 );
 
 // Clean up generated PDF files from test directory
-const defaultFilename = `${currentState.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'papercut-document'}.pdf`;
+const defaultFilename = `${currentState.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'recto-document'}.pdf`;
 if (fs.existsSync(defaultFilename)) {
   fs.unlinkSync(defaultFilename);
 }
 console.log('✓ Print-Ready PDF/X Pipeline (Bleed, Marks, Color Bars, Dynamic Pagination) verified.');
 
-// 18. Local-First High-Capacity Storage & .papercut Project Serialization
+// 18. Local-First High-Capacity Storage & .recto Project Serialization
 const projectJsonStr = stateManager.exportJson();
 assert(typeof projectJsonStr === 'string' && projectJsonStr.length > 0, 'exportJson must produce a non-empty string');
 const parsedProject = JSON.parse(projectJsonStr);
 
-assert(parsedProject.settings && Array.isArray(parsedProject.spreads), 'Exported .papercut project must contain settings and spreads array');
+assert(parsedProject.settings && Array.isArray(parsedProject.spreads), 'Exported .recto project must contain settings and spreads array');
 assert(Array.isArray(parsedProject.masterSpreads) && parsedProject.masterSpreads.length > 0, 'Project must persist master spreads');
 assert(Array.isArray(parsedProject.paragraphStyles) && parsedProject.paragraphStyles.length > 0, 'Project must persist paragraph styles registry');
 assert(parsedProject.settings.baselineGrid && typeof parsedProject.settings.baselineGrid.incrementPt === 'number', 'Project must persist baseline grid configuration');
@@ -579,10 +579,10 @@ assert(parsedProject.settings.baselineGrid && typeof parsedProject.settings.base
 assert.throws(() => {
   const corruptData: any = { foo: 'bar' };
   if (!corruptData.settings || !corruptData.spreads) {
-    throw new Error('Invalid Papercut document structure');
+    throw new Error('Invalid Recto document structure');
   }
-}, /Invalid Papercut document structure/, 'Corrupt .papercut data must throw structure error');
-console.log('✓ Local-First Storage Adapter & .papercut Document File Format verified.');
+}, /Invalid Recto document structure/, 'Corrupt .recto data must throw structure error');
+console.log('✓ Local-First Storage Adapter & .recto Document File Format verified.');
 
 // 19. Core Rendering Pipeline Optimization & Display Performance Tiers
 assert.strictEqual(stateManager.getState().displayQuality, 'typical', 'Default display performance tier should be typical');
@@ -807,7 +807,7 @@ console.log('✓ Text Wrap (Bounding Box & Contour Standoffs) and Real-Time Prin
 // 1. Zero-dependency ZIP read/write verification
 const sampleZip = createZipArchive({
   'mimetype': 'application/vnd.adobe.indesign-idml-package',
-  'hello.txt': 'Papercut zero-dependency ZIP test',
+  'hello.txt': 'Recto zero-dependency ZIP test',
   'nested/doc.xml': '<root><item id="1">Content</item></root>',
 });
 
@@ -816,7 +816,7 @@ assert(unpacked.has('mimetype'), 'ZIP reader must extract root files');
 assert(unpacked.has('hello.txt'), 'ZIP reader must extract text files');
 assert(unpacked.has('nested/doc.xml'), 'ZIP reader must extract nested directory paths');
 const decodedText = new TextDecoder().decode(unpacked.get('hello.txt'));
-assert.strictEqual(decodedText, 'Papercut zero-dependency ZIP test', 'ZIP entry content must match');
+assert.strictEqual(decodedText, 'Recto zero-dependency ZIP test', 'ZIP entry content must match');
 
 // 2. Markdown Content Ingestion with Style Auto-binding
 const sampleMarkdown = `
@@ -1805,9 +1805,9 @@ assert(pkg.filename.endsWith('.zip'), 'Package filename must have .zip extension
 const unzipped = await readZip(pkg.buffer);
 const zipFiles = Array.from(unzipped.keys());
 
-// a) Verify .papercut project JSON
-const projectFile = zipFiles.find((f) => f.endsWith('.papercut'));
-assert(projectFile, 'Package archive must contain native .papercut project file');
+// a) Verify .recto project JSON
+const projectFile = zipFiles.find((f) => f.endsWith('.recto') || f.endsWith('.papercut'));
+assert(projectFile, 'Package archive must contain native .recto project file');
 const pkgProjectJsonStr = new TextDecoder().decode(unzipped.get(projectFile!)!);
 const pkgParsedProject = JSON.parse(pkgProjectJsonStr);
 assert(pkgParsedProject.settings && Array.isArray(pkgParsedProject.spreads), 'Project file inside package must be valid JSON');
@@ -1893,7 +1893,7 @@ const h1TextElement: TextElement = {
 stateManager.addElement(h1TextElement);
 
 // Evaluate running header token on current page
-const headerTemplate = 'Papercut Journal | {{chapterTitle}} | Page {{page}}';
+const headerTemplate = 'Recto Journal | {{chapterTitle}} | Page {{page}}';
 const evalCurrentPage = stateManager.evaluateTokens(headerTemplate, testH1Spread.pages[0].pageNumber);
 assert(evalCurrentPage.includes('Chapter 1: The Foundations of Typography'), 'Running header must resolve {{chapterTitle}} from Heading 1 element');
 assert(evalCurrentPage.includes(`Page ${testH1Spread.pages[0].pageNumber}`), 'Running header must resolve {{page}}');
@@ -2253,7 +2253,7 @@ assert(
 );
 
 // Clean up generated test file
-const a11yFilename = `${stateManager.getState().settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'papercut-document'}.pdf`;
+const a11yFilename = `${stateManager.getState().settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'recto-document'}.pdf`;
 if (fs.existsSync(a11yFilename)) {
   fs.unlinkSync(a11yFilename);
 }

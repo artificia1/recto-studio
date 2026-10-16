@@ -1,10 +1,10 @@
 /**
- * Papercut Studio — High-Precision Desktop Publishing Engine
+ * Recto Studio — High-Precision Desktop Publishing Engine
  * Copyright (c) 2022-2026 Abhinav. All rights reserved.
  * Licensed under the MIT License.
  */
 
-// Papercut Studio Application Entry Point & Module Bootstrap
+// Recto Studio Application Entry Point & Module Bootstrap
 export * from './types/index';
 export * from './state/stateManager';
 export * from './engine/viewport';

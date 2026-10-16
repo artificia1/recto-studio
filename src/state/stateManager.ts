@@ -1,5 +1,5 @@
 /**
- * Papercut Studio — High-Precision Desktop Publishing Engine
+ * Recto Studio — High-Precision Desktop Publishing Engine
  * Copyright (c) 2022-2026 Abhinav. All rights reserved.
  * Licensed under the MIT License.
  */
@@ -27,7 +27,7 @@ import {
   FootnoteSettings,
   CopyfitResult,
 } from '../types/index';
-import { PapercutDB } from './persistence';
+import { RectoDB } from './persistence';
 import { parseIdmlPackage } from '../idmlImport';
 import { parseCsv, generateMergedSpreads, substituteElementTokens } from '../dataMerge';
 
@@ -51,8 +51,8 @@ export function superscriptToNumber(str: string): number {
 }
 
 // shortcut: localStorage used for autosave; upgrade to IndexedDB when projects exceed 5MB
-const STORAGE_KEY = 'papercut_project_autosave';
-const SNAPSHOTS_STORAGE_KEY = 'papercut_version_snapshots';
+const STORAGE_KEY = 'recto_project_autosave';
+const SNAPSHOTS_STORAGE_KEY = 'recto_version_snapshots';
 
 export const DEFAULT_PARAGRAPH_STYLES: ParagraphStyle[] = [
   {
@@ -178,7 +178,7 @@ export const DEFAULT_MASTER_SPREADS: MasterSpread[] = [
         opacity: 0.6,
         zIndex: 2,
         locked: true,
-        text: 'PAPERCUT STUDIO · SPECIAL REPORT',
+        text: 'RECTO STUDIO · SPECIAL REPORT',
         fontFamily: 'Inter, system-ui, sans-serif',
         fontSizePt: 7,
         lineHeight: 1,
@@ -294,7 +294,7 @@ export const DEFAULT_MASTER_SPREADS: MasterSpread[] = [
 
 export const INITIAL_STATE: ProjectState = {
   settings: {
-    title: 'Papercut Editorial Spread',
+    title: 'Recto Editorial Spread',
     preset: 'A4',
     widthMm: PAGE_PRESETS['A4'].widthMm,
     heightMm: PAGE_PRESETS['A4'].heightMm,
@@ -342,7 +342,7 @@ export const INITIAL_STATE: ProjectState = {
           opacity: 1,
           zIndex: 10,
           locked: false,
-          text: 'PAPERCUT',
+          text: 'RECTO',
           fontFamily: 'Playfair Display, Georgia, serif',
           fontSizePt: 54,
           lineHeight: 1.05,
@@ -423,7 +423,7 @@ export const INITIAL_STATE: ProjectState = {
           opacity: 0.7,
           zIndex: 2,
           locked: false,
-          text: 'PAPERCUT JOURNAL • SPECIAL REPORT',
+          text: 'RECTO JOURNAL • SPECIAL REPORT',
           fontFamily: 'Inter, system-ui, sans-serif',
           fontSizePt: 7,
           lineHeight: 1,
@@ -619,7 +619,7 @@ export const INITIAL_STATE: ProjectState = {
 
 Yet the mathematical purity of typesetting belongs to no corporate entity. The algorithms formulated by Donald Knuth—the harmonious balance of hyphens, the distribution of glue across a justified line, the relationship between margins and golden proportions—are cultural commons. 
 
-Papercut was engineered from a simple conviction: creative freedom must never depend upon the luxury of flagship silicon. Built to execute flawlessly upon a modest dual-core machine, it renders facing pages, magnetic snap grids, and multi-column frames with instantaneous response. Here, the layout artist is restored to sovereignty.`,
+Recto was engineered from a simple conviction: creative freedom must never depend upon the luxury of flagship silicon. Built to execute flawlessly upon a modest dual-core machine, it renders facing pages, magnetic snap grids, and multi-column frames with instantaneous response. Here, the layout artist is restored to sovereignty.`,
           fontFamily: 'Merriweather, Georgia, serif',
           fontSizePt: 9.5,
           lineHeight: 1.5,
@@ -2049,12 +2049,12 @@ export class StateManager {
 
   public exportProjectFile() {
     if (typeof document !== 'undefined') {
-      PapercutDB.exportProjectFile(this.state);
+      RectoDB.exportProjectFile(this.state);
     }
   }
 
   public async importProjectFile(file: File): Promise<void> {
-    const state = await PapercutDB.importProjectFile(file);
+    const state = await RectoDB.importProjectFile(file);
     this.loadFromJson(JSON.stringify(state));
   }
 
@@ -2065,7 +2065,7 @@ export class StateManager {
 
     // Asynchronous high-capacity IndexedDB persistence
     if (typeof indexedDB !== 'undefined') {
-      PapercutDB.saveProject(this.state).catch(() => {});
+      RectoDB.saveProject(this.state).catch(() => {});
     }
   }
 

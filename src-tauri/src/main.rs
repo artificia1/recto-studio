@@ -4,5 +4,5 @@
 fn main() {
     tauri::Builder::default()
         .run(tauri::generate_context!())
-        .expect("error while running Papercut desktop application");
+        .expect("error while running Recto desktop application");
 }

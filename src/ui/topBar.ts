@@ -1,4 +1,4 @@
-// Papercut Studio Top Navigation & Global Header Controller
+// Recto Studio Top Navigation & Global Header Controller
 import { stateManager } from '../state/stateManager';
 import { exportDocumentToPdf } from '../export/pdfExport';
 import { exportDocumentToEpub } from '../epubExport';

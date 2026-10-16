@@ -45,7 +45,7 @@ describe('PDF Export Vector Geometry & Print Slug Calculations', () => {
     expect(outputStr.includes('/Lang (en-US)')).toBe(true);
 
     // Clean up temporary generated file if saved to disk
-    const filename = `${state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'papercut-document'}.pdf`;
+    const filename = `${state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'recto-document'}.pdf`;
     if (fs.existsSync(filename)) {
       fs.unlinkSync(filename);
     }
@@ -68,7 +68,7 @@ describe('PDF Export Vector Geometry & Print Slug Calculations', () => {
     expect(doc).toBeDefined();
 
     // Clean up temporary generated file
-    const filename = `${state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'papercut-document'}.pdf`;
+    const filename = `${state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'recto-document'}.pdf`;
     if (fs.existsSync(filename)) {
       fs.unlinkSync(filename);
     }

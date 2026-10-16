@@ -1,5 +1,5 @@
 /**
- * Papercut Studio — High-Precision Desktop Publishing Engine
+ * Recto Studio — High-Precision Desktop Publishing Engine
  * Copyright (c) 2022-2026 Abhinav. All rights reserved.
  * Licensed under the MIT License.
  */

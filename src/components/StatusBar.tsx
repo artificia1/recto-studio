@@ -86,7 +86,7 @@ export function StatusBar({ state }: StatusBarProps) {
           </select>
         </label>
         <span>100% Offline • 0 KB Cloud Telemetry</span>
-        <span>Papercut Studio v0.1.0</span>
+        <span>Recto Studio v1.0.0</span>
       </div>
 
       {drawerOpen && (

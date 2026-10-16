@@ -1,4 +1,4 @@
-// Papercut Studio Multi-Tab Inspector & Properties Controller
+// Recto Studio Multi-Tab Inspector & Properties Controller
 import { stateManager } from '../state/stateManager';
 import { ProjectState, CanvasElement } from '../types/index';
 

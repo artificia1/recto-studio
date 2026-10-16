@@ -1,4 +1,9 @@
-// Papercut Print Packaging Engine: One-Click Print Handoff Archive
+/**
+ * Recto Studio — High-Precision Desktop Publishing Engine
+ * Copyright (c) 2022-2026 Abhinav. All rights reserved.
+ * Licensed under the MIT License.
+ */
+// Recto Print Packaging Engine: One-Click Print Handoff Archive
 import { ProjectState, TextElement, ImageElement } from './types';
 import { exportDocumentToPdf } from './pdfExport';
 import { createZipArchive } from './zip';
@@ -83,10 +88,10 @@ export function generateInstructionsReport(state: ProjectState): string {
     : preflightIssues.map((iss) => `  [${iss.severity.toUpperCase()}] ${iss.code}: ${iss.message} (Page ${iss.pageNumber})`).join('\n');
 
   return `================================================================================
-PAPERCUT STUDIO · PRINT PRODUCTION HANDOFF PACKAGE
+RECTO STUDIO · PRINT PRODUCTION HANDOFF PACKAGE
 ================================================================================
 Generated: ${timestamp}
-Software: Papercut Studio (Open-Source DTP Architecture)
+Software: Recto Studio (Open-Source DTP Architecture)
 
 1. DOCUMENT SPECIFICATIONS
 --------------------------------------------------------------------------------
@@ -119,7 +124,7 @@ ${preflightSummary}
 * Print-Ready PDF file is included in this root folder:
   - Generated with 12mm slug containing dynamic crop marks, bleed boxes, registration targets, CMYK density color calibration bars, and publication metadata.
 * All placed raster assets are archived in the /Assets subfolder.
-* Native .papercut project source is preserved in this package for archival editing and version inspection.
+* Native .recto project source is preserved in this package for archival editing and version inspection.
 ================================================================================
 `;
 }
@@ -128,13 +133,13 @@ export async function packageDocument(
   state: ProjectState,
   options: PackageExportOptions = { download: true }
 ): Promise<{ buffer: Uint8Array; filename: string; filesCount: number }> {
-  const baseTitle = state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'papercut-project';
+  const baseTitle = state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'recto-project';
   const packageDirName = `${baseTitle}-package`;
   const files: Record<string, string | Uint8Array> = {};
 
-  // 1. Native .papercut Project JSON
+  // 1. Native .recto Project JSON
   const projectJson = JSON.stringify(state, null, 2);
-  files[`${baseTitle}.papercut`] = projectJson;
+  files[`${baseTitle}.recto`] = projectJson;
 
   // 2. High-Resolution Print-Ready PDF
   const pdfDoc = await exportDocumentToPdf(state, {

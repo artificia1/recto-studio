@@ -1,2 +1,2 @@
-// Papercut Studio State Manager Bridge
+// Recto Studio State Manager Bridge
 export * from './state/stateManager';

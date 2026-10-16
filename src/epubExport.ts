@@ -1,4 +1,9 @@
-// Papercut EPUB 3 Digital Publishing Pipeline
+/**
+ * Recto Studio — High-Precision Desktop Publishing Engine
+ * Copyright (c) 2022-2026 Abhinav. All rights reserved.
+ * Licensed under the MIT License.
+ */
+// Recto EPUB 3 Digital Publishing Pipeline
 // Assembles semantic XHTML, responsive CSS, OPF packages, and nav documents
 
 import { ProjectState, CanvasElement, TextElement, ImageElement, ShapeElement, TableElement, VectorPathElement, Page } from './types';
@@ -58,7 +63,7 @@ export function generateEpubPackage(state: ProjectState): Record<string, string 
 </container>`;
 
   // 3. OEBPS/styles.css
-  const stylesCss = `/* Papercut EPUB 3 Typography & Layout Stylesheet */
+  const stylesCss = `/* Recto EPUB 3 Typography & Layout Stylesheet */
 @namespace epub "http://www.idpf.org/2007/ops";
 
 body {
@@ -317,7 +322,7 @@ ${navLinks}
 </html>`;
 
   // 7. OEBPS/package.opf (Package Document)
-  const bookId = `urn:uuid:papercut-${Date.now()}`;
+  const bookId = `urn:uuid:recto-${Date.now()}`;
   const modifiedIso = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
 
   const manifestEntries = [
@@ -332,10 +337,10 @@ ${navLinks}
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="en">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:identifier id="pub-id">${bookId}</dc:identifier>
-    <dc:title>${escapeXml(state.settings.title || 'Papercut Publication')}</dc:title>
+    <dc:title>${escapeXml(state.settings.title || 'Recto Publication')}</dc:title>
     <dc:language>en</dc:language>
     <meta property="dcterms:modified">${modifiedIso}</meta>
-    <dc:creator>Papercut DTP Studio</dc:creator>
+    <dc:creator>Recto DTP Studio</dc:creator>
   </metadata>
   <manifest>
 ${manifestEntries}
@@ -354,7 +359,7 @@ export function exportDocumentToEpub(
 ): { buffer: Uint8Array; filename: string } {
   const files = generateEpubPackage(state);
   const buffer = createZipArchive(files);
-  const baseTitle = state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'papercut-publication';
+  const baseTitle = state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'recto-publication';
   const filename = `${baseTitle}.epub`;
 
   if (options.download && typeof window !== 'undefined' && typeof document !== 'undefined') {

@@ -1,4 +1,4 @@
-// Papercut Font Manager: Google Fonts Loader & Custom Font Drop Engine
+// Recto Font Manager: Google Fonts Loader & Custom Font Drop Engine
 
 export interface FontMetadata {
   family: string;

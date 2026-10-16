@@ -1,13 +1,13 @@
 {
-  "name": "papercut-studio",
+  "name": "recto-studio",
   "private": true,
   "version": "1.0.0",
   "description": "The open-source, web-first desktop publishing alternative to Adobe InDesign. Zero subscriptions, zero cloud telemetry, locked 60 FPS canvas, with InDesign shortcuts, IDML import, and print-ready PDF/X export.",
   "repository": {
     "type": "git",
-    "url": "https://github.com/artificia1/papercut-studio.git"
+    "url": "https://github.com/artificia1/recto-studio.git"
   },
-  "homepage": "https://artificia1.github.io/papercut-studio/",
+  "homepage": "https://artificia1.github.io/recto-studio/",
   "keywords": [
     "desktop-publishing",
     "indesign-alternative",

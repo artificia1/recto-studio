@@ -1,4 +1,4 @@
-// Papercut Real-Time Co-Editing & Peer Presence Synchronization Engine
+// Recto Real-Time Co-Editing & Peer Presence Synchronization Engine
 // Uses native BroadcastChannel with operational vector synchronization (zero third-party dependencies)
 
 import { CanvasElement, PeerPresence, CollabMessage, ProjectState } from './types';
@@ -42,7 +42,7 @@ export class CollabSession {
     };
   }
 
-  public connect(sessionId: string = 'papercut-live', userName?: string): void {
+  public connect(sessionId: string = 'recto-live', userName?: string): void {
     if (this.channel) {
       this.disconnect();
     }
@@ -51,7 +51,7 @@ export class CollabSession {
     if (userName) this.userName = userName;
 
     if (typeof BroadcastChannel !== 'undefined') {
-      this.channel = new BroadcastChannel(`papercut_collab_${sessionId}`);
+      this.channel = new BroadcastChannel(`recto_collab_${sessionId}`);
       this.channel.onmessage = (event: MessageEvent<CollabMessage>) => {
         this.handleMessage(event.data);
       };

@@ -1,4 +1,9 @@
-// Papercut Self-Contained Interactive Web Flipbook Export Engine
+/**
+ * Recto Studio — High-Precision Desktop Publishing Engine
+ * Copyright (c) 2022-2026 Abhinav. All rights reserved.
+ * Licensed under the MIT License.
+ */
+// Recto Self-Contained Interactive Web Flipbook Export Engine
 // Generates a single standalone HTML package with 3D page curls, keyboard nav, and responsive vector layout
 
 import { ProjectState, CanvasElement, TextElement, ImageElement, ShapeElement, TableElement, VectorPathElement, Page } from './types';
@@ -12,7 +17,7 @@ export interface FlipbookExportOptions {
 export function generateFlipbookHtml(state: ProjectState): string {
   const widthMm = state.settings.widthMm || 210;
   const heightMm = state.settings.heightMm || 297;
-  const title = escapeXml(state.settings.title || 'Papercut Interactive Flipbook');
+  const title = escapeXml(state.settings.title || 'Recto Interactive Flipbook');
 
   // Collect all pages in sequential order
   interface FlatPage {
@@ -501,7 +506,7 @@ export function generateFlipbookHtml(state: ProjectState): string {
 <body>
   <header class="flipbook-toolbar">
     <div class="doc-title">
-      <span class="badge">Papercut</span>
+      <span class="badge">Recto</span>
       <span>${title}</span>
     </div>
     <div class="nav-controls">
@@ -526,7 +531,7 @@ ${spreadsMarkup}
   </main>
 
   <footer class="flipbook-footer">
-    <div>Papercut Universal Web Flipbook · ${pages.length} Pages · ${state.settings.preset || 'A4'}</div>
+    <div>Recto Universal Web Flipbook · ${pages.length} Pages · ${state.settings.preset || 'A4'}</div>
     <div class="hotkey-hints">
       <span><kbd>←</kbd> / <kbd>→</kbd> Flip</span>
       <span><kbd>Space</kbd> Next</span>
@@ -669,7 +674,7 @@ export function exportDocumentToFlipbook(
   options: FlipbookExportOptions = { download: true }
 ): { html: string; filename: string } {
   const html = generateFlipbookHtml(state);
-  const baseTitle = state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'papercut-flipbook';
+  const baseTitle = state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'recto-flipbook';
   const filename = `${baseTitle}.html`;
 
   if (options.download && typeof window !== 'undefined' && typeof document !== 'undefined') {

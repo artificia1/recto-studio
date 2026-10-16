@@ -5,5 +5,5 @@ import './style.css';
 const mountPoint = document.getElementById('root');
 if (mountPoint) {
   render(<App />, mountPoint);
-  console.log('Papercut Publishing Studio (TypeScript + Preact TSX) loaded.');
+  console.log('Recto Publishing Studio (TypeScript + Preact TSX) loaded.');
 }

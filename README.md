@@ -1,4 +1,4 @@
-# ❖ PAPERCUT STUDIO
+# ❖ RECTO STUDIO
 ### *The Open-Source Desktop Publishing Suite Engineered for Craftsmanship.*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -6,13 +6,13 @@
 [![Tests](https://img.shields.io/badge/Tests-100%25%20Passing-brightgreen.svg)](#development)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict-blue.svg)](#architecture)
 [![Telemetry](https://img.shields.io/badge/Telemetry-0%20KB-red.svg)](#philosophy)
-[![Live Studio](https://img.shields.io/badge/%E2%96%B6%20Live%20Studio-Try%20in%20Browser-0d99ff.svg)](https://artificia1.github.io/papercut-studio/)
+[![Live Studio](https://img.shields.io/badge/%E2%96%B6%20Live%20Studio-Try%20in%20Browser-0d99ff.svg)](https://artificia1.github.io/recto-studio/)
 
 > **"Why should the craft of arranging thought upon paper require rent paid to a landlord in San Jose?"**
 
-Papercut Studio is a high-performance, open-source desktop publishing suite built from the ground up for independent book designers, editorial typographers, zine publishers, and printmakers. Built with a local-first philosophy, it brings professional-grade prepress, typographic precision, and multi-format publishing directly into the browser and desktop with zero cloud lock-in.
+Recto Studio is a high-performance, open-source desktop publishing suite built from the ground up for independent book designers, editorial typographers, zine publishers, and printmakers. Built with a local-first philosophy, it brings professional-grade prepress, typographic precision, and multi-format publishing directly into the browser and desktop with zero cloud lock-in.
 
-[**▶ Launch Papercut Studio in your browser (No account, no sign-up)**](https://artificia1.github.io/papercut-studio/)
+[**▶ Launch Recto Studio in your browser (No account, no sign-up)**](https://artificia1.github.io/recto-studio/)
 
 ---
 
@@ -26,7 +26,7 @@ Papercut Studio is a high-performance, open-source desktop publishing suite buil
   - **Print PDF**: Native PDF/X-1a with trim marks and bleed.
   - **EPUB 3 Packages**: Semantic reflowable and fixed-layout XHTML/CSS book manifests.
   - **Self-Contained 3D Web Flipbooks**: Single-file HTML5 packages with page-turn physics and keyboard navigation.
-  - **One-Click Prepress Packages**: Bundled ZIP containing native `.papercut` project files, print PDFs, high-res assets, and a prepress instruction manifest.
+  - **One-Click Prepress Packages**: Bundled ZIP containing native `.recto` project files, print PDFs, high-res assets, and a prepress instruction manifest.
 
 ---
 
@@ -59,7 +59,7 @@ Papercut Studio is a high-performance, open-source desktop publishing suite buil
 ## 🛠️ Repository & Project Structure
 
 ```
-papercut/
+recto-studio/
 ├── src/
 │   ├── types/               # Type system & discriminated unions
 │   ├── engine/              # Viewport math, renderer, hit testing, guides
@@ -92,8 +92,8 @@ papercut/
 
 ### Installation
 ```bash
-git clone https://github.com/papercut-studio/papercut.git
-cd papercut
+git clone https://github.com/artificia1/recto-studio.git
+cd recto-studio
 npm install
 ```
 
@@ -118,4 +118,4 @@ Generates optimized, minified production assets into the `dist/` folder.
 
 ## 📜 License
 
-Released under the **MIT License**. Created by independent creators for independent creators.
+Released under the **MIT License**. Copyright (c) 2022-2026 Abhinav. Created by independent creators for independent creators.

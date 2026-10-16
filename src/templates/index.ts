@@ -465,7 +465,7 @@ NEVER PAY FOR A LICENSE TO COMMUNICATE.`,
 
 Every independent creator who has ever stapled together twenty photocopied sheets at midnight knows the tactile ecstasy of unfiltered distribution. 
 
-Papercut is not merely software; it is a declaration of independence for everyone who believes words deserve physical weight without corporate gatekeepers.`,
+Recto is not merely software; it is a declaration of independence for everyone who believes words deserve physical weight without corporate gatekeepers.`,
           fontFamily: 'Inter, system-ui, sans-serif',
           fontSizePt: 9,
           lineHeight: 1.45,

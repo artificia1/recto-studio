@@ -1,4 +1,4 @@
-// Papercut Studio Left InDesign Tool Rail Controller
+// Recto Studio Left InDesign Tool Rail Controller
 import { ToolType } from '../types/index';
 import { stateManager } from '../state/stateManager';
 

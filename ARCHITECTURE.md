@@ -1,6 +1,6 @@
-# Papercut Studio — Systems Architecture
+# Recto Studio — Systems Architecture
 
-This document provides a technical overview of Papercut Studio's internal graphics architecture, coordinate transformations, rendering loop, state management, and export compiler pipelines.
+This document provides a technical overview of Recto Studio's internal graphics architecture, coordinate transformations, rendering loop, state management, and export compiler pipelines.
 
 ---
 
@@ -51,7 +51,7 @@ flowchart TD
 
 ## 2. Coordinate Systems & Matrix Transformations
 
-Papercut executes precision desktop publishing by strictly decoupling physical print units from display pixels and target PDF points:
+Recto executes precision desktop publishing by strictly decoupling physical print units from display pixels and target PDF points:
 
 | Space | Unit | Resolution / Basis | Transformation |
 |---|---|---|---|

@@ -53,6 +53,6 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, () => {
   console.log(`\n==================================================`);
-  console.log(`❖ PAPERCUT STUDIO is live at http://localhost:${PORT}`);
+  console.log(`❖ RECTO STUDIO is live at http://localhost:${PORT}`);
   console.log(`==================================================\n`);
 });

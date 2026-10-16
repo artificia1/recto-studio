@@ -32,10 +32,11 @@ export function App() {
         rulerLeftRef.current
       );
 
-      (window as any).papercut = {
+      (window as any).recto = {
         stateManager,
         spreadCanvas: spreadCanvasRef.current,
       };
+      (window as any).papercut = (window as any).recto;
 
       spreadCanvasRef.current.render();
       console.log('SpreadCanvas 2D render engine connected to Preact TSX shell.');
@@ -60,7 +61,7 @@ export function App() {
       return;
     }
 
-    if (name.endsWith('.papercut') || name.endsWith('.json')) {
+    if (name.endsWith('.recto') || name.endsWith('.papercut') || name.endsWith('.json')) {
       const text = await file.text();
       stateManager.loadFromJson(text);
       return;

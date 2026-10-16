@@ -1,10 +1,10 @@
 [package]
-name = "papercut"
-version = "0.1.0"
-description = "Papercut Autonomous Desktop Publishing Studio"
-authors = ["Papercut Studio Team"]
+name = "recto-studio"
+version = "1.0.0"
+description = "Recto Autonomous Desktop Publishing Studio"
+authors = ["Abhinav <artificia1@users.noreply.github.com>"]
 license = "MIT"
-repository = "https://github.com/papercut/papercut"
+repository = "https://github.com/artificia1/recto-studio"
 edition = "2021"
 
 [build-dependencies]

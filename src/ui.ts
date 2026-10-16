@@ -1,4 +1,4 @@
-// Papercut Studio UI Controller & Component Bridge
+// Recto Studio UI Controller & Component Bridge
 export * from './ui/toolbar';
 export * from './ui/topBar';
 export * from './ui/inspector';

@@ -1,17 +1,17 @@
 /**
- * Papercut Studio — High-Precision Desktop Publishing Engine
+ * Recto Studio — High-Precision Desktop Publishing Engine
  * Copyright (c) 2022-2026 Abhinav. All rights reserved.
  * Licensed under the MIT License.
  */
 
 import { ProjectState } from '../types/index';
 
-const DB_NAME = 'PapercutStudioDB';
+const DB_NAME = 'RectoStudioDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'projects';
 const RECORD_ID = 'active_project';
 
-export class PapercutDB {
+export class RectoDB {
   private static dbPromise: Promise<IDBDatabase> | null = null;
 
   public static async getDB(): Promise<IDBDatabase> {
@@ -84,7 +84,7 @@ export class PapercutDB {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'project'}.papercut`;
+    a.download = `${state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'project'}.recto`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -95,8 +95,11 @@ export class PapercutDB {
     const text = await file.text();
     const parsed = JSON.parse(text);
     if (!parsed.settings || !parsed.spreads) {
-      throw new Error('Invalid Papercut document structure');
+      throw new Error('Invalid Recto document structure');
     }
     return parsed as ProjectState;
   }
 }
+
+// Backward compatibility alias
+export const PapercutDB = RectoDB;

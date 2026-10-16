@@ -1,5 +1,5 @@
 /**
- * Papercut Studio — High-Precision Desktop Publishing Engine
+ * Recto Studio — High-Precision Desktop Publishing Engine
  * Copyright (c) 2022-2026 Abhinav. All rights reserved.
  * Licensed under the MIT License.
  */
@@ -34,7 +34,7 @@ export function TopBar({ state }: TopBarProps) {
     summary: string;
   } | null>(null);
 
-  const [collabRoom, setCollabRoom] = useState(collabSession.getSessionId() || 'papercut-live');
+  const [collabRoom, setCollabRoom] = useState(collabSession.getSessionId() || 'recto-live');
   const [collabUserName, setCollabUserName] = useState(collabSession.getUserName());
   const [collabPeers, setCollabPeers] = useState<PeerPresence[]>(collabSession.getPeers());
   const [isConnected, setIsConnected] = useState(collabSession.isConnected());
@@ -114,7 +114,7 @@ export function TopBar({ state }: TopBarProps) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${state.settings.title.toLowerCase().replace(/\s+/g, '-')}.papercut`;
+    a.download = `${state.settings.title.toLowerCase().replace(/\s+/g, '-')}.recto`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -267,7 +267,7 @@ export function TopBar({ state }: TopBarProps) {
       setIsConnected(false);
       setCollabPeers([]);
     } else {
-      collabSession.connect(collabRoom.trim() || 'papercut-live', collabUserName.trim());
+      collabSession.connect(collabRoom.trim() || 'recto-live', collabUserName.trim());
       setIsConnected(true);
       setCollabPeers(collabSession.getPeers());
     }
@@ -275,7 +275,7 @@ export function TopBar({ state }: TopBarProps) {
 
   const handleCopyShareLink = () => {
     const url = window.location.href.split('?')[0];
-    navigator.clipboard.writeText(`${url}?room=${encodeURIComponent(collabRoom.trim() || 'papercut-live')}`);
+    navigator.clipboard.writeText(`${url}?room=${encodeURIComponent(collabRoom.trim() || 'recto-live')}`);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
   };
@@ -295,7 +295,7 @@ export function TopBar({ state }: TopBarProps) {
     <header className="top-bar">
       <div className="brand-section">
         <div className="brand-logo">
-          <span>PAPERCUT</span>
+          <span>RECTO</span>
           <span className="brand-badge">STUDIO</span>
         </div>
         <input
@@ -461,21 +461,21 @@ export function TopBar({ state }: TopBarProps) {
         <button
           className="action-btn"
           onClick={handleSave}
-          title="Save .papercut project to disk"
+          title="Save .recto project to disk"
         >
           Save
         </button>
         <button
           className="action-btn"
           onClick={handleOpenClick}
-          title="Load .papercut project"
+          title="Load .recto project"
         >
           Open
         </button>
         <input
           type="file"
           ref={fileInputRef}
-          accept=".papercut,.json,.idml"
+          accept=".recto,.papercut,.json,.idml"
           style={{ display: 'none' }}
           onChange={handleFileChange}
         />

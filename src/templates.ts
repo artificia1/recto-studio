@@ -1,2 +1,2 @@
-// Papercut Studio Templates Bridge
+// Recto Studio Templates Bridge
 export * from './templates/index';

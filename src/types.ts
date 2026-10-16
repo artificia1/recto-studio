@@ -1,2 +1,2 @@
-// Papercut Studio Types Bridge
+// Recto Studio Types Bridge
 export * from './types/index';

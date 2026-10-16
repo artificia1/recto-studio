@@ -1,5 +1,5 @@
 /**
- * Papercut Studio — High-Precision Desktop Publishing Engine
+ * Recto Studio — High-Precision Desktop Publishing Engine
  * Copyright (c) 2022-2026 Abhinav. All rights reserved.
  * Licensed under the MIT License.
  */
@@ -46,11 +46,11 @@ export async function exportDocumentToPdf(
 
   // PDF/UA & Section 508 Universal Accessibility Metadata
   doc.setDocumentProperties({
-    title: state.settings.title || 'Papercut Document',
+    title: state.settings.title || 'Recto Document',
     subject: 'Universal Accessible PDF Document (PDF/UA-1 & Section 508)',
-    author: 'Papercut Studio',
+    author: 'Recto Studio',
     keywords: 'PDF/UA, Section 508, Universal Accessibility, Tagged PDF',
-    creator: 'Papercut Studio (Open-Source DTP Architecture)',
+    creator: 'Recto Studio (Open-Source DTP Architecture)',
   });
 
   const accessibleItems: { tag: string; altText?: string }[] = [];
@@ -308,7 +308,7 @@ export async function exportDocumentToPdf(
     (doc.internal as any).write('/MarkInfo << /Marked true >> /Lang (en-US)');
   });
 
-  const filename = `${state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'papercut-document'}.pdf`;
+  const filename = `${state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'recto-document'}.pdf`;
   doc.save(filename);
   return doc;
 }
@@ -433,7 +433,7 @@ function drawSlugMetadata(
   doc.setFont('helvetica', 'normal');
 
   const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
-  const metaText = `PAPERCUT STUDIO · ${title.toUpperCase()} · PAGE ${pageNum} OF ${totalPages} · ${timestamp} · PDF/X READY`;
+  const metaText = `RECTO STUDIO · ${title.toUpperCase()} · PAGE ${pageNum} OF ${totalPages} · ${timestamp} · PDF/X READY`;
   doc.text(metaText, x, y + h + 8);
 }
 
