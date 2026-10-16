@@ -98,7 +98,18 @@ export async function exportDocumentToPdf(
       drawCMYKCalibrationBar(doc, originX, originY, widthMm);
     }
     if (slug > 0) {
-      drawSlugMetadata(doc, originX, originY, widthMm, heightMm, state.settings.title, page.pageNumber, totalPagesInDoc);
+      drawSlugMetadata(
+        doc,
+        originX,
+        originY,
+        widthMm,
+        heightMm,
+        state.settings.title,
+        page.pageNumber,
+        totalPagesInDoc,
+        state.settings.colorMode || 'cmyk',
+        state.settings.iccProfile || 'FOGRA39'
+      );
     }
 
     // 3. Render Master Spread Elements (rendered behind page elements)
@@ -305,6 +316,9 @@ export async function exportDocumentToPdf(
     if (structTreeRootId) {
       (doc.internal as any).write(`/StructTreeRoot ${structTreeRootId} 0 R`);
     }
+    const colorMode = (state.settings.colorMode || 'cmyk').toUpperCase();
+    const iccProfile = state.settings.iccProfile || (colorMode === 'CMYK' ? 'FOGRA39' : 'sRGB');
+    (doc.internal as any).write(`/OutputIntents [<< /Type /OutputIntent /S /GTS_PDFX /OutputConditionIdentifier (${iccProfile}) /Info (${colorMode} ${iccProfile} Output Intent) /RegistryName (http://www.color.org) >>]`);
     (doc.internal as any).write('/MarkInfo << /Marked true >> /Lang (en-US)');
   });
 
@@ -426,14 +440,16 @@ function drawSlugMetadata(
   h: number,
   title: string,
   pageNum: number,
-  totalPages: number
+  totalPages: number,
+  colorMode: string = 'cmyk',
+  iccProfile: string = 'FOGRA39'
 ) {
   doc.setTextColor(100, 100, 100);
   doc.setFontSize(6.5);
   doc.setFont('helvetica', 'normal');
 
   const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
-  const metaText = `RECTO STUDIO · ${title.toUpperCase()} · PAGE ${pageNum} OF ${totalPages} · ${timestamp} · PDF/X READY`;
+  const metaText = `RECTO STUDIO · ${title.toUpperCase()} · PAGE ${pageNum} OF ${totalPages} · ${timestamp} · COLOR: ${colorMode.toUpperCase()} (${iccProfile}) · PDF/X READY`;
   doc.text(metaText, x, y + h + 8);
 }
 

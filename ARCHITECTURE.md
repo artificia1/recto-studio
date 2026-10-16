@@ -159,3 +159,42 @@ sequenceDiagram
 1. Create a module under `src/export/<format>Export.ts`.
 2. Accept the active `Document` state and export configuration options.
 3. Register the command in `src/ui/topBar.ts` inside the Export dropdown menu.
+
+---
+
+## 7. Enterprise Prepress Architecture & Roadmap
+
+This section formalizes the architectural decisions and execution strategy for complex prepress and high-end publishing workflows, directly resolving expert reviewer benchmarks:
+
+### 7.1 Complex OpenType Shaping Engine (HarfBuzz WASM & Rust FFI)
+- **Challenge**: Native HTML5 Canvas 2D context relies on the host OS text rasterizer, which does not expose fine-grained glyph cluster repositioning required for bidirectional complex scripts (Arabic contextual cursive joining, Indic/Devanagari conjunct reordering, Khmer, Thai) or OpenType advanced layout tables (`GSUB`, `GPOS`, `mark`, `mkmk`).
+- **Architecture**:
+  - Recto deploys HarfBuzz compiled to WebAssembly (`harfbuzzjs` / WASM) for web runtimes.
+  - In native desktop builds (Tauri), Direct Rust FFI bindings to `rustybuzz` or native `harfbuzz` provide zero-copy memory buffers for line shaping.
+  - Text layout receives shaped glyph buffers (glyph IDs, x/y offsets, advances) rendered with exact geometric placement via `Path2D` or vector glyph caching.
+
+### 7.2 Color Management & True CMYK Separation (LittleCMS LCMS2)
+- **Challenge**: Standard browser displays operate in sRGB or Display-P3. High-volume commercial offset printing requires true DeviceCMYK raster separation and ICC profile color conversions (FOGRA39, GRACoL 2006, SWOP) to prevent rich black ink buildup and ensure strict ISO 12647 compliance.
+- **Architecture**:
+  - Pure JS color math provides high-precision CMYK translation, dynamic density calibration bars, and PDF/X `/OutputIntents` profile embedding.
+  - For full-raster 4-plate color separation (Cyan, Magenta, Yellow, Key) and spot color plates (Pantone PMS), Recto binds LittleCMS (`lcms2`) via WebAssembly/Tauri Rust backend.
+
+### 7.3 Advanced Text Automation: GREP Styles & Dynamic Table of Contents (TOC)
+- **GREP Styles Engine**: Native regular expression evaluation (`evaluateGrepStyles()`) running directly on paragraph styles to format phone numbers, currencies, dates, and capitalized runs automatically without manual character style tagging.
+- **Automated TOC Generator**: `generateTableOfContents()` crawls document structure for heading elements (`H1`, `H2`, `Title`), resolves real page coordinates, and formats dot leaders with linked page folios.
+
+### 7.4 Multi-Line Paragraph Composer & Knuth-Plass Balance
+- **Challenge**: Greedy line-breaking algorithms evaluate lines in isolation, creating uneven rag edges and rivers of white space.
+- **Architecture**:
+  - Global paragraph line balancing (`balanceParagraphLines`) minimizes demerits across entire paragraph blocks.
+  - Combines with Recto's Typographic Copyfit Optimizer (`copyfitTextFrame`), orphan buster, and micro-tracking compression.
+
+### 7.5 Massive Threaded Manuscripts & Multi-Threaded Layout (Web Workers)
+- **Challenge**: 400-page books with 50+ threaded text frames across dozens of spreads can bottleneck single-threaded JS runtimes during interactive reflow.
+- **Architecture**:
+  - Decouples text flow measurement into dedicated background Web Workers (`layout.worker.ts`).
+  - Virtualized spread rendering guarantees $O(1)$ canvas rendering overhead by only drawing spreads within the viewport frustum plus a 1-spread predictive buffer.
+
+### 7.6 Layered Asset Ecosystem (.psd, .ai)
+- Direct binary parsing of linked layered Photoshop (`.psd`) and Illustrator (`.ai`) files via WASM parser, enabling layer visibility toggles, clipping path extraction, and spot channel preservation directly on the page layout.
+

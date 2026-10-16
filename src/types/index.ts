@@ -47,6 +47,8 @@ export interface DocumentSettings {
   columnCount: number;
   columnGutterMm: number;
   baselineGrid: BaselineGridSettings;
+  colorMode?: 'cmyk' | 'rgb';
+  iccProfile?: 'FOGRA39' | 'GRACoL2006' | 'SWOP2006' | 'sRGB';
   footnotes?: Footnote[];
   footnoteSettings?: FootnoteSettings;
 }
@@ -95,6 +97,15 @@ export type SemanticPdfTag =
   | 'Figure'
   | 'Table';
 
+export interface GrepStyleRule {
+  id: string;
+  pattern: string;
+  color?: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+}
+
 export interface ParagraphStyle {
   id: string;
   name: string;
@@ -109,6 +120,8 @@ export interface ParagraphStyle {
   opticalMarginAlignment?: boolean;
   openTypeFeatures?: OpenTypeFeatures;
   pdfTag?: SemanticPdfTag;
+  grepStyles?: GrepStyleRule[];
+  balanceLines?: boolean;
 }
 
 export type ElementType = 'text' | 'image' | 'shape' | 'table' | 'path';

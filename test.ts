@@ -2264,8 +2264,124 @@ stateManager.deleteElement(uncaptionedImg.id);
 
 console.log('✓ PDF/UA Universal Accessibility & Tagged PDF Pipeline verified.');
 
+// --- Suite 34: GREP Styles Automation Engine ---
+console.log('\n--- Suite 34: GREP Styles Automation Engine ---');
+const sampleText = 'In year 2026, the offset press printed 14500 copies at 45.50 each.';
+const grepMatches = stateManager.evaluateGrepStyles(sampleText, 'style-body');
+assert(grepMatches.length >= 3, 'GREP evaluator must detect digit runs in sample text');
+assert.strictEqual(grepMatches[0].text, '2026');
+assert.strictEqual(grepMatches[0].rule.id, 'grep-digits');
+assert.strictEqual(grepMatches[0].rule.bold, true);
+assert.strictEqual(grepMatches[1].text, '14500');
+assert.strictEqual(grepMatches[2].text, '45.50');
+console.log('✓ GREP Styles Automation Engine and regex matching verified.');
+
+// --- Suite 35: Automated Table of Contents (TOC) Generator ---
+console.log('\n--- Suite 35: Automated Table of Contents (TOC) Generator ---');
+const activePage = stateManager.getActiveSpread().pages[0];
+const headingEl: TextElement = {
+  id: 'test-toc-heading-1',
+  type: 'text',
+  pageId: activePage.id,
+  x: 20,
+  y: 20,
+  width: 100,
+  height: 20,
+  rotation: 0,
+  opacity: 1,
+  zIndex: 1,
+  locked: false,
+  text: 'Chapter 1: The New Horizon',
+  fontFamily: 'Playfair Display, serif',
+  fontSizePt: 28,
+  lineHeight: 1.2,
+  letterSpacingPt: 0,
+  color: '#000000',
+  alignment: 'left',
+  columns: 1,
+  columnGutterMm: 4,
+  backgroundColor: 'transparent',
+  borderColor: 'transparent',
+  borderWidthMm: 0,
+  paddingMm: 2,
+  paragraphStyleId: 'style-h1',
+};
+stateManager.addElement(headingEl);
+
+const tocResult = stateManager.generateTableOfContents(activePage.id, '.');
+assert(tocResult.entries.length > 0, 'TOC generator must discover headings in document');
+assert(tocResult.entries.some(e => e.title.includes('Chapter 1')), 'TOC must contain Chapter 1 entry');
+assert(tocResult.tocText.includes('.'), 'TOC text must contain dot leaders');
+assert(tocResult.elementId, 'TOC element should be inserted when targetPageId is supplied');
+const tocElem = stateManager.getElementById(tocResult.elementId!) as TextElement;
+assert(tocElem && tocElem.text.includes('TABLE OF CONTENTS'), 'Generated element must contain TOC title and entries');
+
+// Clean up generated elements
+stateManager.deleteElement(headingEl.id);
+stateManager.deleteElement(tocResult.elementId!);
+console.log('✓ Automated Table of Contents (TOC) Generator & Dot Leader Formatter verified.');
+
+// --- Suite 36: Prepress CMYK Color Modes & PDF/X Output Intent ---
+console.log('\n--- Suite 36: Prepress CMYK Color Modes & PDF/X Output Intent ---');
+assert.strictEqual(stateManager.getState().settings.colorMode, 'cmyk', 'Default colorMode should be cmyk');
+assert.strictEqual(stateManager.getState().settings.iccProfile, 'FOGRA39', 'Default iccProfile should be FOGRA39');
+
+const cmykPdf = await exportDocumentToPdf(stateManager.getState(), {
+  includeBleed: true,
+  includeCropMarks: true,
+  spreadRange: 'current',
+});
+const cmykPdfOutput = cmykPdf.output();
+assert(cmykPdfOutput.includes('/OutputIntents'), 'Exported PDF must include /OutputIntents dictionary');
+assert(cmykPdfOutput.includes('/GTS_PDFX'), 'OutputIntent must be GTS_PDFX compliant');
+assert(cmykPdfOutput.includes('FOGRA39'), 'OutputIntent must specify FOGRA39 ICC profile');
+assert(cmykPdfOutput.includes('CMYK FOGRA39 Output Intent'), 'OutputIntent must describe color profile intent');
+
+const cmykFilename = `${stateManager.getState().settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'recto-document'}.pdf`;
+if (fs.existsSync(cmykFilename)) {
+  fs.unlinkSync(cmykFilename);
+}
+console.log('✓ Prepress CMYK Color Modes & PDF/X Output Intent verified.');
+
+// --- Suite 37: Multi-Line Paragraph Composer & Knuth-Plass Balancer ---
+console.log('\n--- Suite 37: Multi-Line Paragraph Composer & Knuth-Plass Balancer ---');
+const balanceElemId = 'test-balance-text';
+const unbalancedText: TextElement = {
+  id: balanceElemId,
+  type: 'text',
+  pageId: activePage.id,
+  x: 20,
+  y: 30,
+  width: 80,
+  height: 40,
+  rotation: 0,
+  opacity: 1,
+  zIndex: 1,
+  locked: false,
+  text: 'Desktop publishing engines must handle long complex paragraphs with balanced line lengths to avoid ragged contours.',
+  fontFamily: 'Inter',
+  fontSizePt: 10,
+  lineHeight: 1.3,
+  letterSpacingPt: 0,
+  color: '#000000',
+  alignment: 'left',
+  columns: 1,
+  columnGutterMm: 4,
+  backgroundColor: 'transparent',
+  borderColor: 'transparent',
+  borderWidthMm: 0,
+  paddingMm: 2,
+};
+stateManager.addElement(unbalancedText);
+const didBalance = stateManager.balanceParagraphLines(balanceElemId);
+assert(didBalance, 'balanceParagraphLines should rebalance lines for multi-word paragraphs');
+const balancedElem = stateManager.getElementById(balanceElemId) as TextElement;
+assert(balancedElem.text.includes('\n'), 'Balanced text should have inserted line breaks across balanced chunks');
+stateManager.deleteElement(balanceElemId);
+console.log('✓ Multi-Line Paragraph Composer & Knuth-Plass Balancer verified.');
+
 console.log('\n=============================================');
-console.log('ALL 33 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
+console.log('ALL 37 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
 console.log('=============================================\n');
 
 

@@ -26,6 +26,7 @@ import {
   Footnote,
   FootnoteSettings,
   CopyfitResult,
+  GrepStyleRule,
 } from '../types/index';
 import { RectoDB } from './persistence';
 import { parseIdmlPackage } from '../idmlImport';
@@ -48,6 +49,20 @@ export function superscriptToNumber(str: string): number {
   const normal = str.split('').map((ch) => REVERSE_SUPERSCRIPTS[ch] || ch).join('');
   const val = parseInt(normal, 10);
   return isNaN(val) ? 1 : val;
+}
+
+export interface GrepMatch {
+  start: number;
+  end: number;
+  text: string;
+  rule: GrepStyleRule;
+}
+
+export interface TocEntry {
+  title: string;
+  pageNumber: number;
+  level: number;
+  elementId: string;
 }
 
 // shortcut: localStorage used for autosave; upgrade to IndexedDB when projects exceed 5MB
@@ -108,6 +123,14 @@ export const DEFAULT_PARAGRAPH_STYLES: ParagraphStyle[] = [
     opticalMarginAlignment: true,
     openTypeFeatures: { ligatures: true, fractions: true },
     pdfTag: 'P',
+    grepStyles: [
+      {
+        id: 'grep-digits',
+        pattern: '\\b[0-9]+(?:\\.[0-9]+)?\\b',
+        bold: true,
+        color: '#1a1a1a',
+      },
+    ],
   },
   {
     id: 'style-pullquote',
@@ -313,6 +336,8 @@ export const INITIAL_STATE: ProjectState = {
       incrementPt: 12,
       startMm: 20,
     },
+    colorMode: 'cmyk',
+    iccProfile: 'FOGRA39',
     footnotes: [],
     footnoteSettings: {
       numberingStyle: 'superscript',
@@ -710,10 +735,22 @@ export class StateManager {
         scope: 'document',
       };
     }
+    if (!this.state.settings.colorMode) {
+      this.state.settings.colorMode = 'cmyk';
+    }
+    if (!this.state.settings.iccProfile) {
+      this.state.settings.iccProfile = 'FOGRA39';
+    }
     this.pushHistory();
   }
 
   public getState(): ProjectState {
+    if (!this.state.settings.colorMode) {
+      this.state.settings.colorMode = 'cmyk';
+    }
+    if (!this.state.settings.iccProfile) {
+      this.state.settings.iccProfile = 'FOGRA39';
+    }
     return this.state;
   }
 
@@ -1751,6 +1788,12 @@ export class StateManager {
         if (!parsed.activeLayerId) {
           parsed.activeLayerId = parsed.layers[0]?.id || 'layer-1';
         }
+        if (!parsed.settings.colorMode) {
+          parsed.settings.colorMode = 'cmyk';
+        }
+        if (!parsed.settings.iccProfile) {
+          parsed.settings.iccProfile = 'FOGRA39';
+        }
         this.state = parsed;
         this.pushHistory();
         this.notify();
@@ -2559,6 +2602,173 @@ export class StateManager {
       fontSizeAdjustedPt,
       adjustments,
     };
+  }
+
+  /**
+   * Evaluates GREP / regex style rules against text for automated character-level formatting
+   */
+  public evaluateGrepStyles(text: string, styleId?: string): GrepMatch[] {
+    if (!text || !styleId) return [];
+    const style = this.state.paragraphStyles.find((s) => s.id === styleId);
+    if (!style || !style.grepStyles || style.grepStyles.length === 0) return [];
+
+    const matches: GrepMatch[] = [];
+    for (const rule of style.grepStyles) {
+      try {
+        const regex = new RegExp(rule.pattern, 'g');
+        let m: RegExpExecArray | null;
+        while ((m = regex.exec(text)) !== null) {
+          matches.push({
+            start: m.index,
+            end: m.index + m[0].length,
+            text: m[0],
+            rule,
+          });
+          if (m.index === regex.lastIndex) {
+            regex.lastIndex++;
+          }
+        }
+      } catch {
+        // Skip invalid regex gracefully
+      }
+    }
+    return matches.sort((a, b) => a.start - b.start);
+  }
+
+  /**
+   * Generates a structured Table of Contents (TOC) with dot leaders and page numbers
+   * by scanning headings across all document spreads.
+   */
+  public generateTableOfContents(targetPageId?: string, dotLeaderChar: string = '.'): {
+    tocText: string;
+    entries: TocEntry[];
+    elementId?: string;
+  } {
+    const entries: TocEntry[] = [];
+    let currentPageNumber = 1;
+
+    for (const spread of this.state.spreads) {
+      for (const page of spread.pages) {
+        const pageElements = spread.elements.filter((el) => el.pageId === page.id && el.type === 'text');
+        const sortedTextElements = [...pageElements].sort((a, b) => a.y - b.y);
+
+        for (const el of sortedTextElements) {
+          const txtEl = el as TextElement;
+          const style = this.state.paragraphStyles.find((s) => s.id === txtEl.paragraphStyleId);
+          const isH1 = style?.pdfTag === 'H1' || txtEl.paragraphStyleId === 'style-h1' || (style?.name && style.name.toLowerCase().includes('headline'));
+          const isH2 = style?.pdfTag === 'H2' || txtEl.paragraphStyleId === 'style-h2' || (style?.name && style.name.toLowerCase().includes('header 2'));
+          const isTitle = style?.pdfTag === 'Title' || txtEl.paragraphStyleId === 'style-title' || (txtEl.fontSizePt !== undefined && txtEl.fontSizePt >= 24);
+
+          if (isH1 || isH2 || isTitle) {
+            const firstLine = txtEl.text.split('\n')[0].trim();
+            if (firstLine.length > 0) {
+              entries.push({
+                title: firstLine,
+                pageNumber: currentPageNumber,
+                level: isH2 ? 2 : 1,
+                elementId: txtEl.id,
+              });
+            }
+          }
+        }
+        currentPageNumber++;
+      }
+    }
+
+    const lineWidthChars = 44;
+    const lines = entries.map((entry) => {
+      const indent = entry.level > 1 ? '  ' : '';
+      const prefix = `${indent}${entry.title} `;
+      const suffix = ` ${entry.pageNumber}`;
+      const dotsNeeded = Math.max(3, lineWidthChars - prefix.length - suffix.length);
+      const dots = dotLeaderChar.repeat(dotsNeeded);
+      return `${prefix}${dots}${suffix}`;
+    });
+
+    const tocText = lines.join('\n');
+
+    let createdElementId: string | undefined;
+    if (targetPageId) {
+      createdElementId = `toc-${Date.now()}`;
+      const tocElement: TextElement = {
+        id: createdElementId,
+        type: 'text',
+        pageId: targetPageId,
+        x: 20,
+        y: 25,
+        width: 170,
+        height: Math.max(40, lines.length * 10 + 20),
+        rotation: 0,
+        opacity: 1,
+        zIndex: 10,
+        locked: false,
+        text: `TABLE OF CONTENTS\n\n${tocText}`,
+        fontFamily: 'Merriweather, Georgia, serif',
+        fontSizePt: 10,
+        lineHeight: 1.6,
+        letterSpacingPt: 0,
+        color: '#1a1a1a',
+        alignment: 'left',
+        columns: 1,
+        columnGutterMm: 4,
+        backgroundColor: 'transparent',
+        borderColor: 'transparent',
+        borderWidthMm: 0,
+        paddingMm: 4,
+        paragraphStyleId: 'style-body',
+      };
+      this.addElement(tocElement);
+    }
+
+    return { tocText, entries, elementId: createdElementId };
+  }
+
+  /**
+   * Multi-line Paragraph Composer (Knuth-Plass / line balancing heuristic):
+   * Balances line lengths across a paragraph to eliminate rag and awkward lone words.
+   */
+  public balanceParagraphLines(elementId: string): boolean {
+    const el = this.getElementById(elementId);
+    if (!el || el.type !== 'text') return false;
+    const txt = el as TextElement;
+    const paragraphs = txt.text.split('\n');
+    let modified = false;
+
+    const balancedParagraphs = paragraphs.map((para) => {
+      const words = para.trim().split(/\s+/);
+      if (words.length < 6 || words.length > 50) return para;
+
+      const totalChars = words.reduce((sum, w) => sum + w.length, 0) + (words.length - 1);
+      const targetLines = Math.max(2, Math.round(words.length / 8));
+      const targetPerLine = Math.floor(totalChars / targetLines);
+
+      let currentLineLen = 0;
+      let result = '';
+      for (let i = 0; i < words.length; i++) {
+        const word = words[i];
+        if (i === 0) {
+          result += word;
+          currentLineLen += word.length;
+        } else {
+          if (currentLineLen + 1 + word.length > targetPerLine && i < words.length - 2) {
+            result += '\n' + word;
+            currentLineLen = word.length;
+            modified = true;
+          } else {
+            result += ' ' + word;
+            currentLineLen += 1 + word.length;
+          }
+        }
+      }
+      return result;
+    });
+
+    if (modified) {
+      txt.text = balancedParagraphs.join('\n');
+      this.pushHistory();
+      this.notify();
+    }
+    return modified;
   }
 
   private saveSnapshotsToStorage() {
