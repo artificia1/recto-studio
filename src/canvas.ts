@@ -503,6 +503,14 @@ export class SpreadCanvas {
         this.handlePenMouseDown(mmX, mmY, screenX, screenY, e);
         return;
       }
+      if (state.activeTool === 'text') {
+        const hit = this.hitTestElements(mmX, mmY, state);
+        if (hit && hit.type === 'text' && !hit.locked) {
+          stateManager.selectElement(hit.id);
+          this.openInlineTextEditor(hit.id);
+          return;
+        }
+      }
       const pageHit = this.findPageAtMm(mmX, mmY, state);
       if (pageHit) {
         this.isDrawingNew = true;
@@ -1101,8 +1109,15 @@ export class SpreadCanvas {
 
     this.closeInlineTextEditor(true);
 
-    const pageIdx = spread.pages.findIndex((p) => p.id === textEl.pageId);
-    if (pageIdx === -1) return;
+    let pageIdx = spread.pages.findIndex((p) => p.id === textEl.pageId);
+    if (pageIdx === -1) {
+      pageIdx = (textEl.x >= stateManager.getState().settings.widthMm && spread.pages.length > 1) ? 1 : 0;
+      if (spread.pages[pageIdx]) {
+        textEl.pageId = spread.pages[pageIdx].id;
+      } else {
+        pageIdx = 0;
+      }
+    }
 
     const state = stateManager.getState();
     const origin = this.getSpreadScreenOrigin(state);
@@ -1401,10 +1416,24 @@ export class SpreadCanvas {
 
   private handleDoubleClick(e?: MouseEvent) {
     const state = stateManager.getState();
-    if (!state.selectedElementId) return;
+    let targetId = state.selectedElementId;
+
+    if (e) {
+      const rect = this.canvas.getBoundingClientRect();
+      const screenX = e.clientX - rect.left;
+      const screenY = e.clientY - rect.top;
+      this.screenToSpreadMm(screenX, screenY, state);
+      const hit = this.hitTestElements(this._pointMm.x, this._pointMm.y, state);
+      if (hit && !hit.locked) {
+        targetId = hit.id;
+        stateManager.selectElement(hit.id);
+      }
+    }
+
+    if (!targetId) return;
 
     const spread = stateManager.getActiveSpread();
-    const el = spread.elements.find((item) => item.id === state.selectedElementId);
+    const el = spread.elements.find((item) => item.id === targetId);
     if (!el) return;
 
     if (el.type === 'text') {
@@ -3107,6 +3136,56 @@ export class SpreadCanvas {
         ctx.textBaseline = 'middle';
         ctx.fillText(peer.name, peerScreenX + 17, peerScreenY + 21);
         ctx.restore();
+      }
+    }
+
+    // Prepress CMYK Plate Separation View
+    if (state.plateSolo && state.plateSolo !== 'all') {
+      const plate = state.plateSolo;
+      const spreadPagesCount = spread.pages.length || 1;
+      const spreadBleedMm = state.settings.bleedMm || 3;
+      const spreadW = spreadPagesCount * pageWidthMm * pxPerMm;
+      const spreadH = pageHeightMm * pxPerMm;
+      const bleedPx = spreadBleedMm * pxPerMm;
+      const sx = Math.max(0, Math.floor(origin.x - bleedPx));
+      const sy = Math.max(0, Math.floor(origin.y - bleedPx));
+      const sw = Math.min(this.canvas.width - sx, Math.ceil(spreadW + bleedPx * 2));
+      const sh = Math.min(this.canvas.height - sy, Math.ceil(spreadH + bleedPx * 2));
+
+      if (sw > 0 && sh > 0) {
+        try {
+          const imgData = ctx.getImageData(sx, sy, sw, sh);
+          const d = imgData.data;
+          for (let i = 0; i < d.length; i += 4) {
+            const r = d[i] / 255;
+            const g = d[i + 1] / 255;
+            const b = d[i + 2] / 255;
+            const k = 1 - Math.max(r, g, b);
+            const c = k >= 0.999 ? 0 : (1 - r - k) / (1 - k);
+            const m = k >= 0.999 ? 0 : (1 - g - k) / (1 - k);
+            const y = k >= 0.999 ? 0 : (1 - b - k) / (1 - k);
+
+            if (plate === 'cyan') {
+              d[i] = Math.round(255 * (1 - c));
+              d[i + 1] = Math.round(255 * (1 - c * 0.35));
+              d[i + 2] = 255;
+            } else if (plate === 'magenta') {
+              d[i] = 255;
+              d[i + 1] = Math.round(255 * (1 - m));
+              d[i + 2] = Math.round(255 * (1 - m * 0.45));
+            } else if (plate === 'yellow') {
+              d[i] = 255;
+              d[i + 1] = 255;
+              d[i + 2] = Math.round(255 * (1 - y));
+            } else if (plate === 'black') {
+              const v = Math.round(255 * (1 - k));
+              d[i] = v;
+              d[i + 1] = v;
+              d[i + 2] = v;
+            }
+          }
+          ctx.putImageData(imgData, sx, sy);
+        } catch {}
       }
     }
 

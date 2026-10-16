@@ -18,8 +18,8 @@ export const TOOL_ITEMS: ToolItem[] = [
   { id: 'shape-line', name: 'Line Tool', shortcut: 'L', icon: '╱' },
   { id: 'pen', name: 'Pen Tool', shortcut: 'P', icon: '✒' },
   { id: 'table', name: 'Table Tool', shortcut: 'Shift+T', icon: '⊞' },
-  { id: 'hand', name: 'Hand Tool', shortcut: 'H', icon: '✋' },
-  { id: 'zoom', name: 'Zoom Tool', shortcut: 'Z', icon: '🔍' },
+  { id: 'hand', name: 'Hand Tool', shortcut: 'H', icon: '◫' },
+  { id: 'zoom', name: 'Zoom Tool', shortcut: 'Z', icon: '⌕' },
 ];
 
 /** Maps a key press event to a tool selection action. */

@@ -335,6 +335,7 @@ export interface ProjectState {
   layers: Layer[];
   activeLayerId: string;
   previewMode?: boolean;
+  plateSolo?: 'all' | 'cyan' | 'magenta' | 'yellow' | 'black';
 }
 
 export interface VersionSnapshot {
@@ -372,7 +373,8 @@ export type PreflightIssueCode =
   | 'TRIM_HAZARD'
   | 'BLEED_ERROR'
   | 'MISSING_ALT_TEXT'
-  | 'HEADING_ORDER_HAZARD';
+  | 'HEADING_ORDER_HAZARD'
+  | 'TAC_INK_DENSITY';
 
 export type PreflightSeverity = 'error' | 'warning' | 'info';
 

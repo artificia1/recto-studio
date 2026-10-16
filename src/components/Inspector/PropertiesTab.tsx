@@ -20,7 +20,7 @@ export function PropertiesTab({ state }: PropertiesTabProps) {
   if (selectedElements.length === 0) {
     return (
       <div className="empty-inspector">
-        <div className="empty-icon">❖</div>
+        <div className="empty-icon"></div>
         <div className="empty-title">No Element Selected</div>
         <p className="empty-desc">
           Click any text frame, image, or shape on the spread to inspect its typography and geometry. Press <kbd>T</kbd> to draw text or <kbd>F</kbd> for an image frame. Drag across the spread to marquee-select multiple objects.
@@ -324,9 +324,9 @@ function TextInspector({
           <span style={{ fontSize: '11px', fontWeight: 600 }}>Font Family</span>
           <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>
             {fontManager.isCustomFont(element.fontFamily)
-              ? '★ Custom Font'
+              ? '[Custom Font]'
               : fontManager.isGoogleFont(element.fontFamily)
-              ? '✦ Google Font'
+              ? '[Google Font]'
               : 'System Font'}
           </span>
         </div>
@@ -395,7 +395,7 @@ function TextInspector({
               )}
 
               {customGroup.length > 0 && (
-                <optgroup label="★ Custom Installed Fonts">
+                <optgroup label="Custom Installed Fonts">
                   {customGroup.map(f => (
                     <option key={f.family} value={f.family}>
                       {f.family}
@@ -404,7 +404,7 @@ function TextInspector({
                 </optgroup>
               )}
 
-              <optgroup label="✦ Google Fonts">
+              <optgroup label="Google Fonts">
                 {googleGroup.map(f => (
                   <option key={f.family} value={`${f.family}, ${f.fallback}`}>
                     {f.family}
@@ -454,7 +454,7 @@ function TextInspector({
           }}
           title="Click to browse or drag & drop .woff2, .ttf, or .otf font file directly"
         >
-          {isFontHover ? '📥 Drop font file to install' : '🔤 Drop font file (.woff2, .ttf, .otf) or click'}
+          {isFontHover ? 'Drop font file to install' : 'Drop font file (.woff2, .ttf, .otf) or click to browse'}
         </div>
       </div>
 
@@ -602,7 +602,7 @@ function TextInspector({
         }}
         title="Auto Copyfit: bind orphan words with non-breaking spaces and micro-adjust tracking to eliminate overflow"
       >
-        ✨ Auto Copyfit (Eliminate Overflow)
+        Auto Copyfit (Eliminate Overflow)
       </button>
 
       <div className="input-grid-2" style={{ marginTop: '10px' }}>

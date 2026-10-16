@@ -232,7 +232,7 @@ export function LayersTab({ state }: LayersTabProps) {
                 }}
                 title={layer.visible ? 'Hide Layer' : 'Show Layer'}
               >
-                {layer.visible ? '👁' : '─'}
+                {layer.visible ? '◉' : '○'}
               </button>
 
               {/* Lock Toggle */}
@@ -370,7 +370,7 @@ export function LayersTab({ state }: LayersTabProps) {
                 }}
                 title={layers.length <= 1 ? 'Cannot delete only remaining layer' : 'Delete Layer'}
               >
-                🗑
+                ×
               </button>
             </div>
           );

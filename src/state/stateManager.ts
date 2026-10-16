@@ -65,7 +65,7 @@ export interface TocEntry {
   elementId: string;
 }
 
-// shortcut: localStorage used for autosave; upgrade to IndexedDB when projects exceed 5MB
+// Local-first persistent storage keys
 const STORAGE_KEY = 'recto_project_autosave';
 const SNAPSHOTS_STORAGE_KEY = 'recto_version_snapshots';
 
@@ -475,7 +475,7 @@ export const INITIAL_STATE: ProjectState = {
           opacity: 0.8,
           zIndex: 2,
           locked: false,
-          text: '2',
+          text: '{{page}}',
           fontFamily: 'Playfair Display, serif',
           fontSizePt: 10,
           lineHeight: 1,
@@ -572,7 +572,7 @@ export const INITIAL_STATE: ProjectState = {
           opacity: 0.8,
           zIndex: 2,
           locked: false,
-          text: '3',
+          text: '{{page}}',
           fontFamily: 'Playfair Display, serif',
           fontSizePt: 10,
           lineHeight: 1,
@@ -697,6 +697,30 @@ export class StateManager {
     this.state = this.loadFromStorage() || INITIAL_STATE;
     this.snapshots = this.loadSnapshotsFromStorage();
     this.renumberPages();
+
+    // Auto-clamp master footers and elements to page boundaries
+    const curH = this.state.settings?.heightMm || 297;
+    const curW = this.state.settings?.widthMm || 210;
+    const btmM = this.state.settings?.margins?.bottomMm || 15;
+    const inM = this.state.settings?.margins?.insideMm || 20;
+    const outM = this.state.settings?.margins?.outsideMm || 15;
+
+    for (const master of this.state.masterSpreads || []) {
+      for (const mEl of master.elements) {
+        if (mEl.id.includes('ftr') || mEl.y >= curH - 5) {
+          mEl.y = Math.max(10, curH - btmM - (mEl.height || 8) + 2);
+          mEl.width = Math.max(40, curW - (inM + outM));
+        }
+      }
+    }
+    for (const spread of this.state.spreads || []) {
+      for (const el of spread.elements) {
+        if (el.y + (el.height || 0) > curH - 2) {
+          el.y = Math.max(10, curH - btmM - (el.height || 8) + 2);
+        }
+      }
+    }
+
     if (!Array.isArray(this.state.selectedElementIds)) {
       this.state.selectedElementIds = this.state.selectedElementId ? [this.state.selectedElementId] : [];
     }
@@ -832,6 +856,18 @@ export class StateManager {
           }
         }
       }
+
+      for (const spread of this.state.spreads) {
+        for (const el of spread.elements) {
+          if (el.y + (el.height || 0) > newH - 2) {
+            el.y = Math.max(10, newH - bottomM - (el.height || 8) + 2);
+          }
+          if (el.x + (el.width || 0) > newW - 2) {
+            el.width = Math.max(20, Math.min(el.width, newW - (insideM + outsideM)));
+            el.x = Math.max(insideM, Math.min(el.x, newW - outsideM - el.width));
+          }
+        }
+      }
     }
 
     this.renumberPages();
@@ -901,6 +937,11 @@ export class StateManager {
 
   public setDisplayQuality(quality: ProjectState['displayQuality']) {
     this.state.displayQuality = quality;
+    this.notify();
+  }
+
+  public setPlateSolo(plate: ProjectState['plateSolo']) {
+    this.state.plateSolo = plate;
     this.notify();
   }
 
@@ -1612,13 +1653,12 @@ export class StateManager {
     if (!chapterTitle) {
       chapterTitle = this.state.settings.title;
     }
-
     return text
-      .replace(/\{\{page\}\}/g, String(pageNum))
-      .replace(/\{\{totalPages\}\}/g, String(Math.max(1, totalPages)))
-      .replace(/\{\{docTitle\}\}/g, this.state.settings.title)
-      .replace(/\{\{chapterTitle\}\}/g, chapterTitle)
-      .replace(/\{\{sectionTitle\}\}/g, chapterTitle);
+      .replace(/\{\{page\}\}/gi, String(pageNum))
+      .replace(/\{\{totalPages\}\}/gi, String(Math.max(1, totalPages)))
+      .replace(/\{\{docTitle\}\}/gi, this.state.settings.title)
+      .replace(/\{\{chapterTitle\}\}/gi, chapterTitle)
+      .replace(/\{\{sectionTitle\}\}/gi, chapterTitle);
   }
 
   public deleteSelectedElements() {
@@ -1883,6 +1923,7 @@ export class StateManager {
           parsed.settings.iccProfile = 'FOGRA39';
         }
         this.state = parsed;
+        this.renumberPages();
         this.pushHistory();
         this.notify();
       }
@@ -1982,6 +2023,37 @@ export class StateManager {
   public exportJson(): string {
     return JSON.stringify(this.state, null, 2);
   }
+
+  public calculateTacPercentage(colorStr?: string): number {
+  if (!colorStr || colorStr === 'transparent' || colorStr === 'none') return 0;
+  const str = colorStr.trim();
+  const cmykMatch = str.match(/cmyk\s*\(\s*([\d.]+)%?\s*,\s*([\d.]+)%?\s*,\s*([\d.]+)%?\s*,\s*([\d.]+)%?\s*\)/i);
+  if (cmykMatch) {
+    const c = parseFloat(cmykMatch[1]) || 0;
+    const m = parseFloat(cmykMatch[2]) || 0;
+    const y = parseFloat(cmykMatch[3]) || 0;
+    const k = parseFloat(cmykMatch[4]) || 0;
+    return Math.round(c + m + y + k);
+  }
+
+  let hex = str;
+  if (hex.startsWith('#')) {
+    hex = hex.substring(1);
+    if (hex.length === 3) hex = hex.split('').map((c) => c + c).join('');
+    if (hex.length === 6) {
+      const r = parseInt(hex.substring(0, 2), 16) / 255;
+      const g = parseInt(hex.substring(2, 4), 16) / 255;
+      const b = parseInt(hex.substring(4, 6), 16) / 255;
+      const k = 1 - Math.max(r, g, b);
+      if (k >= 0.99) return 100;
+      const c = (1 - r - k) / (1 - k);
+      const m = (1 - g - k) / (1 - k);
+      const y = (1 - b - k) / (1 - k);
+      return Math.round((c + m + y + k) * 100);
+    }
+  }
+  return 0;
+}
 
   public runPreflightCheck(): PreflightIssue[] {
     const issues: PreflightIssue[] = [];
@@ -2174,6 +2246,33 @@ export class StateManager {
             }
           }
         }
+
+        // 7. TAC_INK_DENSITY: Total Area Coverage (TAC) exceeding 300%
+        if (el.type === 'shape' || el.type === 'text') {
+          const colorsToCheck = [
+            (el as any).fillColor,
+            (el as any).strokeColor,
+            (el as any).color,
+            (el as any).backgroundColor,
+            (el as any).borderColor,
+          ].filter(Boolean);
+
+          for (const col of colorsToCheck) {
+            const tac = this.calculateTacPercentage(col);
+            if (tac > 300) {
+              issues.push({
+                id: `preflight-tac-${spreadIdx}-${el.id}`,
+                severity: 'warning',
+                code: 'TAC_INK_DENSITY',
+                message: `Ink coverage (${tac}%) exceeds standard press threshold (300% TAC). Risk of wet ink offset and smudging.`,
+                spreadIndex: spreadIdx,
+                pageNumber,
+                elementId: el.id,
+              });
+              break;
+            }
+          }
+        }
       }
     });
 
@@ -2217,12 +2316,12 @@ export class StateManager {
       const padding = textEl.paddingMm ?? 2;
       const cols = Math.max(1, textEl.columns || 1);
       const gutter = textEl.columnGutterMm ?? 4;
-      const fontPt = textEl.fontSizePt || 10;
+      let fontPt = textEl.fontSizePt || 10;
       const lineH = textEl.lineHeight || 1.3;
-      const lineSpacingMm = (fontPt * lineH * 25.4) / 72;
+      let lineSpacingMm = (fontPt * lineH * 25.4) / 72;
       const availW = Math.max(10, (textEl.width - (padding * 2) - ((cols - 1) * gutter)) / cols);
-      const avgCharWidthMm = (fontPt * 0.45 * 25.4) / 72;
-      const charsPerLine = Math.max(10, Math.floor(availW / avgCharWidthMm));
+      let avgCharWidthMm = (fontPt * 0.45 * 25.4) / 72;
+      let charsPerLine = Math.max(10, Math.floor(availW / avgCharWidthMm));
 
       const explicitLines = textContent.split('\n');
       let approxRenderedLines = 0;
@@ -2240,11 +2339,23 @@ export class StateManager {
       if (requiredHeightMm <= maxAllowedH) {
         textEl.height = Math.max(textEl.height, requiredHeightMm);
       } else {
-        const availH = Math.max(10, maxAllowedH - (padding * 2));
-        const targetLineSpacingMm = availH / requiredLinesPerCol;
-        const targetFontPt = Math.max(6, Math.floor((targetLineSpacingMm * 72 / (lineH * 25.4)) * 10) / 10);
-        textEl.fontSizePt = targetFontPt;
         textEl.height = Math.max(15, maxAllowedH);
+        const availH = Math.max(10, textEl.height - (padding * 2));
+        while (fontPt > 6) {
+          lineSpacingMm = (fontPt * lineH * 25.4) / 72;
+          const maxLinesPerCol = Math.max(1, Math.floor(availH / lineSpacingMm));
+          avgCharWidthMm = (fontPt * 0.45 * 25.4) / 72;
+          charsPerLine = Math.max(10, Math.floor(availW / avgCharWidthMm));
+          let lines = 0;
+          for (const line of explicitLines) {
+            lines += Math.max(1, Math.ceil(line.length / charsPerLine));
+          }
+          if (lines <= maxLinesPerCol * cols) {
+            break;
+          }
+          fontPt = Math.round((fontPt - 0.5) * 10) / 10;
+        }
+        textEl.fontSizePt = fontPt;
       }
 
       this.pushHistory();
@@ -2307,6 +2418,32 @@ export class StateManager {
     if (issue.code === 'HEADING_ORDER_HAZARD' && el.type === 'text') {
       const txt = el as TextElement;
       txt.paragraphStyleId = 'style-h1';
+      this.pushHistory();
+      this.notify();
+      return true;
+    }
+
+    if (issue.code === 'TAC_INK_DENSITY') {
+      if (el.type === 'shape') {
+        const shape = el as ShapeElement;
+        if (shape.fillColor && this.calculateTacPercentage(shape.fillColor) > 300) {
+          shape.fillColor = '#1a1a1a';
+        }
+        if (shape.strokeColor && this.calculateTacPercentage(shape.strokeColor) > 300) {
+          shape.strokeColor = '#1a1a1a';
+        }
+      } else if (el.type === 'text') {
+        const txt = el as TextElement;
+        if (txt.color && this.calculateTacPercentage(txt.color) > 300) {
+          txt.color = '#1a1a1a';
+        }
+        if (txt.backgroundColor && this.calculateTacPercentage(txt.backgroundColor) > 300) {
+          txt.backgroundColor = '#1a1a1a';
+        }
+        if (txt.borderColor && this.calculateTacPercentage(txt.borderColor) > 300) {
+          txt.borderColor = '#1a1a1a';
+        }
+      }
       this.pushHistory();
       this.notify();
       return true;

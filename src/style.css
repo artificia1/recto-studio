@@ -53,7 +53,9 @@ html, body {
   gap: 8px;
   z-index: 100;
   position: relative;
-  overflow: visible;
+  overflow-x: auto;
+  overflow-y: visible;
+  scrollbar-width: thin;
 }
 
 /* CONTEXTUAL CONTROL BAR (InDesign Control Strip) */
@@ -296,7 +298,20 @@ html, body {
   display: flex;
   align-items: center;
   gap: 6px;
+  margin-left: auto;
   flex-shrink: 0;
+}
+
+@media (max-width: 1400px) {
+  .top-bar-align-group {
+    display: none !important;
+  }
+}
+
+@media (max-width: 1100px) {
+  .doc-title-input {
+    max-width: 130px;
+  }
 }
 
 .action-btn {
@@ -1158,7 +1173,7 @@ kbd {
   border: 1px solid #444444;
   border-radius: 6px;
   box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.7);
-  z-index: 1000;
+  z-index: 9999;
   display: flex;
   flex-direction: column;
   overflow: hidden;

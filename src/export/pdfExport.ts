@@ -31,7 +31,7 @@ export async function exportDocumentToPdf(
 
   const { widthMm, heightMm, bleedMm } = state.settings;
   const bleed = includeBleed ? bleedMm : 0;
-  const slug = (includeCropMarks || includeRegistrationMarks || includeColorBars) ? 12 : 0;
+  const slug = (includeCropMarks || includeRegistrationMarks || includeColorBars) ? 14 : 0;
 
   const pdfPageWidth = widthMm + (bleed * 2) + (slug * 2);
   const pdfPageHeight = heightMm + (bleed * 2) + (slug * 2);
@@ -105,7 +105,7 @@ export async function exportDocumentToPdf(
         widthMm,
         heightMm,
         state.settings.title,
-        page.pageNumber,
+        Math.min(page.pageNumber, totalPagesInDoc),
         totalPagesInDoc,
         state.settings.colorMode || 'cmyk',
         state.settings.iccProfile || 'FOGRA39'
@@ -123,7 +123,10 @@ export async function exportDocumentToPdf(
           }
 
           const mX = originX + mEl.x;
-          const mY = originY + mEl.y;
+          let mY = originY + mEl.y;
+          if (mEl.y + (mEl.height || 0) > heightMm - 2) {
+            mY = originY + Math.max(0, heightMm - (state.settings.margins.bottomMm || 15) + 2);
+          }
 
           if (mEl.type === 'shape') {
             const shape = mEl as ShapeElement;
@@ -392,10 +395,10 @@ export function drawRegistrationTargets(doc: any, x: number, y: number, w: numbe
   doc.setLineWidth(0.15);
 
   const targets = [
-    { cx: x + w / 2, cy: y - slug / 2 },          // Top target
-    { cx: x + w / 2, cy: y + h + slug / 2 },      // Bottom target
-    { cx: x - slug / 2, cy: y + h / 2 },          // Left target
-    { cx: x + w + slug / 2, cy: y + h / 2 },      // Right target
+    { cx: x + w / 2, cy: y - 5.5 },          // Top target
+    { cx: x + w / 2, cy: y + h + 5.5 },      // Bottom target
+    { cx: x - 5.5, cy: y + h / 2 },          // Left target
+    { cx: x + w + 5.5, cy: y + h / 2 },      // Right target
   ];
 
   for (const { cx, cy } of targets) {
@@ -407,7 +410,7 @@ export function drawRegistrationTargets(doc: any, x: number, y: number, w: numbe
 }
 
 export function drawCMYKCalibrationBar(doc: any, x: number, y: number, w: number) {
-  const barY = y - 9;
+  const barY = y - 11.5;
   const swatchW = 7;
   const swatchH = 3;
 
@@ -449,8 +452,9 @@ function drawSlugMetadata(
   doc.setFont('helvetica', 'normal');
 
   const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
-  const metaText = `RECTO STUDIO · ${title.toUpperCase()} · PAGE ${pageNum} OF ${totalPages} · ${timestamp} · COLOR: ${colorMode.toUpperCase()} (${iccProfile}) · PDF/X READY`;
-  doc.text(metaText, x, y + h + 8);
+  const safePageNum = Math.min(pageNum, totalPages);
+  const metaText = `RECTO STUDIO · ${title.toUpperCase()} · PAGE ${safePageNum} OF ${totalPages} · ${timestamp} · COLOR: ${colorMode.toUpperCase()} (${iccProfile}) · PDF/X READY`;
+  doc.text(metaText, x, y + h + 11.5);
 }
 
 function escapePdfText(str: string): string {

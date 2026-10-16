@@ -50,15 +50,6 @@ export function StatusBar({ state }: StatusBarProps) {
   return (
     <footer className="status-bar">
       <div className="status-left">
-        <span className="status-item status-mode">● {state.settings.facingPages ? 'Facing Pages' : 'Single'} ({pagesDesc})</span>
-        <span className="status-divider">|</span>
-        <span className="status-item status-meta-margins">Margins: {state.settings.margins.insideMm}/{state.settings.margins.outsideMm}mm</span>
-        <span className="status-divider status-meta-margins">|</span>
-        <span className="status-item status-meta-bleed">Bleed: {state.settings.bleedMm}mm</span>
-        <span className="status-divider status-meta-bleed">|</span>
-        <span className="status-item status-active-tool">Tool: <b>{state.activeTool.toUpperCase()}</b></span>
-        <span className="status-divider">|</span>
-
         {issues.length === 0 ? (
           <span
             ref={triggerRef as any}
@@ -68,8 +59,9 @@ export function StatusBar({ state }: StatusBarProps) {
               setDrawerOpen(!drawerOpen);
             }}
             title="Print Preflight: All print criteria passed. Click to view audit."
+            style={{ flexShrink: 0 }}
           >
-            ✔ Preflight: OK
+            Preflight: OK
           </span>
         ) : (
           <button
@@ -80,10 +72,20 @@ export function StatusBar({ state }: StatusBarProps) {
               setDrawerOpen(!drawerOpen);
             }}
             title="Click to view and resolve print preflight issues"
+            style={{ flexShrink: 0 }}
           >
-            ⚠ Preflight: {issues.length} {issues.length === 1 ? 'Issue' : 'Issues'}
+            Preflight: {issues.length} {issues.length === 1 ? 'Issue' : 'Issues'}
           </button>
         )}
+
+        <span className="status-divider">|</span>
+        <span className="status-item status-mode">● {state.settings.facingPages ? 'Facing Pages' : 'Single'} ({pagesDesc})</span>
+        <span className="status-divider status-meta-margins">|</span>
+        <span className="status-item status-meta-margins">Margins: {state.settings.margins.insideMm}/{state.settings.margins.outsideMm}mm</span>
+        <span className="status-divider status-meta-bleed">|</span>
+        <span className="status-item status-meta-bleed">Bleed: {state.settings.bleedMm}mm</span>
+        <span className="status-divider">|</span>
+        <span className="status-item status-active-tool">Tool: <b>{state.activeTool.toUpperCase()}</b></span>
       </div>
 
       <div className="status-right">
@@ -95,9 +97,24 @@ export function StatusBar({ state }: StatusBarProps) {
             className="status-quality-select"
             title="Display Performance: Fast (Wireframe), Typical (Proxy Cache), High (Full Res)"
           >
-            <option value="fast">⚡ Fast</option>
-            <option value="typical">📊 Typical</option>
-            <option value="high">🔍 High</option>
+            <option value="fast">Fast</option>
+            <option value="typical">Typical</option>
+            <option value="high">High</option>
+          </select>
+        </div>
+        <div className="status-display-group" style={{ marginLeft: '6px' }}>
+          <span className="status-display-title">Plates:</span>
+          <select
+            value={state.plateSolo || 'all'}
+            onChange={(e: any) => stateManager.setPlateSolo(e.target.value)}
+            className="status-quality-select"
+            title="CMYK Separation Plates: All, Cyan, Magenta, Yellow, Black (K)"
+          >
+            <option value="all">All (CMYK)</option>
+            <option value="cyan">Cyan</option>
+            <option value="magenta">Magenta</option>
+            <option value="yellow">Yellow</option>
+            <option value="black">Black (K)</option>
           </select>
         </div>
         <span className="status-divider status-meta-telemetry">|</span>
@@ -131,7 +148,7 @@ export function StatusBar({ state }: StatusBarProps) {
                   onClick={handleFixAll}
                   title="Automatically fix all resolvable preflight issues"
                 >
-                  ⚡ Auto-Fix All
+                  Auto-Fix All
                 </button>
               )}
               <button
@@ -147,7 +164,7 @@ export function StatusBar({ state }: StatusBarProps) {
           <div className="preflight-drawer-body">
             {issues.length === 0 ? (
               <div style={{ padding: '16px 12px', color: '#2ec4b6', fontSize: '11px', textAlign: 'center' }}>
-                <div style={{ fontSize: '18px', marginBottom: '6px' }}>✔</div>
+                <div style={{ fontSize: '18px', marginBottom: '6px' }}>OK</div>
                 <b>All Preflight Checks Passed</b>
                 <div style={{ color: '#888', marginTop: '4px', fontSize: '10.5px' }}>
                   No overset text, low-res assets, missing Alt Text, bleed gaps, or trim edge hazards detected.
@@ -186,7 +203,7 @@ export function StatusBar({ state }: StatusBarProps) {
                       onClick={(e) => handleFixIssue(e as any, issue)}
                       title="Apply automatic fix for this issue"
                     >
-                      ⚡ Quick Fix
+                      Quick Fix
                     </button>
                   </div>
                 </div>

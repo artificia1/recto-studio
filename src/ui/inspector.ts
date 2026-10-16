@@ -11,13 +11,13 @@ export interface InspectorTabDefinition {
 }
 
 export const INSPECTOR_TABS: InspectorTabDefinition[] = [
-  { id: 'properties', label: 'Properties', icon: '⚙' },
+  { id: 'properties', label: 'Properties', icon: '◧' },
   { id: 'styles', label: 'Styles', icon: '¶' },
   { id: 'layers', label: 'Layers', icon: '≡' },
-  { id: 'links', label: 'Links', icon: '🔗' },
-  { id: 'pages', label: 'Pages', icon: '📄' },
-  { id: 'templates', label: 'Templates', icon: '📋' },
-  { id: 'setup', label: 'Doc Setup', icon: '📐' },
+  { id: 'links', label: 'Links', icon: '☍' },
+  { id: 'pages', label: 'Pages', icon: '▥' },
+  { id: 'templates', label: 'Templates', icon: '⊞' },
+  { id: 'setup', label: 'Doc Setup', icon: '◫' },
 ];
 
 /** Retrieves the currently active selection elements for inspection. */

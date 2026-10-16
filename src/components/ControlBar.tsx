@@ -308,7 +308,7 @@ export function ControlBar({ state }: ControlBarProps) {
             title="Insert Footnote (Anchors superscript note to this text frame)"
             style={{ fontWeight: 600, color: '#93c5fd' }}
           >
-            ¹+ Footnote
+            + Footnote
           </button>
           {txt.columns > 1 && (
             <button
@@ -316,7 +316,7 @@ export function ControlBar({ state }: ControlBarProps) {
               onClick={() => stateManager.updateElement(txt.id, { balanceColumns: !txt.balanceColumns })}
               title="Toggle Balance Columns (Equalize line counts across columns)"
             >
-              ⚖ Balance
+              Balance
             </button>
           )}
           <button
@@ -331,7 +331,7 @@ export function ControlBar({ state }: ControlBarProps) {
             }}
             title="Auto Copyfit: bind orphan words & micro-adjust tracking to fit frame"
           >
-            ✨ Copyfit
+            Copyfit
           </button>
         </div>
       </div>

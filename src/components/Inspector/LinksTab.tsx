@@ -90,7 +90,7 @@ export function LinksTab({ state }: LinksTabProps) {
               }}
               title={`${lowResCount} image(s) below 250 DPI print resolution threshold`}
             >
-              ⚠ {lowResCount} Low-Res
+              {lowResCount} Low-Res
             </span>
           )}
         </div>
@@ -108,7 +108,6 @@ export function LinksTab({ state }: LinksTabProps) {
             border: '1px dashed var(--border-color)',
           }}
         >
-          <div style={{ fontSize: '20px', marginBottom: '6px' }}>🖼️</div>
           <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
             No Placed Links
           </div>
@@ -156,7 +155,7 @@ export function LinksTab({ state }: LinksTabProps) {
                         style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                       />
                     ) : (
-                      <span style={{ fontSize: '14px', color: '#666' }}>🖼️</span>
+                      <span style={{ fontSize: '11px', color: '#666', fontWeight: 600 }}>IMG</span>
                     )}
                   </div>
 
@@ -248,7 +247,7 @@ export function LinksTab({ state }: LinksTabProps) {
                         gap: '2px',
                       }}
                     >
-                      ⚠ Low-Res
+                      [Low-Res]
                     </span>
                   ) : (
                     <span
@@ -258,7 +257,7 @@ export function LinksTab({ state }: LinksTabProps) {
                         fontWeight: 700,
                       }}
                     >
-                      ✓ 300 Print
+                      [300 DPI Print]
                     </span>
                   )}
                 </div>

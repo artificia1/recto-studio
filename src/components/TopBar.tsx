@@ -11,6 +11,7 @@ import { exportDocumentToPdf } from '../pdfExport';
 import { exportDocumentToEpub } from '../epubExport';
 import { exportDocumentToFlipbook } from '../flipbookExport';
 import { packageDocument } from '../packageExport';
+import { exportDocumentToIdml } from '../export/idmlExport';
 import { ingestManuscript } from '../contentImport';
 import { parseCsv } from '../dataMerge';
 import { collabSession } from '../collab';
@@ -193,6 +194,18 @@ export function TopBar({ state }: TopBarProps) {
 
   const handlePackageDocument = () => {
     packageDocument(state, { download: true });
+  };
+
+  const handleExportIdml = () => {
+    const idmlBytes = exportDocumentToIdml(state);
+    const blob = new Blob([idmlBytes as any], { type: 'application/vnd.adobe.indesign-idml-package' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const safeTitle = (state.settings.title || 'publication').toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+    a.download = `${safeTitle}.idml`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const handleCsvUpload = async (e: Event) => {
@@ -378,7 +391,7 @@ export function TopBar({ state }: TopBarProps) {
         </select>
 
         {hasSelection && (
-          <div className="control-group">
+          <div className="control-group top-bar-align-group">
             <button
               className="icon-btn"
               onClick={() => stateManager.alignElements('left')}
@@ -659,6 +672,18 @@ export function TopBar({ state }: TopBarProps) {
                 <div>
                   <div className="dropdown-item-title">Package Document for Print...</div>
                   <div className="dropdown-item-sub">Bundle project, PDF, assets, and instructions into ZIP</div>
+                </div>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowExportMenu(false);
+                  handleExportIdml();
+                }}
+              >
+                <div>
+                  <div className="dropdown-item-title">Adobe InDesign Package (.idml)</div>
+                  <div className="dropdown-item-sub">Two-way exchange package for agency handoff</div>
                 </div>
               </button>
             </div>
