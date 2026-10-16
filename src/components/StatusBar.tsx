@@ -20,21 +20,18 @@ export function StatusBar({ state }: StatusBarProps) {
   return (
     <footer className="status-bar">
       <div className="status-left">
-        <span className="status-mode">● {state.settings.facingPages ? 'Facing Pages Spread' : 'Single Page'} ({pagesDesc})</span>
-        <span className="status-meta-margins">Margins: {state.settings.margins.insideMm}/{state.settings.margins.outsideMm}mm</span>
-        <span className="status-meta-bleed">Bleed: {state.settings.bleedMm}mm</span>
-        <span className="status-active-tool">Tool: <b>{state.activeTool.toUpperCase()}</b></span>
+        <span className="status-item status-mode">● {state.settings.facingPages ? 'Facing Pages' : 'Single'} ({pagesDesc})</span>
+        <span className="status-divider">|</span>
+        <span className="status-item status-meta-margins">Margins: {state.settings.margins.insideMm}/{state.settings.margins.outsideMm}mm</span>
+        <span className="status-divider status-meta-margins">|</span>
+        <span className="status-item status-meta-bleed">Bleed: {state.settings.bleedMm}mm</span>
+        <span className="status-divider status-meta-bleed">|</span>
+        <span className="status-item status-active-tool">Tool: <b>{state.activeTool.toUpperCase()}</b></span>
+        <span className="status-divider">|</span>
 
         {issues.length === 0 ? (
           <span
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '4px',
-              color: '#2ec4b6',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
+            className="status-preflight-ok"
             onClick={() => setDrawerOpen(!drawerOpen)}
             title="Print Preflight: All print criteria passed"
           >
@@ -42,19 +39,7 @@ export function StatusBar({ state }: StatusBarProps) {
           </span>
         ) : (
           <button
-            style={{
-              background: '#e63946',
-              color: '#ffffff',
-              border: 'none',
-              borderRadius: '3px',
-              padding: '1px 7px',
-              fontSize: '10px',
-              fontWeight: 600,
-              cursor: 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '4px',
-            }}
+            className="status-preflight-btn"
             onClick={() => setDrawerOpen(!drawerOpen)}
             title="Click to view print preflight issues"
           >
@@ -64,21 +49,23 @@ export function StatusBar({ state }: StatusBarProps) {
       </div>
 
       <div className="status-right">
-        <label className="status-display-label">
-          <span>Display:</span>
+        <div className="status-display-group">
+          <span className="status-display-title">Display:</span>
           <select
             value={state.displayQuality || 'typical'}
             onChange={handleQualityChange}
             className="status-quality-select"
             title="Display Performance: Fast (Wireframe), Typical (Proxy Cache), High (Full Res)"
           >
-            <option value="fast">⚡ Fast (Wireframes)</option>
-            <option value="typical">📊 Typical (Proxy 60fps)</option>
-            <option value="high">🔍 High Quality</option>
+            <option value="fast">⚡ Fast</option>
+            <option value="typical">📊 Typical</option>
+            <option value="high">🔍 High</option>
           </select>
-        </label>
-        <span className="status-meta-telemetry">100% Offline • 0 KB Cloud Telemetry</span>
-        <span className="status-version">Recto Studio v1.0.0</span>
+        </div>
+        <span className="status-divider status-meta-telemetry">|</span>
+        <span className="status-item status-meta-telemetry">100% Offline • 0 KB Telemetry</span>
+        <span className="status-divider">|</span>
+        <span className="status-item status-version">Recto Studio v1.0.0</span>
       </div>
 
       {drawerOpen && (
