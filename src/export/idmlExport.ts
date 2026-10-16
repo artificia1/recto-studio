@@ -111,11 +111,13 @@ ${styleDefs}
       const isLeft = page.side === 'left';
       const mLeft = isLeft ? rightPt : leftPt;
       const mRight = isLeft ? leftPt : rightPt;
+      const pageXOffsetPt = Math.round((pIdx * state.settings.widthMm) * MM_TO_PT * 100) / 100;
+      const pageBoundsStr = `0 ${pageXOffsetPt} ${phPt} ${Math.round((pageXOffsetPt + pwPt) * 100) / 100}`;
 
       return `      <Page Self="${pageId}" Name="${page.pageNumber}" AppliedTrapPreset="TrapPreset/$ID/kDefaultTrapPreset">
         <Properties>
           <PageColor>PageColor/$ID/White</PageColor>
-          <GeometricBounds>0 0 ${phPt} ${pwPt}</GeometricBounds>
+          <GeometricBounds>${pageBoundsStr}</GeometricBounds>
           <MarginPreference Top="${topPt}" Bottom="${btmPt}" Left="${mLeft}" Right="${mRight}" ColumnCount="${state.settings.columnCount || 1}" />
         </Properties>
       </Page>`;
@@ -124,10 +126,12 @@ ${styleDefs}
     const elementXmls: string[] = [];
 
     for (const el of spread.elements) {
+      const pageIdx = Math.max(0, spread.pages.findIndex(p => p.id === el.pageId));
+      const spreadXMm = (pageIdx * state.settings.widthMm) + el.x;
       const y1Pt = Math.round(el.y * MM_TO_PT * 100) / 100;
-      const x1Pt = Math.round(el.x * MM_TO_PT * 100) / 100;
+      const x1Pt = Math.round(spreadXMm * MM_TO_PT * 100) / 100;
       const y2Pt = Math.round((el.y + el.height) * MM_TO_PT * 100) / 100;
-      const x2Pt = Math.round((el.x + el.width) * MM_TO_PT * 100) / 100;
+      const x2Pt = Math.round((spreadXMm + el.width) * MM_TO_PT * 100) / 100;
       const boundsStr = `${y1Pt} ${x1Pt} ${y2Pt} ${x2Pt}`;
 
       if (el.type === 'text') {
@@ -153,7 +157,7 @@ ${styleDefs}
   </Story>
 </idPkg:Story>`;
 
-        elementXmls.push(`      <TextFrame Self="TextFrame_${el.id}" ParentStory="${storyId}" ContentType="TextType">
+        elementXmls.push(`      <TextFrame Self="TextFrame_${el.id}" ParentStory="${storyId}" ContentType="TextType" GeometricBounds="${boundsStr}">
         <Properties>
           <GeometricBounds>${boundsStr}</GeometricBounds>
         </Properties>
@@ -161,7 +165,7 @@ ${styleDefs}
       </TextFrame>`);
       } else if (el.type === 'image') {
         const imgEl = el as ImageElement;
-        elementXmls.push(`      <Rectangle Self="Rectangle_${el.id}" ContentType="GraphicType">
+        elementXmls.push(`      <Rectangle Self="Rectangle_${el.id}" ContentType="GraphicType" GeometricBounds="${boundsStr}">
         <Properties>
           <GeometricBounds>${boundsStr}</GeometricBounds>
         </Properties>
@@ -175,13 +179,13 @@ ${styleDefs}
       } else if (el.type === 'shape') {
         const shape = el as ShapeElement;
         if (shape.shapeKind === 'ellipse') {
-          elementXmls.push(`      <Oval Self="Oval_${el.id}" ContentType="Unassigned">
+          elementXmls.push(`      <Oval Self="Oval_${el.id}" ContentType="Unassigned" GeometricBounds="${boundsStr}">
         <Properties>
           <GeometricBounds>${boundsStr}</GeometricBounds>
         </Properties>
       </Oval>`);
         } else {
-          elementXmls.push(`      <Rectangle Self="Rectangle_${el.id}" ContentType="Unassigned">
+          elementXmls.push(`      <Rectangle Self="Rectangle_${el.id}" ContentType="Unassigned" GeometricBounds="${boundsStr}">
         <Properties>
           <GeometricBounds>${boundsStr}</GeometricBounds>
         </Properties>

@@ -21,8 +21,8 @@ export function generateFlipbookHtml(state: ProjectState): string {
   const heightMm = state.settings.heightMm || 297;
   const title = escapeXml(state.settings.title || 'Recto Interactive Flipbook');
 
-  // High-DPI Retina Coordinate Space (2x standard 96 DPI = 7.559055 px/mm)
-  const PX_PER_MM = 7.559055;
+  // Standard CSS millimeter to pixel coordinate conversion (96 DPI: 1 mm = 3.779528 px)
+  const PX_PER_MM = 3.779528;
   const pageWidthPx = Math.round(widthMm * PX_PER_MM);
   const pageHeightPx = Math.round(heightMm * PX_PER_MM);
 
@@ -73,9 +73,9 @@ export function generateFlipbookHtml(state: ProjectState): string {
         const bg = textEl.backgroundColor && textEl.backgroundColor !== 'transparent' ? `background-color: ${textEl.backgroundColor};` : '';
         const borderWPx = Math.max(1, Math.round((textEl.borderWidthMm || 0) * PX_PER_MM * 10) / 10);
         const border = textEl.borderWidthMm > 0 && textEl.borderColor !== 'transparent' ? `border: ${borderWPx}px solid ${textEl.borderColor};` : '';
-        const letterSpacingPx = textEl.letterSpacingPt ? `letter-spacing: ${(textEl.letterSpacingPt * (96 / 72) * 2).toFixed(2)}px;` : '';
+        const letterSpacingPx = textEl.letterSpacingPt ? `letter-spacing: ${(textEl.letterSpacingPt * (96 / 72)).toFixed(2)}px;` : '';
         const smallCaps = textEl.openTypeFeatures?.smallCaps ? 'font-variant: small-caps;' : '';
-        const fontSizePx = Math.round(textEl.fontSizePt * (96 / 72) * 2 * 10) / 10;
+        const fontSizePx = Math.round(textEl.fontSizePt * (96 / 72) * 10) / 10;
 
         const colStyle = colCount > 1 ? `column-count: ${colCount}; column-gap: ${colGutterPx}px;` : '';
         const dropCapClass = textEl.dropCapLines && textEl.dropCapLines >= 2 ? `drop-cap-${textEl.dropCapLines}` : '';
@@ -117,7 +117,7 @@ export function generateFlipbookHtml(state: ProjectState): string {
         const cellPadPx = Math.round((tbl.cellPaddingMm || 2) * PX_PER_MM * 10) / 10;
         const borderWPx = Math.max(1, Math.round((tbl.borderWidthMm || 1) * PX_PER_MM));
         const borderStyle = tbl.borderWidthMm > 0 ? `${borderWPx}px solid ${tbl.borderColor || '#333'}` : 'none';
-        const tblFontSizePx = Math.round((tbl.fontSizePt || 10) * (96 / 72) * 2 * 10) / 10;
+        const tblFontSizePx = Math.round((tbl.fontSizePt || 10) * (96 / 72) * 10) / 10;
 
         let rowsHtml = '';
         if (tbl.cells) {
@@ -227,7 +227,7 @@ export function generateFlipbookHtml(state: ProjectState): string {
     if (sp.leftPage) {
       spreadsMarkup += `      <div class="flip-leaf left-leaf" style="width: ${pageWidthPx}px; height: ${pageHeightPx}px;">\n`;
       spreadsMarkup += renderPageContent(sp.leftPage);
-      spreadsMarkup += `        <div class="page-num left-num" style="bottom: ${Math.round(10 * PX_PER_MM)}px; left: ${Math.round(12 * PX_PER_MM)}px; font-size: ${Math.round(8 * (96 / 72) * 2)}px;">${sp.leftPage.pageNumber}</div>\n`;
+      spreadsMarkup += `        <div class="page-num left-num" style="bottom: ${Math.round(10 * PX_PER_MM)}px; left: ${Math.round(12 * PX_PER_MM)}px; font-size: ${Math.round(8 * (96 / 72))}px;">${sp.leftPage.pageNumber}</div>\n`;
       spreadsMarkup += `        <div class="leaf-shadow left-shadow"></div>\n`;
       spreadsMarkup += '      </div>\n';
     } else {
@@ -243,7 +243,7 @@ export function generateFlipbookHtml(state: ProjectState): string {
     if (sp.rightPage) {
       spreadsMarkup += `      <div class="flip-leaf right-leaf" style="width: ${pageWidthPx}px; height: ${pageHeightPx}px;">\n`;
       spreadsMarkup += renderPageContent(sp.rightPage);
-      spreadsMarkup += `        <div class="page-num right-num" style="bottom: ${Math.round(10 * PX_PER_MM)}px; right: ${Math.round(12 * PX_PER_MM)}px; font-size: ${Math.round(8 * (96 / 72) * 2)}px;">${sp.rightPage.pageNumber}</div>\n`;
+      spreadsMarkup += `        <div class="page-num right-num" style="bottom: ${Math.round(10 * PX_PER_MM)}px; right: ${Math.round(12 * PX_PER_MM)}px; font-size: ${Math.round(8 * (96 / 72))}px;">${sp.rightPage.pageNumber}</div>\n`;
       spreadsMarkup += `        <div class="leaf-shadow right-shadow"></div>\n`;
       spreadsMarkup += '      </div>\n';
     } else {
@@ -358,15 +358,13 @@ export function generateFlipbookHtml(state: ProjectState): string {
 
     .book-wrapper {
       position: relative;
-      transform-style: preserve-3d;
-      transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
       box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 5px 15px rgba(0, 0, 0, 0.4);
+      transform-origin: center center;
     }
 
     .flip-spread {
       display: none;
       position: relative;
-      transform-style: preserve-3d;
       background: transparent;
     }
 
@@ -379,11 +377,9 @@ export function generateFlipbookHtml(state: ProjectState): string {
       background: #ffffff;
       position: relative;
       overflow: hidden;
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
-      text-rendering: optimizeLegibility;
-      image-rendering: -webkit-optimize-contrast;
-      image-rendering: high-quality;
+      -webkit-font-smoothing: subpixel-antialiased;
+      -moz-osx-font-smoothing: auto;
+      text-rendering: geometricPrecision;
       box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.04);
       transform-origin: center center;
     }
@@ -619,7 +615,7 @@ ${spreadsMarkup}
         }
       }
 
-      // Responsive auto-fit scaling with high-DPI downscaling for ultra-crisp vector rendering
+      // Responsive auto-fit scaling with native typography rasterization
       function resizeBook() {
         if (!stage || !bookWrapper) return;
         const stageW = stage.clientWidth - 80;
@@ -630,7 +626,14 @@ ${spreadsMarkup}
         const scaleX = stageW / bookW;
         const scaleY = stageH / bookH;
         const scale = Math.min(scaleX, scaleY);
-        bookWrapper.style.transform = 'scale(' + scale.toFixed(4) + ')';
+
+        if ('zoom' in bookWrapper.style) {
+          bookWrapper.style.zoom = scale.toFixed(4);
+          bookWrapper.style.transform = 'none';
+        } else {
+          bookWrapper.style.transform = 'scale(' + scale.toFixed(4) + ')';
+          bookWrapper.style.transformOrigin = 'center center';
+        }
       }
 
       window.addEventListener('resize', resizeBook);

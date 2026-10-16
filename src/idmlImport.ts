@@ -43,8 +43,32 @@ export function extractXmlTags(xml: string, tagName: string): string[] {
   return results;
 }
 
-export function parseGeometricBounds(boundsStr: string | null): { x: number; y: number; width: number; height: number } {
-  if (!boundsStr) return { x: 20, y: 20, width: 60, height: 40 };
+export function parseGeometricBounds(xmlOrBoundsStr: string | null): { x: number; y: number; width: number; height: number } {
+  if (!xmlOrBoundsStr) return { x: 20, y: 20, width: 60, height: 40 };
+
+  let boundsStr = xmlOrBoundsStr;
+  if (xmlOrBoundsStr.includes('<')) {
+    const attr = extractXmlAttr(xmlOrBoundsStr, 'GeometricBounds');
+    if (attr) {
+      boundsStr = attr;
+    } else {
+      const tagMatch = xmlOrBoundsStr.match(/<GeometricBounds\b[^>]*>([\s\S]*?)<\/GeometricBounds>/i);
+      if (tagMatch) {
+        const inner = tagMatch[1];
+        if (inner.includes('<ListItem')) {
+          const listMatches = inner.match(/<ListItem\b[^>]*>([^<]+)<\/ListItem>/gi);
+          if (listMatches && listMatches.length >= 4) {
+            boundsStr = listMatches.map(m => m.replace(/<[^>]+>/g, '').trim()).join(' ');
+          } else {
+            boundsStr = inner.replace(/<[^>]+>/g, ' ').trim();
+          }
+        } else {
+          boundsStr = inner.trim();
+        }
+      }
+    }
+  }
+
   const parts = boundsStr.trim().split(/\s+/).map(Number);
   if (parts.length >= 4 && !parts.some(isNaN)) {
     const [y1Pt, x1Pt, y2Pt, x2Pt] = parts;
@@ -230,7 +254,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array): Pr
     const textFrameTags = extractXmlTags(xml, 'TextFrame');
     for (let tfIdx = 0; tfIdx < textFrameTags.length; tfIdx++) {
       const tfXml = textFrameTags[tfIdx];
-      const bounds = parseGeometricBounds(extractXmlAttr(tfXml, 'GeometricBounds'));
+      const bounds = parseGeometricBounds(tfXml);
       const parentStory = extractXmlAttr(tfXml, 'ParentStory');
       const storyData = parentStory ? storiesMap.get(parentStory) : null;
 
@@ -286,7 +310,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array): Pr
     const rectTags = extractXmlTags(xml, 'Rectangle');
     for (let rIdx = 0; rIdx < rectTags.length; rIdx++) {
       const rXml = rectTags[rIdx];
-      const bounds = parseGeometricBounds(extractXmlAttr(rXml, 'GeometricBounds'));
+      const bounds = parseGeometricBounds(rXml);
       let targetPage = pages[0];
       let localX = bounds.x;
       if (pages.length > 1 && localX >= pageWidthMm) {
@@ -342,7 +366,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array): Pr
     const ovalTags = extractXmlTags(xml, 'Oval');
     for (let oIdx = 0; oIdx < ovalTags.length; oIdx++) {
       const oXml = ovalTags[oIdx];
-      const bounds = parseGeometricBounds(extractXmlAttr(oXml, 'GeometricBounds'));
+      const bounds = parseGeometricBounds(oXml);
       let targetPage = pages[0];
       let localX = bounds.x;
       if (pages.length > 1 && localX >= pageWidthMm) {
