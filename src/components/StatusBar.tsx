@@ -20,10 +20,10 @@ export function StatusBar({ state }: StatusBarProps) {
   return (
     <footer className="status-bar">
       <div className="status-left">
-        <span>● {state.settings.facingPages ? 'Facing Pages Spread' : 'Single Page Mode'} ({pagesDesc})</span>
-        <span>Margins: {state.settings.margins.insideMm}mm / {state.settings.margins.outsideMm}mm</span>
-        <span>Bleed: {state.settings.bleedMm}mm</span>
-        <span>Active Tool: <b>{state.activeTool.toUpperCase()}</b></span>
+        <span className="status-mode">● {state.settings.facingPages ? 'Facing Pages Spread' : 'Single Page'} ({pagesDesc})</span>
+        <span className="status-meta-margins">Margins: {state.settings.margins.insideMm}/{state.settings.margins.outsideMm}mm</span>
+        <span className="status-meta-bleed">Bleed: {state.settings.bleedMm}mm</span>
+        <span className="status-active-tool">Tool: <b>{state.activeTool.toUpperCase()}</b></span>
 
         {issues.length === 0 ? (
           <span
@@ -64,20 +64,12 @@ export function StatusBar({ state }: StatusBarProps) {
       </div>
 
       <div className="status-right">
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#888' }}>
+        <label className="status-display-label">
           <span>Display:</span>
           <select
             value={state.displayQuality || 'typical'}
             onChange={handleQualityChange}
-            style={{
-              background: '#2a2a2a',
-              color: '#eee',
-              border: '1px solid #444',
-              borderRadius: '3px',
-              fontSize: '11px',
-              padding: '1px 4px',
-              cursor: 'pointer',
-            }}
+            className="status-quality-select"
             title="Display Performance: Fast (Wireframe), Typical (Proxy Cache), High (Full Res)"
           >
             <option value="fast">⚡ Fast (Wireframes)</option>
@@ -85,8 +77,8 @@ export function StatusBar({ state }: StatusBarProps) {
             <option value="high">🔍 High Quality</option>
           </select>
         </label>
-        <span>100% Offline • 0 KB Cloud Telemetry</span>
-        <span>Recto Studio v1.0.0</span>
+        <span className="status-meta-telemetry">100% Offline • 0 KB Cloud Telemetry</span>
+        <span className="status-version">Recto Studio v1.0.0</span>
       </div>
 
       {drawerOpen && (

@@ -1033,21 +1033,81 @@ kbd {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  height: 22px;
+  height: 26px;
+  min-height: 26px;
   background-color: #141414;
   border-top: 1px solid var(--border-color);
   padding: 0 12px;
-  font-size: 10px;
+  font-size: 10.5px;
   color: var(--text-secondary);
   position: relative;
+  user-select: none;
+  overflow: hidden;
+  box-sizing: border-box;
+  gap: 12px;
 }
 
 .status-left {
   display: flex;
-  gap: 16px;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .status-right {
   display: flex;
-  gap: 16px;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
+
+.status-display-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: #888;
+}
+
+.status-quality-select {
+  background: #242424;
+  color: #eee;
+  border: 1px solid #444;
+  border-radius: 3px;
+  font-size: 10px;
+  height: 19px;
+  line-height: 19px;
+  padding: 0 4px;
+  cursor: pointer;
+  box-sizing: border-box;
+  outline: none;
+}
+
+.status-quality-select:hover {
+  border-color: var(--accent-cyan);
+}
+
+@media (max-width: 1250px) {
+  .status-meta-telemetry {
+    display: none;
+  }
+}
+
+@media (max-width: 1050px) {
+  .status-meta-margins,
+  .status-meta-bleed {
+    display: none;
+  }
+}
+
+@media (max-width: 800px) {
+  .status-version {
+    display: none;
+  }
+}
+
