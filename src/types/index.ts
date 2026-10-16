@@ -334,6 +334,7 @@ export interface ProjectState {
   linkingFromFrameId?: string | null;
   layers: Layer[];
   activeLayerId: string;
+  previewMode?: boolean;
 }
 
 export interface VersionSnapshot {

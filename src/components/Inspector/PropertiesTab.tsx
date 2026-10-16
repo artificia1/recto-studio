@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'preact/hooks';
 import { stateManager, numberToSuperscript } from '../../state';
 import { fontManager } from '../../fontManager';
 import { PAGE_PRESETS, ProjectState, CanvasElement, TextElement, ImageElement, ShapeElement, TableElement, TableCell, ParagraphStyle, VectorPathElement } from '../../types';
+import { MathInput } from '../common/MathInput';
 
 interface PropertiesTabProps {
   state: ProjectState;
@@ -145,59 +146,43 @@ export function PropertiesTab({ state }: PropertiesTabProps) {
         <div className="input-grid-2">
           <label>
             X:
-            <input
-              type="number"
+            <MathInput
               value={selectedEl.x}
               disabled={selectedEl.locked}
               step={1}
-              onInput={(e) =>
-                stateManager.updateElement(selectedEl.id, {
-                  x: parseFloat((e.target as HTMLInputElement).value) || 0,
-                })}
+              onChange={(val) => stateManager.updateElement(selectedEl.id, { x: val })}
             />
             mm
           </label>
           <label>
             Y:
-            <input
-              type="number"
+            <MathInput
               value={selectedEl.y}
               disabled={selectedEl.locked}
               step={1}
-              onInput={(e) =>
-                stateManager.updateElement(selectedEl.id, {
-                  y: parseFloat((e.target as HTMLInputElement).value) || 0,
-                })}
+              onChange={(val) => stateManager.updateElement(selectedEl.id, { y: val })}
             />
             mm
           </label>
           <label>
             W:
-            <input
-              type="number"
+            <MathInput
               value={selectedEl.width}
               disabled={selectedEl.locked}
               step={1}
               min={5}
-              onInput={(e) =>
-                stateManager.updateElement(selectedEl.id, {
-                  width: Math.max(5, parseFloat((e.target as HTMLInputElement).value) || 10),
-                })}
+              onChange={(val) => stateManager.updateElement(selectedEl.id, { width: Math.max(5, val) })}
             />
             mm
           </label>
           <label>
             H:
-            <input
-              type="number"
+            <MathInput
               value={selectedEl.height}
               disabled={selectedEl.locked}
               step={1}
               min={5}
-              onInput={(e) =>
-                stateManager.updateElement(selectedEl.id, {
-                  height: Math.max(5, parseFloat((e.target as HTMLInputElement).value) || 10),
-                })}
+              onChange={(val) => stateManager.updateElement(selectedEl.id, { height: Math.max(5, val) })}
             />
             mm
           </label>

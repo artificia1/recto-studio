@@ -167,6 +167,7 @@ export class SpreadCanvas {
   private isDragging: boolean = false;
   private isResizing: boolean = false;
   private isPanning: boolean = false;
+  private isSpacePanning: boolean = false;
   private isDrawingNew: boolean = false;
   private isMarquee: boolean = false;
   private activeHandle: string | null = null;
@@ -317,7 +318,31 @@ export class SpreadCanvas {
 
     window.addEventListener('keydown', (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
-      if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return;
+      if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable) return;
+
+      if (e.code === 'Space' && !this.isSpacePanning) {
+        e.preventDefault();
+        this.isSpacePanning = true;
+        this.canvas.style.cursor = 'grab';
+        return;
+      }
+
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        const state = stateManager.getState();
+        const hasSelection = (state.selectedElementIds && state.selectedElementIds.length > 0) || !!state.selectedElementId;
+        if (hasSelection) {
+          e.preventDefault();
+          const step = e.shiftKey ? 10 : (e.altKey ? 0.1 : 1);
+          let dx = 0;
+          let dy = 0;
+          if (e.key === 'ArrowLeft') dx = -step;
+          else if (e.key === 'ArrowRight') dx = step;
+          else if (e.key === 'ArrowUp') dy = -step;
+          else if (e.key === 'ArrowDown') dy = step;
+          stateManager.nudgeSelectedElements(dx, dy);
+          return;
+        }
+      }
 
       if (e.key === 'Delete' || e.key === 'Backspace') {
         const state = stateManager.getState();
@@ -367,7 +392,8 @@ export class SpreadCanvas {
       } else if (e.key === 'h' || e.key === 'H') {
         stateManager.setTool('hand');
       } else if (e.key === 'w' || e.key === 'W') {
-        stateManager.toggleGuides();
+        e.preventDefault();
+        stateManager.togglePreviewMode();
       } else if (e.ctrlKey && (e.key === 'z' || e.key === 'Z')) {
         e.preventDefault();
         if (e.shiftKey) stateManager.redo();
@@ -375,6 +401,16 @@ export class SpreadCanvas {
       } else if (e.ctrlKey && (e.key === 'y' || e.key === 'Y')) {
         e.preventDefault();
         stateManager.redo();
+      }
+    });
+
+    window.addEventListener('keyup', (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        this.isSpacePanning = false;
+        if (!this.isPanning) {
+          const state = stateManager.getState();
+          this.canvas.style.cursor = state.activeTool === 'hand' ? 'grab' : 'default';
+        }
       }
     });
   }
@@ -450,7 +486,7 @@ export class SpreadCanvas {
     const screenX = e.clientX - rect.left;
     const screenY = e.clientY - rect.top;
 
-    if (e.button === 1 || state.activeTool === 'hand' || (e as any).spaceKey) {
+    if (e.button === 1 || state.activeTool === 'hand' || this.isSpacePanning || (e as any).spaceKey) {
       this.isPanning = true;
       this.panStartX = e.clientX - state.panX;
       this.panStartY = e.clientY - state.panY;
@@ -823,7 +859,9 @@ export class SpreadCanvas {
       return;
     }
 
-    if (state.activeTool === 'select' && state.selectedElementIds && state.selectedElementIds.length === 1) {
+    if (this.isSpacePanning && !this.isPanning) {
+      this.canvas.style.cursor = 'grab';
+    } else if (state.activeTool === 'select' && state.selectedElementIds && state.selectedElementIds.length === 1) {
       const handle = this.hitTestHandles(screenX, screenY, state);
       if (handle) {
         this.canvas.style.cursor = `${handle}-resize`;
@@ -860,7 +898,7 @@ export class SpreadCanvas {
 
     if (this.isPanning) {
       this.isPanning = false;
-      this.canvas.style.cursor = state.activeTool === 'hand' ? 'grab' : 'default';
+      this.canvas.style.cursor = (this.isSpacePanning || state.activeTool === 'hand') ? 'grab' : 'default';
     }
     if (this.isDragging) {
       this.isDragging = false;
@@ -1700,13 +1738,13 @@ export class SpreadCanvas {
     spreadHeightPx: number
   ) {
     const grid = state.settings.baselineGrid;
-    const key = `${state.activeSpreadIndex}_${state.settings.preset}_${pageWidthMm}_${pageHeightMm}_${state.settings.bleedMm}_${state.zoom}_${state.showGuides}_${state.showBleed}_${state.showBaselineGrid}_${state.settings.margins.insideMm}_${state.settings.margins.outsideMm}_${state.settings.margins.topMm}_${state.settings.margins.bottomMm}_${state.settings.columnCount}_${state.settings.columnGutterMm}_${grid?.incrementPt}_${grid?.startMm}_${grid?.enabled}_${spread.pages.length}`;
+    const key = `${state.activeSpreadIndex}_${state.settings.preset}_${pageWidthMm}_${pageHeightMm}_${state.settings.bleedMm}_${state.zoom}_${state.showGuides}_${state.showBleed}_${state.showBaselineGrid}_${Boolean(state.previewMode)}_${state.settings.margins.insideMm}_${state.settings.margins.outsideMm}_${state.settings.margins.topMm}_${state.settings.margins.bottomMm}_${state.settings.columnCount}_${state.settings.columnGutterMm}_${grid?.incrementPt}_${grid?.startMm}_${grid?.enabled}_${spread.pages.length}`;
 
     if (this.staticDirtyKey === key && this.staticCanvas.width > 0) {
       return;
     }
 
-    const bleedMm = state.showBleed ? state.settings.bleedMm : 0;
+    const bleedMm = (!state.previewMode && state.showBleed) ? state.settings.bleedMm : 0;
     const paddingPx = Math.ceil(Math.max(30, bleedMm * pxPerMm + 24));
     const targetW = Math.ceil(spreadWidthPx + paddingPx * 2);
     const targetH = Math.ceil(spreadHeightPx + paddingPx * 2);
@@ -1722,7 +1760,7 @@ export class SpreadCanvas {
     const originY = paddingPx;
 
     // Bleed guide line
-    if (state.showBleed && state.settings.bleedMm > 0) {
+    if (!state.previewMode && state.showBleed && state.settings.bleedMm > 0) {
       const bleedPx = state.settings.bleedMm * pxPerMm;
       sctx.strokeStyle = '#e63946';
       sctx.lineWidth = 1;
@@ -1756,7 +1794,7 @@ export class SpreadCanvas {
       sctx.lineWidth = 1;
       sctx.strokeRect(pageX, originY, pageW, spreadHeightPx);
 
-      if (state.showGuides) {
+      if (!state.previewMode && state.showGuides) {
         const margins = state.settings.margins;
         const page = spread.pages[i];
 
@@ -1925,6 +1963,14 @@ export class SpreadCanvas {
 
     ctx.drawImage(this.staticCanvas, origin.x - this.staticBleedPx, origin.y - this.staticBleedPx);
 
+    // In preview mode, clip all artwork to the pristine page trim rect
+    if (state.previewMode) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(origin.x, origin.y, spreadWidthPx, spreadHeightPx);
+      ctx.clip();
+    }
+
     const layerMap = new Map((state.layers || []).map(l => [l.id, l]));
 
     // Render Master Spread Elements (rendered behind regular page elements)
@@ -1942,8 +1988,12 @@ export class SpreadCanvas {
 
           const pageIdx = spread.pages.findIndex(p => p.id === targetPage!.id);
           const pageStartMm = pageIdx * pageWidthMm;
+          let masterY = mEl.y;
+          if (masterY + (mEl.height || 0) > pageHeightMm - 2) {
+            masterY = Math.max(0, pageHeightMm - (state.settings.margins.bottomMm || 15) + 2);
+          }
           const elScreenX = origin.x + ((pageStartMm + mEl.x) * pxPerMm);
-          const elScreenY = origin.y + (mEl.y * pxPerMm);
+          const elScreenY = origin.y + (masterY * pxPerMm);
           const elScreenW = mEl.width * pxPerMm;
           const elScreenH = mEl.height * pxPerMm;
 
@@ -2731,7 +2781,7 @@ export class SpreadCanvas {
       }
 
       ctx.restore();
-      if (isSelected) {
+      if (isSelected && !state.previewMode) {
         const elLayer = layerMap.get(el.layerId || 'layer-1') || state.layers?.[0];
         const layerColor = elLayer?.colorHex || '#0d99ff';
         const isElementLocked = el.locked || Boolean(elLayer?.locked);
@@ -2867,9 +2917,12 @@ export class SpreadCanvas {
         }
       }
     }
+    if (state.previewMode) {
+      ctx.restore();
+    }
 
     // Render interactive rubber-band line when linking
-    if (state.linkingFromFrameId) {
+    if (!state.previewMode && state.linkingFromFrameId) {
       const linkingEl = spread.elements.find(e => e.id === state.linkingFromFrameId);
       if (linkingEl && linkingEl.type === 'text') {
         const pageIdxA = spread.pages.findIndex(p => p.id === linkingEl.pageId);
@@ -2895,7 +2948,7 @@ export class SpreadCanvas {
     }
 
     // Render interactive rubber-band line when drawing with pen tool
-    if (state.activeTool === 'pen' && this.activePenPathId) {
+    if (!state.previewMode && state.activeTool === 'pen' && this.activePenPathId) {
       const activePathEl = spread.elements.find(e => e.id === this.activePenPathId) as VectorPathElement | undefined;
       if (activePathEl && activePathEl.nodes.length > 0) {
         const lastNode = activePathEl.nodes[activePathEl.nodes.length - 1];
@@ -2921,7 +2974,7 @@ export class SpreadCanvas {
       }
     }
 
-    if (state.selectedElementIds && state.selectedElementIds.length > 1) {
+    if (!state.previewMode && state.selectedElementIds && state.selectedElementIds.length > 1) {
       const selectedElements = spread.elements.filter(el => state.selectedElementIds.includes(el.id));
       if (selectedElements.length > 1) {
         let minGlobalX = Infinity, minGlobalY = Infinity, maxGlobalX = -Infinity, maxGlobalY = -Infinity;
@@ -2960,7 +3013,7 @@ export class SpreadCanvas {
       }
     }
 
-    if (this.isMarquee) {
+    if (!state.previewMode && this.isMarquee) {
       const mMinX = Math.min(this.marqueeStartMmX, this.marqueeCurrentMmX);
       const mMaxX = Math.max(this.marqueeStartMmX, this.marqueeCurrentMmX);
       const mMinY = Math.min(this.marqueeStartMmY, this.marqueeCurrentMmY);

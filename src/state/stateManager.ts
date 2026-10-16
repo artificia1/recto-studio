@@ -680,6 +680,7 @@ Recto was engineered from a simple conviction: creative freedom must never depen
   linkingFromFrameId: null,
   layers: DEFAULT_LAYERS,
   activeLayerId: 'layer-1',
+  previewMode: false,
 };
 
 export type StateListener = (state: ProjectState) => void;
@@ -695,6 +696,7 @@ export class StateManager {
   constructor() {
     this.state = this.loadFromStorage() || INITIAL_STATE;
     this.snapshots = this.loadSnapshotsFromStorage();
+    this.renumberPages();
     if (!Array.isArray(this.state.selectedElementIds)) {
       this.state.selectedElementIds = this.state.selectedElementId ? [this.state.selectedElementId] : [];
     }
@@ -807,9 +809,58 @@ export class StateManager {
   }
 
   public updateSettings(partial: Partial<ProjectState['settings']>) {
+    const prevH = this.state.settings.heightMm;
+    const prevW = this.state.settings.widthMm;
     this.state.settings = { ...this.state.settings, ...partial };
+    const newH = this.state.settings.heightMm;
+    const newW = this.state.settings.widthMm;
+
+    // Dynamically adjust master footer/header positions to fit new page geometry
+    if ((newH !== prevH || newW !== prevW) && this.state.masterSpreads) {
+      const bottomM = this.state.settings.margins.bottomMm || 15;
+      const insideM = this.state.settings.margins.insideMm || 20;
+      const outsideM = this.state.settings.margins.outsideMm || 15;
+      const printableW = Math.max(40, newW - (insideM + outsideM));
+
+      for (const master of this.state.masterSpreads) {
+        for (const mEl of master.elements) {
+          if (mEl.id.includes('ftr') || mEl.y >= 200) {
+            mEl.y = Math.max(10, newH - bottomM - mEl.height + 2);
+            mEl.width = printableW;
+          } else if (mEl.id.includes('hdr') || mEl.y <= 20) {
+            mEl.width = printableW;
+          }
+        }
+      }
+    }
+
+    this.renumberPages();
     this.pushHistory();
     this.notify();
+  }
+
+  public nudgeSelectedElements(dxMm: number, dyMm: number) {
+    const ids = this.state.selectedElementIds && this.state.selectedElementIds.length > 0
+      ? this.state.selectedElementIds
+      : (this.state.selectedElementId ? [this.state.selectedElementId] : []);
+    if (ids.length === 0) return;
+
+    const spread = this.getActiveSpread();
+    const idSet = new Set(ids);
+    let moved = 0;
+
+    for (const el of spread.elements) {
+      if (idSet.has(el.id) && !el.locked) {
+        el.x = Math.round((el.x + dxMm) * 100) / 100;
+        el.y = Math.round((el.y + dyMm) * 100) / 100;
+        moved++;
+      }
+    }
+
+    if (moved > 0) {
+      this.pushHistory();
+      this.notify();
+    }
   }
 
   public setTool(tool: ProjectState['activeTool']) {
@@ -830,6 +881,11 @@ export class StateManager {
 
   public toggleGuides() {
     this.state.showGuides = !this.state.showGuides;
+    this.notify();
+  }
+
+  public togglePreviewMode() {
+    this.state.previewMode = !this.state.previewMode;
     this.notify();
   }
 
@@ -1722,26 +1778,45 @@ export class StateManager {
     this.notify();
   }
 
+  public renumberPages() {
+    let curPage = 1;
+    const isFacing = Boolean(this.state.settings.facingPages);
+
+    this.state.spreads.forEach((spread, sIdx) => {
+      spread.spreadIndex = sIdx;
+      const numPages = spread.pages.length;
+
+      if (numPages === 1) {
+        const page = spread.pages[0];
+        page.pageNumber = curPage++;
+        if (isFacing) {
+          page.side = (sIdx === 0 || page.pageNumber % 2 === 1) ? 'right' : 'left';
+        } else {
+          page.side = 'single';
+        }
+      } else if (numPages >= 2) {
+        spread.pages.forEach((page, pIdx) => {
+          page.pageNumber = curPage++;
+          page.side = pIdx === 0 ? 'left' : 'right';
+        });
+      }
+    });
+  }
+
   public addSpread() {
     const totalSpreads = this.state.spreads.length;
-    let lastPageNum = 0;
-    for (const sp of this.state.spreads) {
-      for (const p of sp.pages) {
-        if (p.pageNumber > lastPageNum) lastPageNum = p.pageNumber;
-      }
-    }
-
     const newSpread: Spread = {
       id: `spread-${Date.now()}`,
       spreadIndex: totalSpreads,
       pages: [
-        { id: `page-${Date.now()}-1`, pageNumber: lastPageNum + 1, side: 'left' },
-        { id: `page-${Date.now()}-2`, pageNumber: lastPageNum + 2, side: 'right' },
+        { id: `page-${Date.now()}-1`, pageNumber: 0, side: 'left' },
+        { id: `page-${Date.now()}-2`, pageNumber: 0, side: 'right' },
       ],
       elements: [],
     };
 
     this.state.spreads.push(newSpread);
+    this.renumberPages();
     this.state.activeSpreadIndex = totalSpreads;
     this.state.selectedElementId = null;
     this.state.selectedElementIds = [];
@@ -1752,9 +1827,7 @@ export class StateManager {
   public deleteSpread(index: number) {
     if (this.state.spreads.length <= 1) return;
     this.state.spreads.splice(index, 1);
-    this.state.spreads.forEach((sp, i) => {
-      sp.spreadIndex = i;
-    });
+    this.renumberPages();
     this.state.activeSpreadIndex = Math.max(0, Math.min(index, this.state.spreads.length - 1));
     this.state.selectedElementId = null;
     this.state.selectedElementIds = [];
@@ -2801,6 +2874,38 @@ export class StateManager {
     }
     return matches.sort((a, b) => a.start - b.start);
   }
+
+  public addGrepStyleRule(styleId: string, rule: Omit<GrepStyleRule, 'id'>) {
+    const style = this.state.paragraphStyles.find((s) => s.id === styleId);
+    if (!style) return;
+    if (!style.grepStyles) style.grepStyles = [];
+    const newRule: GrepStyleRule = {
+      id: `grep-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      ...rule,
+    };
+    style.grepStyles.push(newRule);
+    this.pushHistory();
+    this.notify();
+  }
+
+  public removeGrepStyleRule(styleId: string, ruleId: string) {
+    const style = this.state.paragraphStyles.find((s) => s.id === styleId);
+    if (!style || !style.grepStyles) return;
+    style.grepStyles = style.grepStyles.filter((r) => r.id !== ruleId);
+    this.pushHistory();
+    this.notify();
+  }
+
+  public updateGrepStyleRule(styleId: string, ruleId: string, partial: Partial<GrepStyleRule>) {
+    const style = this.state.paragraphStyles.find((s) => s.id === styleId);
+    if (!style || !style.grepStyles) return;
+    const rule = style.grepStyles.find((r) => r.id === ruleId);
+    if (!rule) return;
+    Object.assign(rule, partial);
+    this.pushHistory();
+    this.notify();
+  }
+
 
   /**
    * Generates a structured Table of Contents (TOC) with dot leaders and page numbers

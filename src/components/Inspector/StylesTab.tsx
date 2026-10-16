@@ -1,7 +1,7 @@
 import { useState } from 'preact/hooks';
 import { stateManager } from '../../state';
 import { fontManager } from '../../fontManager';
-import { ProjectState, ParagraphStyle } from '../../types';
+import { ProjectState, ParagraphStyle, GrepStyleRule } from '../../types';
 
 interface StylesTabProps {
   state: ProjectState;
@@ -232,6 +232,206 @@ export function StylesTab({ state }: StylesTabProps) {
                     />
                     Standard Ligatures (fi, fl, ffi)
                   </label>
+                </div>
+
+                <div className="grep-styles-section" style={{ marginTop: '14px', borderTop: '1px solid var(--border-color)', paddingTop: '10px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <span style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.5px', color: 'var(--accent-cyan)' }}>
+                      GREP STYLES (REGEX FORMATTING)
+                    </span>
+                    <button
+                      className="sm-btn"
+                      style={{ fontSize: '10px', padding: '2px 6px' }}
+                      onClick={() =>
+                        stateManager.addGrepStyleRule(style.id, {
+                          pattern: '\\b\\d+\\b',
+                          bold: true,
+                          color: '#0d99ff',
+                        })
+                      }
+                      title="Add a new regex pattern styling rule"
+                    >
+                      + Add GREP Rule
+                    </button>
+                  </div>
+
+                  <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '0 0 8px 0', lineHeight: 1.3 }}>
+                    Automatically format matched words, dates, prices, or acronyms inside this paragraph style.
+                  </p>
+
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '8px' }}>
+                    <button
+                      className="sm-btn"
+                      style={{ fontSize: '9px', padding: '2px 5px' }}
+                      onClick={() =>
+                        stateManager.addGrepStyleRule(style.id, {
+                          pattern: '\\b\\d{4}\\b',
+                          bold: true,
+                          color: '#e63946',
+                        })
+                      }
+                      title="Auto-style 4-digit years (e.g. 2026, 1984)"
+                    >
+                      + Years (\b\d4\b)
+                    </button>
+                    <button
+                      className="sm-btn"
+                      style={{ fontSize: '9px', padding: '2px 5px' }}
+                      onClick={() =>
+                        stateManager.addGrepStyleRule(style.id, {
+                          pattern: '\\$[\\d,.]+',
+                          bold: true,
+                          color: '#10b981',
+                        })
+                      }
+                      title="Auto-style currency ($1,250.00)"
+                    >
+                      + Currency (\$...)
+                    </button>
+                    <button
+                      className="sm-btn"
+                      style={{ fontSize: '9px', padding: '2px 5px' }}
+                      onClick={() =>
+                        stateManager.addGrepStyleRule(style.id, {
+                          pattern: '\\b[A-Z]{2,}\\b',
+                          bold: true,
+                          color: '#8b5cf6',
+                        })
+                      }
+                      title="Auto-style All-Caps Acronyms (e.g. NASA, PDF, DTP)"
+                    >
+                      + Acronyms (\b[A-Z]+\b)
+                    </button>
+                  </div>
+
+                  {(!style.grepStyles || style.grepStyles.length === 0) ? (
+                    <div style={{ fontSize: '10px', color: 'var(--text-secondary)', fontStyle: 'italic', padding: '4px 0' }}>
+                      No GREP rules active. Click a preset above or "+ Add GREP Rule".
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {style.grepStyles.map((rule) => (
+                        <div
+                          key={rule.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '4px',
+                            padding: '4px 6px',
+                          }}
+                        >
+                          <input
+                            type="text"
+                            value={rule.pattern}
+                            placeholder="Regex (e.g. \b\d{4}\b)"
+                            style={{
+                              flex: 1,
+                              fontSize: '11px',
+                              fontFamily: 'monospace',
+                              padding: '2px 4px',
+                              backgroundColor: 'var(--bg-panel)',
+                              color: 'var(--text-primary)',
+                              border: '1px solid var(--border-color)',
+                              borderRadius: '3px',
+                            }}
+                            onInput={(e) =>
+                              stateManager.updateGrepStyleRule(style.id, rule.id, {
+                                pattern: (e.target as HTMLInputElement).value,
+                              })
+                            }
+                          />
+
+                          <div style={{ display: 'flex', gap: '2px' }}>
+                            <button
+                              className={`sm-btn ${rule.bold ? 'active' : ''}`}
+                              style={{
+                                fontWeight: 'bold',
+                                padding: '2px 6px',
+                                minWidth: '22px',
+                                backgroundColor: rule.bold ? 'var(--accent-cyan)' : 'transparent',
+                                color: rule.bold ? '#111' : 'var(--text-primary)',
+                              }}
+                              onClick={() =>
+                                stateManager.updateGrepStyleRule(style.id, rule.id, {
+                                  bold: !rule.bold,
+                                })
+                              }
+                              title="Toggle Bold"
+                            >
+                              B
+                            </button>
+                            <button
+                              className={`sm-btn ${rule.italic ? 'active' : ''}`}
+                              style={{
+                                fontStyle: 'italic',
+                                padding: '2px 6px',
+                                minWidth: '22px',
+                                backgroundColor: rule.italic ? 'var(--accent-cyan)' : 'transparent',
+                                color: rule.italic ? '#111' : 'var(--text-primary)',
+                              }}
+                              onClick={() =>
+                                stateManager.updateGrepStyleRule(style.id, rule.id, {
+                                  italic: !rule.italic,
+                                })
+                              }
+                              title="Toggle Italic"
+                            >
+                              I
+                            </button>
+                            <button
+                              className={`sm-btn ${rule.underline ? 'active' : ''}`}
+                              style={{
+                                textDecoration: 'underline',
+                                padding: '2px 6px',
+                                minWidth: '22px',
+                                backgroundColor: rule.underline ? 'var(--accent-cyan)' : 'transparent',
+                                color: rule.underline ? '#111' : 'var(--text-primary)',
+                              }}
+                              onClick={() =>
+                                stateManager.updateGrepStyleRule(style.id, rule.id, {
+                                  underline: !rule.underline,
+                                })
+                              }
+                              title="Toggle Underline"
+                            >
+                              U
+                            </button>
+                          </div>
+
+                          <input
+                            type="color"
+                            value={rule.color || style.color || '#0d99ff'}
+                            style={{
+                              width: '24px',
+                              height: '24px',
+                              padding: 0,
+                              border: 'none',
+                              cursor: 'pointer',
+                              borderRadius: '3px',
+                            }}
+                            title="Match Color"
+                            onInput={(e) =>
+                              stateManager.updateGrepStyleRule(style.id, rule.id, {
+                                color: (e.target as HTMLInputElement).value,
+                              })
+                            }
+                          />
+
+                          <button
+                            className="sm-btn danger-btn"
+                            style={{ padding: '2px 6px', fontSize: '10px' }}
+                            onClick={() => stateManager.removeGrepStyleRule(style.id, rule.id)}
+                            title="Delete GREP rule"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             );

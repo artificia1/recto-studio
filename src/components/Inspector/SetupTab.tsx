@@ -1,5 +1,6 @@
 import { stateManager } from '../../state';
 import { ProjectState } from '../../types';
+import { MathInput } from '../common/MathInput';
 
 interface SetupTabProps {
   state: ProjectState;
@@ -8,11 +9,11 @@ interface SetupTabProps {
 export function SetupTab({ state }: SetupTabProps) {
   const s = state.settings;
 
-  const handleMarginChange = (key: keyof ProjectState['settings']['margins'], val: string) => {
+  const handleMarginChange = (key: keyof ProjectState['settings']['margins'], val: number) => {
     stateManager.updateSettings({
       margins: {
         ...s.margins,
-        [key]: parseFloat(val) || 0,
+        [key]: val,
       },
     });
   };
@@ -26,42 +27,38 @@ export function SetupTab({ state }: SetupTabProps) {
         <div className="input-grid-2">
           <label>
             Top:
-            <input
-              type="number"
+            <MathInput
               value={s.margins.topMm}
               min={5}
               max={60}
-              onInput={(e) => handleMarginChange('topMm', (e.target as HTMLInputElement).value)}
+              onChange={(val) => handleMarginChange('topMm', val)}
             />
           </label>
           <label>
             Bottom:
-            <input
-              type="number"
+            <MathInput
               value={s.margins.bottomMm}
               min={5}
               max={60}
-              onInput={(e) => handleMarginChange('bottomMm', (e.target as HTMLInputElement).value)}
+              onChange={(val) => handleMarginChange('bottomMm', val)}
             />
           </label>
           <label>
             Inside (Spine):
-            <input
-              type="number"
+            <MathInput
               value={s.margins.insideMm}
               min={5}
               max={60}
-              onInput={(e) => handleMarginChange('insideMm', (e.target as HTMLInputElement).value)}
+              onChange={(val) => handleMarginChange('insideMm', val)}
             />
           </label>
           <label>
             Outside:
-            <input
-              type="number"
+            <MathInput
               value={s.margins.outsideMm}
               min={5}
               max={60}
-              onInput={(e) => handleMarginChange('outsideMm', (e.target as HTMLInputElement).value)}
+              onChange={(val) => handleMarginChange('outsideMm', val)}
             />
           </label>
         </div>
@@ -72,16 +69,12 @@ export function SetupTab({ state }: SetupTabProps) {
         <div className="input-grid-2">
           <label>
             Bleed:
-            <input
-              type="number"
+            <MathInput
               value={s.bleedMm}
               min={0}
               max={15}
               step={0.5}
-              onInput={(e) =>
-                stateManager.updateSettings({
-                  bleedMm: parseFloat((e.target as HTMLInputElement).value) || 0,
-                })}
+              onChange={(val) => stateManager.updateSettings({ bleedMm: val })}
             />
           </label>
           <label>
@@ -99,15 +92,11 @@ export function SetupTab({ state }: SetupTabProps) {
           </label>
           <label>
             Gutter:
-            <input
-              type="number"
+            <MathInput
               value={s.columnGutterMm}
               min={2}
               max={25}
-              onInput={(e) =>
-                stateManager.updateSettings({
-                  columnGutterMm: parseFloat((e.target as HTMLInputElement).value) || 4,
-                })}
+              onChange={(val) => stateManager.updateSettings({ columnGutterMm: val })}
             />
             mm
           </label>
@@ -132,30 +121,22 @@ export function SetupTab({ state }: SetupTabProps) {
         <div className="input-grid-2">
           <label>
             Increment (pt):
-            <input
-              type="number"
+            <MathInput
               value={s.baselineGrid?.incrementPt || 12}
               min={6}
               max={36}
               step={0.5}
-              onInput={(e) =>
-                stateManager.setBaselineGrid({
-                  incrementPt: parseFloat((e.target as HTMLInputElement).value) || 12,
-                })}
+              onChange={(val) => stateManager.setBaselineGrid({ incrementPt: val })}
             />
           </label>
           <label>
             Start Y (mm):
-            <input
-              type="number"
+            <MathInput
               value={s.baselineGrid?.startMm ?? s.margins.topMm}
               min={0}
               max={100}
               step={1}
-              onInput={(e) =>
-                stateManager.setBaselineGrid({
-                  startMm: parseFloat((e.target as HTMLInputElement).value) || s.margins.topMm,
-                })}
+              onChange={(val) => stateManager.setBaselineGrid({ startMm: val })}
             />
           </label>
         </div>
