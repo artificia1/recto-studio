@@ -10,6 +10,8 @@ import { ProjectState, CanvasElement, TextElement, ImageElement, ShapeElement, T
 import { bezierNodesToSvgPath, escapeXml } from './epubExport';
 import { formatOpenTypeText } from './canvas';
 
+import { stateManager } from './state';
+
 export interface FlipbookExportOptions {
   download?: boolean;
 }
@@ -18,6 +20,11 @@ export function generateFlipbookHtml(state: ProjectState): string {
   const widthMm = state.settings.widthMm || 210;
   const heightMm = state.settings.heightMm || 297;
   const title = escapeXml(state.settings.title || 'Recto Interactive Flipbook');
+
+  // High-DPI Retina Coordinate Space (2x standard 96 DPI = 7.559055 px/mm)
+  const PX_PER_MM = 7.559055;
+  const pageWidthPx = Math.round(widthMm * PX_PER_MM);
+  const pageHeightPx = Math.round(heightMm * PX_PER_MM);
 
   // Collect all pages in sequential order
   interface FlatPage {
@@ -42,28 +49,35 @@ export function generateFlipbookHtml(state: ProjectState): string {
     }
   }
 
-  // Render individual page HTML
+  // Render individual page HTML with high-DPI sub-pixel crispness
   function renderPageContent(p: FlatPage): string {
     let elementsHtml = '';
 
     for (const el of p.elements) {
+      const elXPx = Math.round(el.x * PX_PER_MM * 10) / 10;
+      const elYPx = Math.round(el.y * PX_PER_MM * 10) / 10;
+      const elWPx = Math.round(el.width * PX_PER_MM * 10) / 10;
+      const elHPx = Math.round(el.height * PX_PER_MM * 10) / 10;
       const transform = `transform: rotate(${el.rotation || 0}deg);`;
       const opacity = `opacity: ${el.opacity ?? 1};`;
       const zIndex = `z-index: ${el.zIndex || 1};`;
-      const baseStyle = `position: absolute; left: ${el.x}mm; top: ${el.y}mm; width: ${el.width}mm; height: ${el.height}mm; ${transform} ${opacity} ${zIndex} box-sizing: border-box;`;
+      const baseStyle = `position: absolute; left: ${elXPx}px; top: ${elYPx}px; width: ${elWPx}px; height: ${elHPx}px; ${transform} ${opacity} ${zIndex} box-sizing: border-box;`;
 
       if (el.type === 'text') {
         const textEl = el as TextElement;
-        const processed = formatOpenTypeText(textEl.text, textEl.openTypeFeatures);
+        const evaluated = stateManager.evaluateTokens(textEl.text, p.pageNumber);
+        const processed = formatOpenTypeText(evaluated, textEl.openTypeFeatures);
         const colCount = textEl.columns || 1;
-        const colGutter = textEl.columnGutterMm || 4;
-        const padding = textEl.paddingMm || 2;
+        const colGutterPx = Math.round((textEl.columnGutterMm || 4) * PX_PER_MM * 10) / 10;
+        const paddingPx = Math.round((textEl.paddingMm || 2) * PX_PER_MM * 10) / 10;
         const bg = textEl.backgroundColor && textEl.backgroundColor !== 'transparent' ? `background-color: ${textEl.backgroundColor};` : '';
-        const border = textEl.borderWidthMm > 0 && textEl.borderColor !== 'transparent' ? `border: ${textEl.borderWidthMm}mm solid ${textEl.borderColor};` : '';
-        const letterSpacing = textEl.letterSpacingPt ? `letter-spacing: ${textEl.letterSpacingPt}pt;` : '';
+        const borderWPx = Math.max(1, Math.round((textEl.borderWidthMm || 0) * PX_PER_MM * 10) / 10);
+        const border = textEl.borderWidthMm > 0 && textEl.borderColor !== 'transparent' ? `border: ${borderWPx}px solid ${textEl.borderColor};` : '';
+        const letterSpacingPx = textEl.letterSpacingPt ? `letter-spacing: ${(textEl.letterSpacingPt * (96 / 72) * 2).toFixed(2)}px;` : '';
         const smallCaps = textEl.openTypeFeatures?.smallCaps ? 'font-variant: small-caps;' : '';
+        const fontSizePx = Math.round(textEl.fontSizePt * (96 / 72) * 2 * 10) / 10;
 
-        const colStyle = colCount > 1 ? `column-count: ${colCount}; column-gap: ${colGutter}mm;` : '';
+        const colStyle = colCount > 1 ? `column-count: ${colCount}; column-gap: ${colGutterPx}px;` : '';
         const dropCapClass = textEl.dropCapLines && textEl.dropCapLines >= 2 ? `drop-cap-${textEl.dropCapLines}` : '';
 
         const paragraphs = processed.split('\n');
@@ -83,24 +97,27 @@ export function generateFlipbookHtml(state: ProjectState): string {
           }
         }
 
-        const textStyle = `font-family: ${textEl.fontFamily || 'serif'}; font-size: ${textEl.fontSizePt}pt; line-height: ${textEl.lineHeight || 1.3}; color: ${textEl.color || '#111'}; text-align: ${textEl.alignment || 'left'}; padding: ${padding}mm; ${bg} ${border} ${letterSpacing} ${smallCaps} ${colStyle} overflow: hidden;`;
+        const textStyle = `font-family: ${textEl.fontFamily || 'serif'}; font-size: ${fontSizePx}px; line-height: ${textEl.lineHeight || 1.3}; color: ${textEl.color || '#111'}; text-align: ${textEl.alignment || 'left'}; padding: ${paddingPx}px; ${bg} ${border} ${letterSpacingPx} ${smallCaps} ${colStyle} overflow: hidden;`;
 
         elementsHtml += `    <div style="${baseStyle} ${textStyle}">\n${parasHtml}    </div>\n`;
       } else if (el.type === 'image') {
         const img = el as ImageElement;
         const fit = img.fitMode === 'fill' ? 'cover' : img.fitMode === 'fit' ? 'contain' : img.fitMode === 'center' ? 'none' : 'fill';
-        const border = img.borderWidthMm > 0 && img.borderColor !== 'transparent' ? `border: ${img.borderWidthMm}mm solid ${img.borderColor};` : '';
+        const borderWPx = Math.max(1, Math.round((img.borderWidthMm || 0) * PX_PER_MM));
+        const border = img.borderWidthMm > 0 && img.borderColor !== 'transparent' ? `border: ${borderWPx}px solid ${img.borderColor};` : '';
         elementsHtml += `    <div style="${baseStyle} overflow: hidden; ${border}">\n`;
         if (img.src) {
-          elementsHtml += `      <img src="${escapeXml(img.src)}" alt="${escapeXml(img.caption || '')}" style="width: 100%; height: 100%; object-fit: ${fit}; display: block;"/>\n`;
+          elementsHtml += `      <img src="${escapeXml(img.src)}" alt="${escapeXml(img.caption || '')}" style="width: 100%; height: 100%; object-fit: ${fit}; display: block; image-rendering: high-quality; image-rendering: -webkit-optimize-contrast;"/>\n`;
         } else {
-          elementsHtml += `      <div style="width: 100%; height: 100%; background: #eee; display: flex; align-items: center; justify-content: center; color: #888; font-size: 10px;">[Image Frame]</div>\n`;
+          elementsHtml += `      <div style="width: 100%; height: 100%; background: #eee; display: flex; align-items: center; justify-content: center; color: #888; font-size: 14px;">[Image Frame]</div>\n`;
         }
         elementsHtml += '    </div>\n';
       } else if (el.type === 'table') {
         const tbl = el as TableElement;
-        const cellPad = tbl.cellPaddingMm || 2;
-        const borderStyle = tbl.borderWidthMm > 0 ? `${tbl.borderWidthMm}mm solid ${tbl.borderColor || '#333'}` : 'none';
+        const cellPadPx = Math.round((tbl.cellPaddingMm || 2) * PX_PER_MM * 10) / 10;
+        const borderWPx = Math.max(1, Math.round((tbl.borderWidthMm || 1) * PX_PER_MM));
+        const borderStyle = tbl.borderWidthMm > 0 ? `${borderWPx}px solid ${tbl.borderColor || '#333'}` : 'none';
+        const tblFontSizePx = Math.round((tbl.fontSizePt || 10) * (96 / 72) * 2 * 10) / 10;
 
         let rowsHtml = '';
         if (tbl.cells) {
@@ -113,31 +130,39 @@ export function generateFlipbookHtml(state: ProjectState): string {
               const tag = isHeader ? 'th' : 'td';
               const cellColor = isHeader ? tbl.headerTextColor : (cell.textColor || '#111');
               const align = cell.align || 'left';
-              rowsHtml += `        <${tag} style="padding: ${cellPad}mm; border: ${borderStyle}; text-align: ${align}; color: ${cellColor}; font-weight: ${isHeader ? 700 : 400};">${escapeXml(cell.text || '')}</${tag}>\n`;
+              rowsHtml += `        <${tag} style="padding: ${cellPadPx}px; border: ${borderStyle}; text-align: ${align}; color: ${cellColor}; font-weight: ${isHeader ? 700 : 400};">${escapeXml(cell.text || '')}</${tag}>\n`;
             }
             rowsHtml += '      </tr>\n';
           }
         }
 
-        elementsHtml += `    <div style="${baseStyle} overflow: auto;">\n      <table style="width: 100%; height: 100%; border-collapse: collapse; font-family: ${tbl.fontFamily || 'sans-serif'}; font-size: ${tbl.fontSizePt || 10}pt; border: ${borderStyle};">\n${rowsHtml}      </table>\n    </div>\n`;
+        elementsHtml += `    <div style="${baseStyle} overflow: auto;">\n      <table style="width: 100%; height: 100%; border-collapse: collapse; font-family: ${tbl.fontFamily || 'sans-serif'}; font-size: ${tblFontSizePx}px; border: ${borderStyle};">\n${rowsHtml}      </table>\n    </div>\n`;
       } else if (el.type === 'path') {
         const pathEl = el as VectorPathElement;
-        const d = bezierNodesToSvgPath(pathEl.nodes, pathEl.closed);
-        const strokeDash = pathEl.strokeDash === 'dashed' ? ' stroke-dasharray="4,3"' : '';
+        const scaledNodes = pathEl.nodes.map((n) => ({
+          x: n.x * PX_PER_MM,
+          y: n.y * PX_PER_MM,
+          handleIn: n.handleIn ? { x: n.handleIn.x * PX_PER_MM, y: n.handleIn.y * PX_PER_MM } : undefined,
+          handleOut: n.handleOut ? { x: n.handleOut.x * PX_PER_MM, y: n.handleOut.y * PX_PER_MM } : undefined,
+        }));
+        const d = bezierNodesToSvgPath(scaledNodes, pathEl.closed);
+        const strokeDash = pathEl.strokeDash === 'dashed' ? ' stroke-dasharray="8,6"' : '';
+        const strokeWPx = Math.max(1, Math.round((pathEl.strokeWidthMm || 1) * PX_PER_MM));
         elementsHtml += `    <div style="${baseStyle}">\n`;
-        elementsHtml += `      <svg viewBox="0 0 ${pathEl.width} ${pathEl.height}" style="width: 100%; height: 100%; overflow: visible;">\n`;
-        elementsHtml += `        <path d="${d}" fill="${pathEl.fillColor || 'none'}" stroke="${pathEl.strokeColor || '#000'}" stroke-width="${pathEl.strokeWidthMm || 1}" stroke-linecap="${pathEl.strokeCap || 'round'}" stroke-linejoin="${pathEl.strokeJoin || 'round'}"${strokeDash}/>\n`;
+        elementsHtml += `      <svg viewBox="0 0 ${elWPx} ${elHPx}" style="width: 100%; height: 100%; overflow: visible;">\n`;
+        elementsHtml += `        <path d="${d}" fill="${pathEl.fillColor || 'none'}" stroke="${pathEl.strokeColor || '#000'}" stroke-width="${strokeWPx}" stroke-linecap="${pathEl.strokeCap || 'round'}" stroke-linejoin="${pathEl.strokeJoin || 'round'}"${strokeDash}/>\n`;
         elementsHtml += '      </svg>\n    </div>\n';
       } else if (el.type === 'shape') {
         const shape = el as ShapeElement;
+        const strokeWPx = shape.strokeWidthMm > 0 ? Math.max(1, Math.round(shape.strokeWidthMm * PX_PER_MM)) : 0;
         elementsHtml += `    <div style="${baseStyle}">\n`;
-        elementsHtml += `      <svg viewBox="0 0 ${shape.width} ${shape.height}" style="width: 100%; height: 100%;">\n`;
+        elementsHtml += `      <svg viewBox="0 0 ${elWPx} ${elHPx}" style="width: 100%; height: 100%;">\n`;
         if (shape.shapeKind === 'ellipse') {
-          elementsHtml += `        <ellipse cx="${shape.width / 2}" cy="${shape.height / 2}" rx="${shape.width / 2}" ry="${shape.height / 2}" fill="${shape.fillColor || 'none'}" stroke="${shape.strokeColor || '#000'}" stroke-width="${shape.strokeWidthMm || 1}"/>\n`;
+          elementsHtml += `        <ellipse cx="${elWPx / 2}" cy="${elHPx / 2}" rx="${Math.max(1, elWPx / 2 - strokeWPx / 2)}" ry="${Math.max(1, elHPx / 2 - strokeWPx / 2)}" fill="${shape.fillColor || 'none'}" stroke="${shape.strokeColor || '#000'}" stroke-width="${strokeWPx}"/>\n`;
         } else if (shape.shapeKind === 'line') {
-          elementsHtml += `        <line x1="0" y1="${shape.height / 2}" x2="${shape.width}" y2="${shape.height / 2}" stroke="${shape.strokeColor || '#000'}" stroke-width="${shape.strokeWidthMm || 1}"/>\n`;
+          elementsHtml += `        <line x1="0" y1="${elHPx / 2}" x2="${elWPx}" y2="${elHPx / 2}" stroke="${shape.strokeColor || '#000'}" stroke-width="${strokeWPx || 1}"/>\n`;
         } else {
-          elementsHtml += `        <rect x="0" y="0" width="${shape.width}" height="${shape.height}" fill="${shape.fillColor || 'none'}" stroke="${shape.strokeColor || '#000'}" stroke-width="${shape.strokeWidthMm || 1}"/>\n`;
+          elementsHtml += `        <rect x="${strokeWPx / 2}" y="${strokeWPx / 2}" width="${Math.max(1, elWPx - strokeWPx)}" height="${Math.max(1, elHPx - strokeWPx)}" fill="${shape.fillColor || 'none'}" stroke="${shape.strokeColor || '#000'}" stroke-width="${strokeWPx}"/>\n`;
         }
         elementsHtml += '      </svg>\n    </div>\n';
       }
@@ -200,13 +225,13 @@ export function generateFlipbookHtml(state: ProjectState): string {
 
     // Left Leaf
     if (sp.leftPage) {
-      spreadsMarkup += `      <div class="flip-leaf left-leaf" style="width: ${widthMm}mm; height: ${heightMm}mm;">\n`;
+      spreadsMarkup += `      <div class="flip-leaf left-leaf" style="width: ${pageWidthPx}px; height: ${pageHeightPx}px;">\n`;
       spreadsMarkup += renderPageContent(sp.leftPage);
-      spreadsMarkup += `        <div class="page-num left-num">${sp.leftPage.pageNumber}</div>\n`;
+      spreadsMarkup += `        <div class="page-num left-num" style="bottom: ${Math.round(10 * PX_PER_MM)}px; left: ${Math.round(12 * PX_PER_MM)}px; font-size: ${Math.round(8 * (96 / 72) * 2)}px;">${sp.leftPage.pageNumber}</div>\n`;
       spreadsMarkup += `        <div class="leaf-shadow left-shadow"></div>\n`;
       spreadsMarkup += '      </div>\n';
     } else {
-      spreadsMarkup += `      <div class="flip-leaf left-leaf empty-leaf" style="width: ${widthMm}mm; height: ${heightMm}mm;">\n`;
+      spreadsMarkup += `      <div class="flip-leaf left-leaf empty-leaf" style="width: ${pageWidthPx}px; height: ${pageHeightPx}px;">\n`;
       spreadsMarkup += `        <div class="leaf-shadow left-shadow"></div>\n`;
       spreadsMarkup += '      </div>\n';
     }
@@ -216,13 +241,13 @@ export function generateFlipbookHtml(state: ProjectState): string {
 
     // Right Leaf
     if (sp.rightPage) {
-      spreadsMarkup += `      <div class="flip-leaf right-leaf" style="width: ${widthMm}mm; height: ${heightMm}mm;">\n`;
+      spreadsMarkup += `      <div class="flip-leaf right-leaf" style="width: ${pageWidthPx}px; height: ${pageHeightPx}px;">\n`;
       spreadsMarkup += renderPageContent(sp.rightPage);
-      spreadsMarkup += `        <div class="page-num right-num">${sp.rightPage.pageNumber}</div>\n`;
+      spreadsMarkup += `        <div class="page-num right-num" style="bottom: ${Math.round(10 * PX_PER_MM)}px; right: ${Math.round(12 * PX_PER_MM)}px; font-size: ${Math.round(8 * (96 / 72) * 2)}px;">${sp.rightPage.pageNumber}</div>\n`;
       spreadsMarkup += `        <div class="leaf-shadow right-shadow"></div>\n`;
       spreadsMarkup += '      </div>\n';
     } else {
-      spreadsMarkup += `      <div class="flip-leaf right-leaf empty-leaf" style="width: ${widthMm}mm; height: ${heightMm}mm;">\n`;
+      spreadsMarkup += `      <div class="flip-leaf right-leaf empty-leaf" style="width: ${pageWidthPx}px; height: ${pageHeightPx}px;">\n`;
       spreadsMarkup += `        <div class="leaf-shadow right-shadow"></div>\n`;
       spreadsMarkup += '      </div>\n';
     }
@@ -354,8 +379,13 @@ export function generateFlipbookHtml(state: ProjectState): string {
       background: #ffffff;
       position: relative;
       overflow: hidden;
-      backface-visibility: hidden;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: optimizeLegibility;
+      image-rendering: -webkit-optimize-contrast;
+      image-rendering: high-quality;
       box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.04);
+      transform-origin: center center;
     }
 
     .empty-leaf {
@@ -589,19 +619,18 @@ ${spreadsMarkup}
         }
       }
 
-      // Responsive auto-fit scaling
+      // Responsive auto-fit scaling with high-DPI downscaling for ultra-crisp vector rendering
       function resizeBook() {
         if (!stage || !bookWrapper) return;
         const stageW = stage.clientWidth - 80;
         const stageH = stage.clientHeight - 40;
-        const mmToPx = 3.7795;
-        const bookW = (${widthMm} * 2 + 4) * mmToPx;
-        const bookH = ${heightMm} * mmToPx;
+        const bookW = (${pageWidthPx} * 2 + 4);
+        const bookH = ${pageHeightPx};
 
         const scaleX = stageW / bookW;
         const scaleY = stageH / bookH;
-        const scale = Math.min(scaleX, scaleY, 1.25);
-        bookWrapper.style.transform = 'scale(' + scale.toFixed(3) + ')';
+        const scale = Math.min(scaleX, scaleY);
+        bookWrapper.style.transform = 'scale(' + scale.toFixed(4) + ')';
       }
 
       window.addEventListener('resize', resizeBook);
