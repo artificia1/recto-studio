@@ -176,12 +176,28 @@ export function TopBar({ state }: TopBarProps) {
     }
   };
 
-  const handleExportPdf = () => {
+  const handleExportPdfClean = () => {
+    exportDocumentToPdf(state, {
+      includeCropMarks: false,
+      includeBleed: false,
+      includeRegistrationMarks: false,
+      includeColorBars: false,
+      exportFormat: 'pages',
+    });
+  };
+
+  const handleExportPdfPress = () => {
     exportDocumentToPdf(state, {
       includeCropMarks: true,
       includeBleed: true,
+      includeRegistrationMarks: true,
+      includeColorBars: true,
       exportFormat: 'pages',
     });
+  };
+
+  const handleExportPdf = () => {
+    handleExportPdfClean();
   };
 
   const handleExportEpub = () => {
@@ -517,7 +533,7 @@ export function TopBar({ state }: TopBarProps) {
             Import ▾
           </button>
           {showImportMenu && (
-            <div className="top-dropdown-menu">
+            <div className="top-dropdown-menu import-dropdown-menu">
               <button
                 className="top-dropdown-item"
                 onClick={() => {
@@ -610,15 +626,15 @@ export function TopBar({ state }: TopBarProps) {
           <div className="btn-group-joined">
             <button
               className="action-btn-primary"
-              onClick={handleExportPdf}
-              title="Export Print-Ready PDF with Crop Marks and Bleed"
+              onClick={handleExportPdfClean}
+              title="Export Clean Digital PDF (Exact Trim Dimensions)"
             >
               Export PDF
             </button>
             <button
               className="action-btn-primary dropdown-arrow-btn"
               onClick={() => setShowExportMenu((prev) => !prev)}
-              title="Export EPUB 3, Web Flipbook, or Print Package (.zip)"
+              title="Export Clean PDF, PDF/X-1a Prepress, EPUB 3, Web Flipbook, or Package"
             >
               ▾
             </button>
@@ -629,12 +645,24 @@ export function TopBar({ state }: TopBarProps) {
                 className="top-dropdown-item"
                 onClick={() => {
                   setShowExportMenu(false);
-                  handleExportPdf();
+                  handleExportPdfClean();
                 }}
               >
                 <div>
-                  <div className="dropdown-item-title">Print PDF (PDF/X-1a)</div>
-                  <div className="dropdown-item-sub">CMYK, 3mm Bleed, Crop Marks, Tagged PDF/UA</div>
+                  <div className="dropdown-item-title">Standard PDF (Clean / Proof)</div>
+                  <div className="dropdown-item-sub">Exact trim size, perfect for digital sharing & screen</div>
+                </div>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowExportMenu(false);
+                  handleExportPdfPress();
+                }}
+              >
+                <div>
+                  <div className="dropdown-item-title">Print PDF (PDF/X-1a Prepress)</div>
+                  <div className="dropdown-item-sub">CMYK, 3mm Bleed, Crop Marks, Color Bars, Registration</div>
                 </div>
               </button>
               <button

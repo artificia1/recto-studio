@@ -51,11 +51,9 @@ html, body {
   border-bottom: 1px solid var(--border-color);
   padding: 0 10px;
   gap: 8px;
-  z-index: 100;
+  z-index: 200;
   position: relative;
-  overflow-x: auto;
-  overflow-y: visible;
-  scrollbar-width: thin;
+  overflow: visible;
 }
 
 /* CONTEXTUAL CONTROL BAR (InDesign Control Strip) */
@@ -398,21 +396,27 @@ html, body {
 
 .top-dropdown-menu {
   position: absolute;
-  top: calc(100% + 5px);
-  right: 0;
+  top: calc(100% + 6px);
   background-color: #202020;
   border: 1px solid #3d3d3d;
   border-radius: 6px;
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.65);
   min-width: 240px;
-  z-index: 1000;
+  z-index: 2000;
   padding: 5px 0;
   display: flex;
   flex-direction: column;
 }
 
+.top-dropdown-menu.import-dropdown-menu {
+  left: 0;
+  right: auto;
+}
+
 .top-dropdown-menu.export-dropdown-menu {
-  min-width: 270px;
+  right: 0;
+  left: auto;
+  min-width: 280px;
 }
 
 .top-dropdown-item {

@@ -22,10 +22,10 @@ export async function exportDocumentToPdf(
   options: ExportOptions = {}
 ): Promise<jsPDF> {
   const {
-    includeCropMarks = true,
-    includeBleed = true,
-    includeRegistrationMarks = true,
-    includeColorBars = true,
+    includeCropMarks = false,
+    includeBleed = false,
+    includeRegistrationMarks = false,
+    includeColorBars = false,
     spreadRange = 'all',
   } = options;
 
@@ -379,14 +379,6 @@ export function drawCropMarks(doc: any, x: number, y: number, w: number, h: numb
   // Bottom-Right corner
   doc.line(x + w + gap, y + h, x + w + gap + markLen, y + h);
   doc.line(x + w, y + h + gap, x + w, y + h + gap + markLen);
-
-  // Bleed perimeter dashed guide
-  if (bleed > 0) {
-    doc.setDrawColor(220, 100, 100);
-    doc.setLineDashPattern([1, 2], 0);
-    doc.rect(x - bleed, y - bleed, w + (bleed * 2), h + (bleed * 2), 'S');
-    doc.setLineDashPattern([], 0);
-  }
 }
 
 export function drawRegistrationTargets(doc: any, x: number, y: number, w: number, h: number, slug: number) {
@@ -453,7 +445,7 @@ function drawSlugMetadata(
 
   const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
   const safePageNum = Math.min(pageNum, totalPages);
-  const metaText = `RECTO STUDIO · ${title.toUpperCase()} · PAGE ${safePageNum} OF ${totalPages} · ${timestamp} · COLOR: ${colorMode.toUpperCase()} (${iccProfile}) · PDF/X READY`;
+  const metaText = `RECTO STUDIO | ${title.toUpperCase()} | PAGE ${safePageNum} OF ${totalPages} | ${timestamp} | COLOR: ${colorMode.toUpperCase()} (${iccProfile}) | PDF/X READY`;
   doc.text(metaText, x, y + h + 11.5);
 }
 
