@@ -1,5 +1,5 @@
-import { useState } from 'preact/hooks';
-import { ProjectState, DisplayQuality } from '../types';
+import { useState, useEffect, useRef } from 'preact/hooks';
+import { ProjectState, DisplayQuality, PreflightIssue } from '../types';
 import { stateManager } from '../state';
 
 interface StatusBarProps {
@@ -8,6 +8,8 @@ interface StatusBarProps {
 
 export function StatusBar({ state }: StatusBarProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const drawerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement | HTMLSpanElement>(null);
   const currentSpread = state.spreads[state.activeSpreadIndex];
   const pagesDesc = currentSpread?.pages?.map((p) => `Page ${p.pageNumber}`).join(' - ') || 'Spread';
 
@@ -15,6 +17,34 @@ export function StatusBar({ state }: StatusBarProps) {
 
   const handleQualityChange = (e: any) => {
     stateManager.setDisplayQuality(e.target.value as DisplayQuality);
+  };
+
+  // Close drawer when clicking outside
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const handleDocumentClick = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (
+        drawerRef.current &&
+        !drawerRef.current.contains(target) &&
+        triggerRef.current &&
+        !triggerRef.current.contains(target)
+      ) {
+        setDrawerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleDocumentClick);
+    return () => document.removeEventListener('mousedown', handleDocumentClick);
+  }, [drawerOpen]);
+
+  const handleFixIssue = (e: MouseEvent, issue: PreflightIssue) => {
+    e.stopPropagation();
+    stateManager.autoFixPreflightIssue(issue);
+  };
+
+  const handleFixAll = (e: MouseEvent) => {
+    e.stopPropagation();
+    stateManager.autoFixAllPreflightIssues();
   };
 
   return (
@@ -31,17 +61,25 @@ export function StatusBar({ state }: StatusBarProps) {
 
         {issues.length === 0 ? (
           <span
+            ref={triggerRef as any}
             className="status-preflight-ok"
-            onClick={() => setDrawerOpen(!drawerOpen)}
-            title="Print Preflight: All print criteria passed"
+            onClick={(e) => {
+              e.stopPropagation();
+              setDrawerOpen(!drawerOpen);
+            }}
+            title="Print Preflight: All print criteria passed. Click to view audit."
           >
             ✔ Preflight: OK
           </span>
         ) : (
           <button
+            ref={triggerRef as any}
             className="status-preflight-btn"
-            onClick={() => setDrawerOpen(!drawerOpen)}
-            title="Click to view print preflight issues"
+            onClick={(e) => {
+              e.stopPropagation();
+              setDrawerOpen(!drawerOpen);
+            }}
+            title="Click to view and resolve print preflight issues"
           >
             ⚠ Preflight: {issues.length} {issues.length === 1 ? 'Issue' : 'Issues'}
           </button>
@@ -69,82 +107,59 @@ export function StatusBar({ state }: StatusBarProps) {
       </div>
 
       {drawerOpen && (
-        <div
-          className="preflight-drawer"
-          style={{
-            position: 'absolute',
-            bottom: '26px',
-            left: '12px',
-            width: '420px',
-            maxHeight: '260px',
-            backgroundColor: '#1c1c1c',
-            border: '1px solid #444',
-            borderRadius: '6px',
-            boxShadow: '0 -4px 16px rgba(0,0,0,0.5)',
-            zIndex: 1000,
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
-          }}
-        >
-          <div
-            style={{
-              padding: '7px 12px',
-              backgroundColor: '#262626',
-              borderBottom: '1px solid #383838',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              fontSize: '11px',
-              fontWeight: 700,
-              letterSpacing: '0.5px',
-              color: '#eee',
-            }}
-          >
-            <span>PRINT PREFLIGHT AUDIT ({issues.length} {issues.length === 1 ? 'ISSUE' : 'ISSUES'})</span>
-            <button
-              onClick={() => setDrawerOpen(false)}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: '#aaa',
-                cursor: 'pointer',
-                fontSize: '12px',
-                padding: '0 4px',
-              }}
-            >
-              ✕
-            </button>
+        <div ref={drawerRef} className="preflight-drawer">
+          <div className="preflight-drawer-header">
+            <div className="preflight-drawer-title">
+              <span>PRINT PREFLIGHT AUDIT</span>
+              <span
+                style={{
+                  fontSize: '9.5px',
+                  fontWeight: 700,
+                  padding: '1px 6px',
+                  borderRadius: '10px',
+                  backgroundColor: issues.length === 0 ? '#2ec4b6' : '#e63946',
+                  color: '#ffffff',
+                }}
+              >
+                {issues.length} {issues.length === 1 ? 'ISSUE' : 'ISSUES'}
+              </span>
+            </div>
+            <div className="preflight-actions">
+              {issues.length > 0 && (
+                <button
+                  className="preflight-fix-all-btn"
+                  onClick={handleFixAll}
+                  title="Automatically fix all resolvable preflight issues"
+                >
+                  ⚡ Auto-Fix All
+                </button>
+              )}
+              <button
+                className="preflight-close-btn"
+                onClick={() => setDrawerOpen(false)}
+                title="Close preflight audit panel"
+              >
+                ✕
+              </button>
+            </div>
           </div>
 
-          <div
-            style={{
-              overflowY: 'auto',
-              padding: '8px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '6px',
-              maxHeight: '210px',
-            }}
-          >
+          <div className="preflight-drawer-body">
             {issues.length === 0 ? (
-              <div style={{ padding: '12px', color: '#2ec4b6', fontSize: '11px', textAlign: 'center' }}>
-                ✔ Document passes all print preflight checks (No overset text, resolution issues, bleed gaps, or trim hazards).
+              <div style={{ padding: '16px 12px', color: '#2ec4b6', fontSize: '11px', textAlign: 'center' }}>
+                <div style={{ fontSize: '18px', marginBottom: '6px' }}>✔</div>
+                <b>All Preflight Checks Passed</b>
+                <div style={{ color: '#888', marginTop: '4px', fontSize: '10.5px' }}>
+                  No overset text, low-res assets, missing Alt Text, bleed gaps, or trim edge hazards detected.
+                </div>
               </div>
             ) : (
               issues.map((issue) => (
                 <div
                   key={issue.id}
+                  className="preflight-item"
                   style={{
-                    padding: '6px 8px',
-                    backgroundColor: '#232323',
-                    borderRadius: '4px',
                     borderLeft: `3px solid ${issue.severity === 'error' ? '#e63946' : '#f4a261'}`,
-                    fontSize: '11px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '2px',
-                    cursor: 'pointer',
                   }}
                   onClick={() => {
                     stateManager.setActiveSpread(issue.spreadIndex);
@@ -152,13 +167,28 @@ export function StatusBar({ state }: StatusBarProps) {
                       stateManager.selectElements([issue.elementId]);
                     }
                   }}
-                  title="Click to jump to and select this element on canvas"
+                  title="Click to jump to element and inspect on canvas"
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#999', fontSize: '10px' }}>
-                    <b style={{ color: issue.severity === 'error' ? '#ff6b6b' : '#f4a261' }}>{issue.code}</b>
-                    <span>Page {issue.pageNumber} • Spread {issue.spreadIndex + 1}</span>
+                  <div className="preflight-item-top">
+                    <b style={{ color: issue.severity === 'error' ? '#ff6b6b' : '#f4a261' }}>
+                      {issue.code}
+                    </b>
+                    <span style={{ color: '#888888' }}>
+                      Page {issue.pageNumber} • Spread {issue.spreadIndex + 1}
+                    </span>
                   </div>
-                  <div style={{ color: '#e0e0e0', lineHeight: '1.3' }}>{issue.message}</div>
+                  <div style={{ color: '#e0e0e0', lineHeight: '1.35', fontSize: '11px' }}>
+                    {issue.message}
+                  </div>
+                  <div className="preflight-item-actions">
+                    <button
+                      className="preflight-fix-btn"
+                      onClick={(e) => handleFixIssue(e as any, issue)}
+                      title="Apply automatic fix for this issue"
+                    >
+                      ⚡ Quick Fix
+                    </button>
+                  </div>
                 </div>
               ))
             )}

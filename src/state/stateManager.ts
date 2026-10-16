@@ -741,6 +741,21 @@ export class StateManager {
     if (!this.state.settings.iccProfile) {
       this.state.settings.iccProfile = 'FOGRA39';
     }
+
+    // Heal older placeholder image frames if loaded from previous unmigrated local storage cache
+    for (const spread of this.state.spreads) {
+      for (const el of spread.elements) {
+        if (el.type === 'image' && el.id === 'elem-cover-frame') {
+          const img = el as ImageElement;
+          if (!img.src || img.src.trim() === '') {
+            img.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="600" height="440" viewBox="0 0 600 440"><rect width="100%" height="100%" fill="%23242424"/><line x1="0" y1="0" x2="600" y2="440" stroke="%233a3a3a" stroke-width="2"/><line x1="600" y1="0" x2="0" y2="440" stroke="%233a3a3a" stroke-width="2"/><circle cx="300" cy="220" r="80" fill="%231a1a1a" stroke="%230d99ff" stroke-width="3"/><text x="300" y="226" font-family="sans-serif" font-size="16" fill="%23e0e0e0" text-anchor="middle" letter-spacing="2">COVER VISUAL FRAME</text></svg>';
+          }
+          if (!img.altText || !img.altText.trim()) {
+            img.altText = 'Cover visual frame with geometric publisher symbol';
+          }
+        }
+      }
+    }
     this.pushHistory();
   }
 
@@ -2090,6 +2105,94 @@ export class StateManager {
     });
 
     return issues;
+  }
+
+  public autoFixPreflightIssue(issue: PreflightIssue): boolean {
+    if (!issue.elementId) return false;
+    const el = this.getElementById(issue.elementId);
+    if (!el) return false;
+
+    if (issue.code === 'LOW_RES_IMAGE' && el.type === 'image') {
+      const img = el as ImageElement;
+      if (!img.src || img.src.trim() === '' || (img.src.startsWith('data:image') && img.src.length < 250)) {
+        img.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="600" height="440" viewBox="0 0 600 440"><rect width="100%" height="100%" fill="%23242424"/><line x1="0" y1="0" x2="600" y2="440" stroke="%233a3a3a" stroke-width="2"/><line x1="600" y1="0" x2="0" y2="440" stroke="%233a3a3a" stroke-width="2"/><circle cx="300" cy="220" r="80" fill="%231a1a1a" stroke="%230d99ff" stroke-width="3"/><text x="300" y="226" font-family="sans-serif" font-size="16" fill="%23e0e0e0" text-anchor="middle" letter-spacing="2">PUBLICATION ARTWORK</text></svg>';
+        img.caption = img.caption || 'Vector artwork illustration';
+        img.altText = img.altText || 'Editorial vector artwork illustration';
+        this.pushHistory();
+        this.notify();
+        return true;
+      }
+    }
+
+    if (issue.code === 'MISSING_ALT_TEXT' && el.type === 'image') {
+      const img = el as ImageElement;
+      img.altText = img.caption || img.name || 'Editorial publication graphic';
+      this.pushHistory();
+      this.notify();
+      return true;
+    }
+
+    if (issue.code === 'OVERSET_TEXT' && el.type === 'text') {
+      this.copyfitTextFrame(el.id);
+      return true;
+    }
+
+    if (issue.code === 'TRIM_HAZARD') {
+      const trimMargin = 4;
+      const pageW = this.state.settings.widthMm;
+      const pageH = this.state.settings.heightMm;
+      if (el.x < trimMargin) el.x = trimMargin;
+      if (el.y < trimMargin) el.y = trimMargin;
+      if (el.x + el.width > pageW - trimMargin) el.width = Math.max(10, pageW - trimMargin - el.x);
+      if (el.y + el.height > pageH - trimMargin) el.height = Math.max(10, pageH - trimMargin - el.y);
+      this.pushHistory();
+      this.notify();
+      return true;
+    }
+
+    if (issue.code === 'BLEED_ERROR' && el.type === 'image') {
+      const bleed = this.state.settings.bleedMm ?? 3;
+      const pageW = this.state.settings.widthMm;
+      const pageH = this.state.settings.heightMm;
+      if (Math.abs(el.x) <= 1.0) {
+        el.width += el.x + bleed;
+        el.x = -bleed;
+      }
+      if (Math.abs(el.y) <= 1.0) {
+        el.height += el.y + bleed;
+        el.y = -bleed;
+      }
+      if (Math.abs((el.x + el.width) - pageW) <= 1.0) {
+        el.width = (pageW + bleed) - el.x;
+      }
+      if (Math.abs((el.y + el.height) - pageH) <= 1.0) {
+        el.height = (pageH + bleed) - el.y;
+      }
+      this.pushHistory();
+      this.notify();
+      return true;
+    }
+
+    if (issue.code === 'HEADING_ORDER_HAZARD' && el.type === 'text') {
+      const txt = el as TextElement;
+      txt.paragraphStyleId = 'style-h1';
+      this.pushHistory();
+      this.notify();
+      return true;
+    }
+
+    return false;
+  }
+
+  public autoFixAllPreflightIssues(): number {
+    const issues = this.runPreflightCheck();
+    let fixed = 0;
+    for (const issue of issues) {
+      if (this.autoFixPreflightIssue(issue)) {
+        fixed++;
+      }
+    }
+    return fixed;
   }
 
   public exportProjectFile() {
