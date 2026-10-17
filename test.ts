@@ -22,6 +22,9 @@ import { writePsdBuffer } from 'ag-psd';
 import { colorToCmyk } from './src/export/pdfExport';
 import { assetStore } from './src/engine/assetStore';
 import { execFileSync } from 'child_process';
+import { tableEngine } from './src/engine/tableEngine';
+import { bookEngine } from './src/engine/bookEngine';
+import { jsPDF } from 'jspdf';
 
 console.log('Running Recto Core Engine TypeScript Verification Tests...\n');
 
@@ -2597,8 +2600,221 @@ assert.strictEqual(stateManager.isMasterElementOverridden(spreadForOverride.id, 
 assert.strictEqual(stateManager.getElementById(overriddenItem.id), null, 'Overridden clone must be removed upon restore');
 console.log('✓ Master Page Detach / Overrides (Cmd + Shift + Click) verified.');
 
+// --- Suite 46: Multi-Page Threaded Table Engine (Repeating Headers & DeviceCMYK PDF vector stream) ---
+console.log('\n--- Suite 46: Multi-Page Threaded Table Engine (Repeating Headers & DeviceCMYK PDF vector stream) ---');
+const dummyTableCells = [
+  [{ text: 'Part No.' }, { text: 'Component' }, { text: 'Tolerance' }],
+  [{ text: 'P01' }, { text: 'Balance Staff' }, { text: '±0.002 mm' }],
+  [{ text: 'P02' }, { text: 'Escape Wheel' }, { text: '±0.005 mm' }],
+  [{ text: 'P03' }, { text: 'Pallet Fork' }, { text: '±0.003 mm' }],
+  [{ text: 'P04' }, { text: 'Jewel Bearing' }, { text: '±0.001 mm' }],
+];
+
+const parentTableSuite: TableElement = {
+  id: 'suite-table-frame-1',
+  type: 'table',
+  pageId: 'page-1',
+  x: 20,
+  y: 20,
+  width: 170,
+  height: 50,
+  rotation: 0,
+  opacity: 1,
+  zIndex: 1,
+  locked: false,
+  rows: 5,
+  cols: 3,
+  headerRowCount: 1,
+  headerFillColor: '#242424',
+  headerTextColor: '#ffffff',
+  borderColor: '#333333',
+  borderWidthMm: 0.3,
+  cellPaddingMm: 1.5,
+  fontFamily: 'Inter',
+  fontSizePt: 9,
+  repeatHeaderOnOverflow: true,
+  cells: dummyTableCells,
+  nextFrameId: 'suite-table-frame-2',
+};
+
+const childTableSuite: TableElement = {
+  ...parentTableSuite,
+  id: 'suite-table-frame-2',
+  pageId: 'page-2',
+  prevFrameId: 'suite-table-frame-1',
+  nextFrameId: undefined,
+};
+
+const tableThread = [parentTableSuite, childTableSuite];
+const slice1 = tableEngine.computeFrameSlice(parentTableSuite, tableThread);
+assert.strictEqual(slice1.isFirstFrame, true, 'Parent table frame must be marked as first frame');
+assert.strictEqual(slice1.headerRows.length, 1, 'Header row count must be 1');
+assert.strictEqual(slice1.headerRows[0][0].text, 'Part No.', 'Header cell text must match');
+assert(slice1.bodyRows.length > 0, 'First frame must contain body rows');
+
+const slice2 = tableEngine.computeFrameSlice(childTableSuite, tableThread);
+assert.strictEqual(slice2.isFirstFrame, false, 'Continuation frame must not be first frame');
+assert.strictEqual(slice2.headerRows.length, 1, 'Continuation frame must repeat header rows');
+assert.strictEqual(slice2.headerRows[0][0].text, 'Part No.', 'Continuation header row text must match');
+assert(slice2.bodyRows.length > 0, 'Continuation frame must contain continuation body rows');
+assert(slice2.bodyRows[0].originalRowIndex > slice1.bodyRows[0].originalRowIndex, 'Continuation rows must follow parent frame rows');
+
+// Test PDF Vector Export
+const tablePdfDoc = new jsPDF({ unit: 'mm', compress: false });
+tableEngine.exportPdfTable(tablePdfDoc, parentTableSuite, 20, 20, 170, 50, tableThread, true);
+const tablePdfStream = tablePdfDoc.output();
+assert(tablePdfStream.includes('Part No.'), 'Table PDF stream must include header text');
+assert(tablePdfStream.includes('Balance Staff'), 'Table PDF stream must include cell body text');
+
+// State frame linking
+stateManager.addElement(parentTableSuite);
+stateManager.addElement({ ...childTableSuite, cells: [] });
+const tableLinked = stateManager.linkTableFrames(parentTableSuite.id, childTableSuite.id);
+assert.strictEqual(tableLinked, true, 'linkTableFrames must succeed');
+const loadedChildTable = stateManager.getElementById(childTableSuite.id) as TableElement;
+assert.strictEqual(loadedChildTable.prevFrameId, parentTableSuite.id, 'Child frame must link to parent');
+
+stateManager.unlinkTableFrame(childTableSuite.id);
+stateManager.deleteElement(parentTableSuite.id);
+stateManager.deleteElement(childTableSuite.id);
+console.log('✓ Multi-Page Threaded Table Engine (Repeating Headers & DeviceCMYK PDF vector stream) verified.');
+
+// --- Suite 47: Multi-Document Book (.rectobook / .indb) Synchronization & Stitched Export ---
+console.log('\n--- Suite 47: Multi-Document Book (.rectobook / .indb) Synchronization & Stitched Export ---');
+const book = bookEngine.createBook('Horology Compendium', [
+  { title: 'Ch 1: Escapements', filePath: 'ch1.recto', forceRectoOpening: true },
+  { title: 'Ch 2: Gear Trains', filePath: 'ch2.recto', forceRectoOpening: true },
+  { title: 'Appendix: Tables', filePath: 'app.recto', forceRectoOpening: false },
+]);
+assert.strictEqual(book.title, 'Horology Compendium', 'Book title must match');
+assert.strictEqual(book.chapters.length, 3, 'Book must contain 3 chapters');
+assert.strictEqual(book.styleSourceChapterId, book.chapters[0].id, 'First chapter is default style source');
+
+const createSuiteMockChapter = (title: string, pageCount: number, heading: string) => {
+  const pgs = Array.from({ length: pageCount }, (_, i) => ({
+    id: `${title}-p${i + 1}`,
+    pageNumber: i + 1,
+    width: 210,
+    height: 297,
+    margins: { top: 20, bottom: 20, inside: 20, outside: 20 },
+    bleed: { top: 3, bottom: 3, inside: 3, outside: 3 },
+    slug: { top: 0, bottom: 0, inside: 0, outside: 0 },
+    elements: [],
+  }));
+
+  const hEl: TextElement = {
+    id: `${title}-heading`,
+    type: 'text',
+    pageId: `${title}-p1`,
+    x: 20,
+    y: 20,
+    width: 140,
+    height: 20,
+    rotation: 0,
+    opacity: 1,
+    zIndex: 1,
+    locked: false,
+    text: heading,
+    fontFamily: 'Inter',
+    fontSizePt: 22,
+    lineHeight: 1.2,
+    letterSpacingPt: 0,
+    color: '#000000',
+    alignment: 'left',
+    columns: 1,
+    columnGutterMm: 4,
+    backgroundColor: 'transparent',
+    borderColor: 'transparent',
+    borderWidthMm: 0,
+    paddingMm: 0,
+    paragraphStyleId: 'h1-style',
+  };
+
+  return {
+    version: '1.0.0',
+    settings: {
+      title,
+      preset: 'A4' as const,
+      widthMm: 210,
+      heightMm: 297,
+      facingPages: true,
+      bleedMm: 3,
+      margins: { topMm: 20, bottomMm: 20, insideMm: 20, outsideMm: 20 },
+      columnCount: 1,
+      columnGutterMm: 4,
+      baselineGrid: { enabled: false, incrementPt: 12, startMm: 20 },
+      colorMode: 'cmyk' as const,
+      iccProfile: 'FOGRA39' as const,
+    },
+    spreads: [{ id: `${title}-spread`, pages: pgs, elements: [hEl] }],
+    paragraphStyles: [{
+      id: 'h1-style',
+      name: 'Heading 1',
+      fontFamily: 'Inter',
+      fontSizePt: 22,
+      fontWeight: 'bold',
+      fontStyle: 'normal',
+      lineHeight: 1.2,
+      letterSpacingPt: 0,
+      color: '#000000',
+      alignment: 'left',
+      spaceBeforeMm: 8,
+      spaceAfterMm: 4,
+      keepWithNext: true,
+      hyphenation: false,
+      cmykColor: [0, 0, 0, 100],
+      pdfTag: 'H1',
+    }],
+    characterStyles: [],
+    masterSpreads: [],
+    activeSpreadIndex: 0,
+    zoom: 1,
+    pan: { x: 0, y: 0 },
+  };
+};
+
+const suiteMockChapters: Record<string, any> = {
+  'ch1.recto': createSuiteMockChapter('Ch 1', 3, 'Escapement Geometry'),
+  'ch2.recto': createSuiteMockChapter('Ch 2', 2, 'Gear Ratios'),
+  'app.recto': createSuiteMockChapter('App', 1, 'Reference Charts'),
+};
+
+const repaginatedBook = bookEngine.repaginateBook(book, (path) => suiteMockChapters[path]);
+assert.strictEqual(repaginatedBook.chapters[0].startPageNumber, 1, 'Ch 1 must start at page 1');
+assert.strictEqual(repaginatedBook.chapters[0].pageCount, 3, 'Ch 1 has 3 pages');
+// Ch 1 covers pages 1, 2, 3. Ch 2 forces recto opening, so next odd page is 5!
+assert.strictEqual(repaginatedBook.chapters[1].startPageNumber, 5, 'Ch 2 must advance to recto page 5');
+assert.strictEqual(repaginatedBook.chapters[1].pageCount, 2, 'Ch 2 has 2 pages (5, 6)');
+assert.strictEqual(repaginatedBook.chapters[2].startPageNumber, 7, 'Appendix starts on page 7');
+
+// Style synchronization
+const syncResult = bookEngine.syncBookStyles(
+  repaginatedBook,
+  (path) => suiteMockChapters[path],
+  (path, newState) => { suiteMockChapters[path] = newState; }
+);
+assert.strictEqual(syncResult.syncedChaptersCount, 2, 'Must synchronize 2 target chapters from style source');
+
+// Unified Table of Contents
+const unifiedToc = bookEngine.generateUnifiedBookToc(repaginatedBook, (path) => suiteMockChapters[path]);
+assert.strictEqual(unifiedToc.length, 3, 'Unified TOC must collect 3 headings');
+assert.strictEqual(unifiedToc[0].title, 'Escapement Geometry', 'TOC item 1 title matches');
+assert.strictEqual(unifiedToc[0].pageNumber, 1, 'TOC item 1 page matches');
+assert.strictEqual(unifiedToc[1].title, 'Gear Ratios', 'TOC item 2 title matches');
+assert.strictEqual(unifiedToc[1].pageNumber, 5, 'TOC item 2 starts at page 5');
+
+// Stitched master PDF compilation
+const masterStitchedDoc = await bookEngine.exportBookToPdf(repaginatedBook, (path) => suiteMockChapters[path]);
+assert(masterStitchedDoc, 'Stitched master PDF must be created');
+assert((masterStitchedDoc.internal as any).getNumberOfPages() >= 3, 'Master PDF must contain pages from all chapters');
+
+// Headless CLI verification for recto book
+const cliBookHelp = execFileSync('node', ['./bin/recto.js', 'book', '--help'], { encoding: 'utf8' });
+assert(cliBookHelp.includes('recto book <action>'), 'CLI book help output must document actions');
+console.log('✓ Multi-Document Book (.rectobook / .indb) Synchronization & Stitched Export verified.');
+
 console.log('\n=============================================');
-console.log('ALL 45 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
+console.log('ALL 47 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
 console.log('=============================================\n');
 
 

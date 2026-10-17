@@ -5,9 +5,10 @@
  */
 
 import { jsPDF } from 'jspdf';
-import { ProjectState, Page, Spread, TextElement, ImageElement, ShapeElement, VectorPathElement } from '../types/index';
+import { ProjectState, Page, Spread, TextElement, ImageElement, ShapeElement, VectorPathElement, TableElement } from '../types/index';
 import { stateManager, numberToSuperscript } from '../state';
 import { assetStore } from '../engine/assetStore';
+import { tableEngine } from '../engine/tableEngine';
 
 export interface ExportOptions {
   includeCropMarks?: boolean;
@@ -33,7 +34,9 @@ export async function exportDocumentToPdf(
     overprintBlack = state.settings.overprintBlack !== false,
   } = options;
 
-  const { widthMm, heightMm, bleedMm } = state.settings;
+  const widthMm = state.settings.widthMm || 210;
+  const heightMm = state.settings.heightMm || 297;
+  const bleedMm = state.settings.bleedMm !== undefined ? state.settings.bleedMm : 3;
   const bleed = includeBleed ? bleedMm : 0;
   const slug = (includeCropMarks || includeRegistrationMarks || includeColorBars) ? 14 : 0;
 
@@ -287,6 +290,9 @@ export async function exportDocumentToPdf(
         } else {
           drawPlaceholderImage(doc, elX, elY, img.width, img.height, img.caption);
         }
+      } else if (el.type === 'table') {
+        const table = el as TableElement;
+        tableEngine.exportPdfTable(doc, table, elX, elY, table.width, table.height, [table], overprintBlack);
       }
     }
 
@@ -480,7 +486,7 @@ function drawPlaceholderImage(doc: any, x: number, y: number, w: number, h: numb
 }
 
 export function drawCropMarks(doc: any, x: number, y: number, w: number, h: number, bleed: number) {
-  // Pure 100% K Black for ultra-crisp offset press registration
+  // Pure 100% K Black for crisp offset press registration
   doc.setDrawColor(0, 0, 0, 100);
   doc.setLineWidth(0.1);
 

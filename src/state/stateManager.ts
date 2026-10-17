@@ -1548,6 +1548,59 @@ export class StateManager {
     this.notify();
   }
 
+  /**
+   * Links two table frames across pages for dynamic overflow row threading.
+   */
+  public linkTableFrames(sourceFrameId: string, targetFrameId: string): boolean {
+    const source = this.getElementById(sourceFrameId);
+    const target = this.getElementById(targetFrameId);
+    if (!source || !target || source.type !== 'table' || target.type !== 'table') return false;
+
+    const srcTable = source as TableElement;
+    const tgtTable = target as TableElement;
+
+    srcTable.nextFrameId = tgtTable.id;
+    tgtTable.prevFrameId = srcTable.id;
+
+    if (srcTable.cells && (!tgtTable.cells || tgtTable.cells.length === 0)) {
+      tgtTable.cells = srcTable.cells;
+      tgtTable.rows = srcTable.rows;
+      tgtTable.cols = srcTable.cols;
+      tgtTable.headerRowCount = srcTable.headerRowCount;
+      tgtTable.headerFillColor = srcTable.headerFillColor;
+      tgtTable.headerTextColor = srcTable.headerTextColor;
+      tgtTable.repeatHeaderOnOverflow = srcTable.repeatHeaderOnOverflow !== false;
+    }
+
+    this.pushHistory();
+    this.notify();
+    return true;
+  }
+
+  /**
+   * Unlinks a table frame from its thread chain.
+   */
+  public unlinkTableFrame(frameId: string): boolean {
+    const el = this.getElementById(frameId);
+    if (!el || el.type !== 'table') return false;
+    const table = el as TableElement;
+
+    if (table.prevFrameId) {
+      const prev = this.getElementById(table.prevFrameId) as TableElement;
+      if (prev) prev.nextFrameId = undefined;
+    }
+    if (table.nextFrameId) {
+      const next = this.getElementById(table.nextFrameId) as TableElement;
+      if (next) next.prevFrameId = undefined;
+    }
+
+    table.prevFrameId = undefined;
+    table.nextFrameId = undefined;
+    this.pushHistory();
+    this.notify();
+    return true;
+  }
+
   public setLinkingFromFrame(frameId: string | null) {
     this.state.linkingFromFrameId = frameId;
     this.notify();

@@ -17,6 +17,7 @@ import {
 import { stateManager, numberToSuperscript } from './state';
 import { collabSession } from './collab';
 import { assetStore } from './engine/assetStore';
+import { tableEngine } from './engine/tableEngine';
 
 export const MM_TO_PX = 3.7795275591;
 
@@ -606,7 +607,7 @@ export class SpreadCanvas {
       }
     }
 
-    // InDesign Master Page Detach / Override shortcut: Cmd + Shift + Click (or Ctrl + Shift + Click)
+    // InDesign Master Page Detach / Override gesture: Cmd + Shift + Click (or Ctrl + Shift + Click)
     if ((e.metaKey || e.ctrlKey) && e.shiftKey) {
       const masterHit = this.hitTestMasterElements(mmX, mmY, state);
       if (masterHit) {
@@ -2275,101 +2276,7 @@ export class SpreadCanvas {
         this.renderVectorPath(ctx, pathEl, origin, pageStartMm, pxPerMm, isSelected, this.activePenPathId);
       } else if (el.type === 'table') {
         const table = el as TableElement;
-        const rows = Math.max(1, table.rows || 1);
-        const cols = Math.max(1, table.cols || 1);
-        const cellW = elScreenW / cols;
-        const cellH = elScreenH / rows;
-        const paddingPx = (table.cellPaddingMm || 1.5) * pxPerMm;
-        const fontSizePx = (table.fontSizePt * (96 / 72)) * state.zoom;
-        const borderColor = table.borderColor || '#333333';
-        const borderWidthPx = (table.borderWidthMm || 0.3) * pxPerMm;
-
-        // Render cell backgrounds
-        for (let r = 0; r < rows; r++) {
-          for (let c = 0; c < cols; c++) {
-            const cellX = elScreenX + (c * cellW);
-            const cellY = elScreenY + (r * cellH);
-            const cell = table.cells?.[r]?.[c];
-
-            let cellBg = cell?.fillColor;
-            if (!cellBg) {
-              if (r < (table.headerRowCount || 0)) {
-                cellBg = table.headerFillColor || '#242424';
-              } else if (table.alternateRowColor && r % 2 === 1) {
-                cellBg = table.alternateRowColor;
-              } else {
-                cellBg = '#ffffff';
-              }
-            }
-
-            if (cellBg && cellBg !== 'transparent') {
-              ctx.fillStyle = cellBg;
-              ctx.fillRect(cellX, cellY, cellW, cellH);
-            }
-          }
-        }
-
-        // Render grid lines
-        if (borderWidthPx > 0) {
-          ctx.strokeStyle = borderColor;
-          ctx.lineWidth = borderWidthPx;
-          ctx.strokeRect(elScreenX, elScreenY, elScreenW, elScreenH);
-
-          for (let r = 1; r < rows; r++) {
-            const y = elScreenY + (r * cellH);
-            ctx.beginPath();
-            ctx.moveTo(elScreenX, y);
-            ctx.lineTo(elScreenX + elScreenW, y);
-            ctx.stroke();
-          }
-
-          for (let c = 1; c < cols; c++) {
-            const x = elScreenX + (c * cellW);
-            ctx.beginPath();
-            ctx.moveTo(x, elScreenY);
-            ctx.lineTo(x, elScreenY + elScreenH);
-            ctx.stroke();
-          }
-        }
-
-        // Render cell text content
-        ctx.font = `${fontSizePx}px ${table.fontFamily || 'Inter, sans-serif'}`;
-        for (let r = 0; r < rows; r++) {
-          const isHeader = r < (table.headerRowCount || 0);
-          for (let c = 0; c < cols; c++) {
-            const cellX = elScreenX + (c * cellW);
-            const cellY = elScreenY + (r * cellH);
-            const cell = table.cells?.[r]?.[c];
-            const textStr = cell?.text || '';
-
-            if (textStr) {
-              ctx.save();
-              ctx.beginPath();
-              ctx.rect(cellX + paddingPx, cellY + paddingPx, Math.max(1, cellW - (paddingPx * 2)), Math.max(1, cellH - (paddingPx * 2)));
-              ctx.clip();
-
-              const textColor = cell?.textColor || (isHeader ? (table.headerTextColor || '#ffffff') : '#111111');
-              ctx.fillStyle = textColor;
-              ctx.textBaseline = 'middle';
-
-              const align = cell?.align || (isHeader ? 'center' : 'left');
-              let tx = cellX + paddingPx;
-              if (align === 'center') {
-                ctx.textAlign = 'center';
-                tx = cellX + cellW / 2;
-              } else if (align === 'right') {
-                ctx.textAlign = 'right';
-                tx = cellX + cellW - paddingPx;
-              } else {
-                ctx.textAlign = 'left';
-              }
-
-              const ty = cellY + cellH / 2;
-              ctx.fillText(textStr, tx, ty);
-              ctx.restore();
-            }
-          }
-        }
+        tableEngine.renderCanvasTable(ctx, table, elScreenX, elScreenY, elScreenW, elScreenH, pxPerMm, state.zoom, [table]);
       } else if (el.type === 'text') {
         const text = el as TextElement;
         if (this.activeInlineEditor && this.activeInlineEditor.elementId === el.id) {

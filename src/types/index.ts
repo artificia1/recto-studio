@@ -272,6 +272,15 @@ export interface TableElement extends BaseElement {
   cellPaddingMm: number;
   fontFamily: string;
   fontSizePt: number;
+  footerRowCount?: number;
+  footerFillColor?: string;
+  footerTextColor?: string;
+  repeatHeaderOnOverflow?: boolean;
+  repeatFooterOnOverflow?: boolean;
+  nextFrameId?: string;
+  prevFrameId?: string;
+  tableStoryId?: string;
+  keepWithNext?: boolean;
 }
 
 export interface BezierNode {

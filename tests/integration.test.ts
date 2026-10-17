@@ -3,11 +3,11 @@ import { execSync } from 'child_process';
 
 describe('Recto Studio Phases 1-20 Core Engine Verification', () => {
   it(
-    'executes and passes all 45 engine integration suites flawlessly',
+    'executes and passes all 47 engine integration suites flawlessly',
     () => {
       const output = execSync('npx tsx test.ts', { encoding: 'utf8' });
-      expect(output).toContain('ALL 45 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
+      expect(output).toContain('ALL 47 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
     },
-    30000
+    45000
   );
 });

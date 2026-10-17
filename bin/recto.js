@@ -31,6 +31,7 @@ if (!process.env._RECTO_TSX) {
   const { generateFlipbookHtml } = await import('../src/flipbookExport.js');
   const { exportDocumentToEpub } = await import('../src/epubExport.js');
   const { parseCsv, generateMergedSpreads } = await import('../src/dataMerge.js');
+  const { bookEngine } = await import('../src/engine/bookEngine.js');
 
   function printHelp() {
     console.log(`
@@ -38,12 +39,14 @@ Recto Studio Headless Publishing Engine (CLI)
 =============================================
 Usage:
   recto build <file.recto|file.json> [options]
+  recto book <action> <manifest.rectobook> [options]
   recto preflight <file.recto|file.json>
   recto --version
   recto --help
 
 Commands:
   build <input>         Compile document headlessly into production print PDF, EPUB 3, or Flipbook
+  book <action> <file>  Multi-document book management: sync, toc, or build stitched PDF/X
   preflight <input>     Execute automated prepress preflight audit (overset text, DPI, bleed)
 
 Build Options:
@@ -254,6 +257,77 @@ Examples:
         return 0;
       } else {
         console.warn(`[Recto CLI] Preflight finished with ${issuesCount} warning(s).`);
+        return 0;
+      }
+    } else if (parsed.command === 'book') {
+      if (process.argv.includes('--help') || process.argv.includes('-h') || parsed.input === '--help' || !parsed.input) {
+        console.log(`
+Recto Studio Multi-Document Book CLI
+====================================
+Usage:
+  recto book <action> <manifest.rectobook> [options]
+
+Actions:
+  sync    Synchronize styles and master spreads across chapters
+  toc     Generate unified cross-document Table of Contents
+  build   Compile multi-chapter book into unified PDF/X
+
+Options:
+  --output <path>    Custom destination for stitched PDF
+  --bleed            Include bleed area
+  --crop-marks       Include crop marks
+`);
+        return 0;
+      }
+      const subCommand = parsed.input; // 'build', 'sync', 'toc'
+      const bookFile = process.argv[4] || parsed.data;
+      if (!bookFile) {
+        console.error('Error: Please specify a book manifest file (.rectobook or .json).');
+        process.exitCode = 1;
+        return 1;
+      }
+      const bookPath = path.resolve(process.cwd(), bookFile);
+      if (!fs.existsSync(bookPath)) {
+        console.error(`Error: Book file not found: ${bookPath}`);
+        process.exitCode = 1;
+        return 1;
+      }
+      const bookData = JSON.parse(fs.readFileSync(bookPath, 'utf8'));
+      const loadState = (fp) => {
+        const fullP = path.isAbsolute(fp) ? fp : path.resolve(path.dirname(bookPath), fp);
+        return JSON.parse(fs.readFileSync(fullP, 'utf8'));
+      };
+      const saveState = (fp, st) => {
+        const fullP = path.isAbsolute(fp) ? fp : path.resolve(path.dirname(bookPath), fp);
+        fs.writeFileSync(fullP, JSON.stringify(st, null, 2), 'utf8');
+      };
+
+      if (subCommand === 'sync') {
+        console.log(`[Recto CLI] Synchronizing Master Styles across book chapters...`);
+        const result = bookEngine.syncBookStyles(bookData, loadState, saveState);
+        console.log(`[Recto CLI] ✓ Synchronized ${result.syncedStyleCount} styles across ${result.syncedChaptersCount} chapter(s).`);
+        return 0;
+      } else if (subCommand === 'toc') {
+        console.log(`[Recto CLI] Generating Unified Book Table of Contents...`);
+        const toc = bookEngine.generateUnifiedBookToc(bookData, loadState);
+        console.log(`[Recto CLI] ✓ Generated ${toc.length} TOC entries across book chapters:`);
+        toc.forEach((t) => console.log(`  - Page ${t.pageNumber}: ${t.title} (${t.chapterTitle})`));
+        return 0;
+      } else {
+        const outDest = parsed.output || path.resolve(path.dirname(bookPath), `${path.basename(bookPath, path.extname(bookPath))}.pdf`);
+        console.log(`[Recto CLI] Compiling multi-chapter book into unified PDF/X...`);
+        const masterPdf = await bookEngine.exportBookToPdf(bookData, loadState, {
+          includeBleed: parsed.bleed,
+          includeCropMarks: parsed.cropMarks,
+          includeRegistrationMarks: parsed.registration,
+          includeColorBars: parsed.colorBars,
+        });
+        const pdfArrayBuffer = masterPdf.output('arraybuffer');
+        fs.writeFileSync(outDest, Buffer.from(pdfArrayBuffer));
+        const stats = fs.statSync(outDest);
+        console.log(`[Recto CLI] ✓ Unified Book compilation complete!`);
+        console.log(`  Destination : ${outDest}`);
+        console.log(`  File size   : ${(stats.size / 1024).toFixed(1)} KB`);
         return 0;
       }
     } else {
