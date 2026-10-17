@@ -16,6 +16,7 @@ import {
 } from './types';
 import { stateManager, numberToSuperscript } from './state';
 import { collabSession } from './collab';
+import { assetStore } from './engine/assetStore';
 
 export const MM_TO_PX = 3.7795275591;
 
@@ -600,6 +601,20 @@ export class SpreadCanvas {
           this.elementInitialY = el.y;
           this.elementInitialW = el.width;
           this.elementInitialH = el.height;
+          return;
+        }
+      }
+    }
+
+    // InDesign Master Page Detach / Override shortcut: Cmd + Shift + Click (or Ctrl + Shift + Click)
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey) {
+      const masterHit = this.hitTestMasterElements(mmX, mmY, state);
+      if (masterHit) {
+        const spread = stateManager.getActiveSpread();
+        const overridden = stateManager.overrideMasterElement(spread.id, masterHit.masterElement.id);
+        if (overridden) {
+          stateManager.selectElements([overridden.id]);
+          this.prepareGroupDrag(screenX, screenY, stateManager.getState());
           return;
         }
       }
@@ -1570,6 +1585,47 @@ export class SpreadCanvas {
     return null;
   }
 
+  private hitTestMasterElements(spreadMmX: number, spreadMmY: number, state: ProjectState): { masterElement: CanvasElement; targetPage: Page } | null {
+    const spread = stateManager.getActiveSpread();
+    if (!spread.masterSpreadId) return null;
+    const master = state.masterSpreads?.find((m) => m.id === spread.masterSpreadId);
+    if (!master) return null;
+
+    const { pageWidthMm, pageHeightMm } = this.getSpreadDimensions(state);
+
+    for (let i = master.elements.length - 1; i >= 0; i--) {
+      const mEl = master.elements[i];
+      if (spread.detachedMasterElementIds?.includes(mEl.id)) continue;
+      if (spread.elements.some((e) => e.masterSourceId === mEl.id)) continue;
+
+      const masterPage = master.pages.find((p) => p.id === mEl.pageId);
+      let targetPage = spread.pages.find((p) => masterPage && p.side === masterPage.side);
+      if (!targetPage) targetPage = spread.pages[0];
+      if (!targetPage) continue;
+
+      const pageIdx = spread.pages.findIndex((p) => p.id === targetPage!.id);
+      if (pageIdx === -1) continue;
+
+      const pageStartMm = pageIdx * pageWidthMm;
+      let masterY = mEl.y;
+      if (masterY + (mEl.height || 0) > pageHeightMm - 2) {
+        masterY = Math.max(0, pageHeightMm - (state.settings.margins.bottomMm || 15) + 2);
+      }
+
+      const elX = pageStartMm + mEl.x;
+      const elY = masterY;
+      if (
+        spreadMmX >= elX &&
+        spreadMmX <= elX + mEl.width &&
+        spreadMmY >= elY &&
+        spreadMmY <= elY + mEl.height
+      ) {
+        return { masterElement: mEl, targetPage };
+      }
+    }
+    return null;
+  }
+
   private recalculatePathBounds(nodes: BezierNode[]): { minX: number; minY: number; width: number; height: number } {
     if (nodes.length === 0) return { minX: 0, minY: 0, width: 20, height: 20 };
     let minX = nodes[0].x;
@@ -1892,9 +1948,13 @@ export class SpreadCanvas {
     this.staticDirtyKey = key;
   }
 
-  private getDisplayImage(src: string, quality: DisplayQuality): HTMLImageElement | HTMLCanvasElement | null {
-    if (!src) return null;
+  private getDisplayImage(src: string, quality: DisplayQuality, proxySrc?: string, assetId?: string): HTMLImageElement | HTMLCanvasElement | null {
+    if (!src && !proxySrc) return null;
     if (quality === 'fast') return null;
+
+    const effectiveSrc = (quality !== 'high' && proxySrc)
+      ? proxySrc
+      : (quality !== 'high' && assetId ? assetStore.getScreenProxy(assetId) || src : src);
 
     if (quality === 'high') {
       let img = this.fullResCache.get(src);
@@ -1911,24 +1971,27 @@ export class SpreadCanvas {
       return null;
     }
 
-    const proxy = this.proxyCache.get(src);
+    const proxy = this.proxyCache.get(effectiveSrc);
     if (proxy) return proxy;
 
-    let img = this.fullResCache.get(src);
+    let img = this.fullResCache.get(effectiveSrc);
     if (!img) {
       img = new Image();
-      img.src = src;
+      img.src = effectiveSrc;
       img.onload = () => {
-        this.createImageProxy(src, img!);
+        this.createImageProxy(effectiveSrc, img!);
+        this.fullResCache.delete(effectiveSrc);
         this.render();
       };
-      this.fullResCache.set(src, img);
+      this.fullResCache.set(effectiveSrc, img);
       return null;
     }
 
     if (img.complete && img.naturalWidth > 0) {
       stateManager.registerImageDimensions(src, img.naturalWidth, img.naturalHeight);
-      return this.createImageProxy(src, img);
+      const createdProxy = this.createImageProxy(effectiveSrc, img);
+      this.fullResCache.delete(effectiveSrc);
+      return createdProxy;
     }
     return null;
   }
@@ -2007,6 +2070,8 @@ export class SpreadCanvas {
       const master = state.masterSpreads?.find(m => m.id === spread.masterSpreadId);
       if (master) {
         for (const mEl of master.elements) {
+          if (spread.detachedMasterElementIds?.includes(mEl.id)) continue;
+          if (spread.elements.some(e => e.masterSourceId === mEl.id)) continue;
           const mLayer = layerMap.get(mEl.layerId || 'layer-1');
           if (mLayer && mLayer.visible === false) continue;
 
@@ -2154,8 +2219,8 @@ export class SpreadCanvas {
           ctx.fillStyle = '#f8f8f8';
           ctx.fillRect(elScreenX, elScreenY, elScreenW, elScreenH);
 
-          if (img.src) {
-            const displayBitmap = this.getDisplayImage(img.src, quality);
+          if (img.src || img.proxySrc) {
+            const displayBitmap = this.getDisplayImage(img.src, quality, img.proxySrc, img.assetId);
             if (displayBitmap) {
               const bW = displayBitmap.width;
               const bH = displayBitmap.height;

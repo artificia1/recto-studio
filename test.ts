@@ -20,6 +20,7 @@ import { harfbuzzEngine } from './src/engine/shaper';
 import { psdEngine } from './src/engine/psdParser';
 import { writePsdBuffer } from 'ag-psd';
 import { colorToCmyk } from './src/export/pdfExport';
+import { assetStore } from './src/engine/assetStore';
 import { execFileSync } from 'child_process';
 
 console.log('Running Recto Core Engine TypeScript Verification Tests...\n');
@@ -2507,8 +2508,97 @@ if (fs.existsSync(cliTestProject)) fs.unlinkSync(cliTestProject);
 if (fs.existsSync(cliPdfDest)) fs.unlinkSync(cliPdfDest);
 console.log('✓ Headless Publishing CLI Engine (recto build) verified.');
 
+// --- Suite 43: Asset Memory Pipeline (72 DPI Screen Proxies vs 300 DPI Export) ---
+console.log('\n--- Suite 43: Asset Memory Pipeline (72 DPI Screen Proxies vs 300 DPI Export) ---');
+const dummyRaster = 'data:image/jpeg;base64,' + Buffer.from('mock-high-res-300dpi-raster-data').toString('base64');
+const registeredAsset = await assetStore.registerAsset(dummyRaster, {
+  name: 'catalog-cover-300dpi.jpg',
+  width: 3600,
+  height: 2400,
+});
+assert.strictEqual(registeredAsset.name, 'catalog-cover-300dpi.jpg', 'Asset name must match');
+assert.strictEqual(registeredAsset.originalDpi, 300, 'Master asset must be recorded at 300 DPI');
+assert(registeredAsset.proxyDataUrl.length > 0, 'AssetStore must generate lightweight screen proxy');
+
+const activeSpreadForAsset = stateManager.getActiveSpread();
+const assetTestImg: ImageElement = {
+  id: 'img-proxy-test-frame',
+  type: 'image',
+  pageId: activeSpreadForAsset.pages[0].id,
+  x: 20,
+  y: 20,
+  width: 80,
+  height: 60,
+  rotation: 0,
+  opacity: 1,
+  zIndex: 1,
+  locked: false,
+  src: dummyRaster,
+  fitMode: 'fill',
+  borderColor: 'transparent',
+  borderWidthMm: 0,
+};
+stateManager.addElement(assetTestImg);
+const registeredOnElement = await stateManager.registerImageAsset(assetTestImg.id, dummyRaster, 'catalog-cover-300dpi.jpg');
+assert(registeredOnElement, 'registerImageAsset must succeed');
+const imgElemAfter = stateManager.getElementById(assetTestImg.id) as ImageElement;
+assert(imgElemAfter.assetId, 'Element must retain assetId');
+assert(imgElemAfter.proxySrc, 'Element must retain screen proxy data URL');
+
+// Verify on-demand full resolution retrieval and page flush
+const streamResolved = assetStore.getFullResolution(imgElemAfter.assetId!);
+assert(streamResolved, 'Full-resolution master buffer must be retrievable on-demand for export');
+assetStore.flushPageExportBuffer(imgElemAfter.assetId!);
+stateManager.deleteElement(assetTestImg.id);
+console.log('✓ Asset Memory Pipeline (72 DPI Screen Proxies vs 300 DPI Export) verified.');
+
+// --- Suite 44: Prepress RIP PostScript Overprint Black (/OP true / /GSOverprint gs) ---
+console.log('\n--- Suite 44: Prepress RIP PostScript Overprint Black (/OP true / /GSOverprint gs) ---');
+const opTestDoc = await exportDocumentToPdf(stateManager.getState(), {
+  overprintBlack: true,
+  compress: false,
+  spreadRange: 'current',
+});
+const opPdfStream = opTestDoc.output();
+assert(opPdfStream.includes('/GSOverprint'), 'PDF stream must declare /GSOverprint ExtGState resource');
+assert(opPdfStream.includes('/OP true'), 'Overprint ExtGState must set /OP true for stroke overprint');
+assert(opPdfStream.includes('/op true'), 'Overprint ExtGState must set /op true for fill overprint');
+assert(opPdfStream.includes('/OPM 1'), 'Overprint ExtGState must set /OPM 1 (nonzero overprint mode)');
+assert(opPdfStream.includes('/GSOverprint gs'), 'Content stream must activate /GSOverprint gs for pure black text');
+console.log('✓ Prepress RIP PostScript Overprint Black verified.');
+
+// --- Suite 45: Master Page Detach / Overrides (Cmd + Shift + Click) ---
+console.log('\n--- Suite 45: Master Page Detach / Overrides (Cmd + Shift + Click) ---');
+const masterSpreadTest = stateManager.getState().masterSpreads[0];
+assert(masterSpreadTest, 'Master spread must exist');
+const masterTargetElement = masterSpreadTest.elements[0];
+assert(masterTargetElement, 'Master spread element must exist');
+
+const spreadForOverride = stateManager.getActiveSpread();
+stateManager.assignMasterSpread(stateManager.getState().activeSpreadIndex, masterSpreadTest.id);
+
+// Execute override
+const overriddenItem = stateManager.overrideMasterElement(spreadForOverride.id, masterTargetElement.id);
+assert(overriddenItem, 'overrideMasterElement must clone the master element into local spread');
+assert.strictEqual(overriddenItem.masterSourceId, masterTargetElement.id, 'Overridden item must reference masterSourceId');
+assert.strictEqual(overriddenItem.isOverridden, true, 'isOverridden flag must be true');
+assert.strictEqual(overriddenItem.locked, false, 'Overridden master item must be unlocked for local editing');
+assert.strictEqual(stateManager.isMasterElementOverridden(spreadForOverride.id, masterTargetElement.id), true, 'isMasterElementOverridden must return true');
+
+// Designer can now edit or delete local clone without breaking remaining master elements
+stateManager.updateElement(overriddenItem.id, { x: 55, y: 55 });
+const updatedOverridden = stateManager.getElementById(overriddenItem.id);
+assert.strictEqual(updatedOverridden?.x, 55, 'Overridden item can be modified independently');
+
+// Test restoring master item
+const restored = stateManager.restoreMasterElement(spreadForOverride.id, masterTargetElement.id);
+assert(restored, 'restoreMasterElement must succeed');
+assert.strictEqual(stateManager.isMasterElementOverridden(spreadForOverride.id, masterTargetElement.id), false, 'Master item is no longer marked as overridden after restore');
+assert.strictEqual(stateManager.getElementById(overriddenItem.id), null, 'Overridden clone must be removed upon restore');
+console.log('✓ Master Page Detach / Overrides (Cmd + Shift + Click) verified.');
+
 console.log('\n=============================================');
-console.log('ALL 42 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
+console.log('ALL 45 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
 console.log('=============================================\n');
 
 

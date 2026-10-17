@@ -7,6 +7,7 @@
 import { jsPDF } from 'jspdf';
 import { ProjectState, Page, Spread, TextElement, ImageElement, ShapeElement, VectorPathElement } from '../types/index';
 import { stateManager, numberToSuperscript } from '../state';
+import { assetStore } from '../engine/assetStore';
 
 export interface ExportOptions {
   includeCropMarks?: boolean;
@@ -16,6 +17,7 @@ export interface ExportOptions {
   exportFormat?: 'pages' | 'spreads';
   spreadRange?: 'all' | 'current' | number[];
   compress?: boolean;
+  overprintBlack?: boolean;
 }
 
 export async function exportDocumentToPdf(
@@ -28,6 +30,7 @@ export async function exportDocumentToPdf(
     includeRegistrationMarks = false,
     includeColorBars = false,
     spreadRange = 'all',
+    overprintBlack = state.settings.overprintBlack !== false,
   } = options;
 
   const { widthMm, heightMm, bleedMm } = state.settings;
@@ -44,6 +47,15 @@ export async function exportDocumentToPdf(
     format: [pdfPageWidth, pdfPageHeight],
     compress: options.compress !== undefined ? options.compress : true,
   });
+
+  if (overprintBlack) {
+    const baseGState = new (doc as any).GState({ opacity: 1 });
+    (doc as any).setGState(baseGState);
+    (doc.internal.events as any).subscribe('putGStateDict', () => {
+      (doc.internal as any).write('/GSOverprint << /Type /ExtGState /OP true /op true /OPM 1 >>');
+      (doc.internal as any).write('/GSKnockout << /Type /ExtGState /OP false /op false /OPM 0 >>');
+    });
+  }
 
   // PDF/UA & Section 508 Universal Accessibility Metadata
   doc.setDocumentProperties({
@@ -118,6 +130,12 @@ export async function exportDocumentToPdf(
       const master = state.masterSpreads?.find(m => m.id === spread.masterSpreadId);
       if (master) {
         for (const mEl of master.elements) {
+          if (spread.detachedMasterElementIds?.includes(mEl.id)) {
+            continue;
+          }
+          if (spread.elements.some(e => e.masterSourceId === mEl.id && e.pageId === page.id)) {
+            continue;
+          }
           const masterPage = master.pages.find(p => p.id === mEl.pageId);
           if (masterPage && masterPage.side !== page.side && spread.pages.length > 1) {
             continue;
@@ -258,9 +276,11 @@ export async function exportDocumentToPdf(
         }
       } else if (el.type === 'image') {
         const img = el as ImageElement;
-        if (img.src && (img.src.startsWith('data:image') || img.src.startsWith('http') || img.src.startsWith('blob:'))) {
+        const fullResSrc = (assetStore.getFullResolution(img.assetId || img.src) as string) || img.src;
+        if (fullResSrc && (fullResSrc.startsWith('data:image') || fullResSrc.startsWith('http') || fullResSrc.startsWith('blob:'))) {
           try {
-            doc.addImage(img.src, 'JPEG', elX, elY, img.width, img.height);
+            doc.addImage(fullResSrc, 'JPEG', elX, elY, img.width, img.height);
+            assetStore.flushPageExportBuffer(img.assetId || img.src);
           } catch (e) {
             drawPlaceholderImage(doc, elX, elY, img.width, img.height, img.caption);
           }
@@ -405,14 +425,26 @@ export function colorToCmyk(colorStr: string | undefined): [number, number, numb
   ];
 }
 
-export function applyCmykTextColor(doc: any, colorStr: string | undefined): void {
+export function applyCmykTextColor(doc: any, colorStr: string | undefined, overprint: boolean = true): void {
   const [c, m, y, k] = colorToCmyk(colorStr || '#000000');
   doc.setTextColor(c, m, y, k);
+  if (overprint && c === 0 && m === 0 && y === 0 && k === 100) {
+    if (typeof (doc.internal as any).out === 'function') {
+      (doc.internal as any).out('/GSOverprint gs');
+    }
+  } else {
+    if (typeof (doc.internal as any).out === 'function') {
+      (doc.internal as any).out('/GSKnockout gs');
+    }
+  }
 }
 
 export function applyCmykFillColor(doc: any, colorStr: string | undefined): void {
   const [c, m, y, k] = colorToCmyk(colorStr || '#ffffff');
   doc.setFillColor(c, m, y, k);
+  if (typeof (doc.internal as any).out === 'function') {
+    (doc.internal as any).out('/GSKnockout gs');
+  }
 }
 
 export function applyCmykDrawColor(doc: any, colorStr: string | undefined): void {

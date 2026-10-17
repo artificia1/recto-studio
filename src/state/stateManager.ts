@@ -33,6 +33,7 @@ import { parseIdmlPackage } from '../idmlImport';
 import { parseCsv, generateMergedSpreads, substituteElementTokens } from '../dataMerge';
 import { KnuthPlassComposer, ComposerOptions } from '../engine/knuthPlass';
 import { psdEngine } from '../engine/psdParser';
+import { assetStore } from '../engine/assetStore';
 
 const SUPERSCRIPTS: Record<string, string> = {
   '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
@@ -1628,6 +1629,105 @@ export class StateManager {
     this.state.spreads[spreadIndex].masterSpreadId = masterSpreadId;
     this.pushHistory();
     this.notify();
+  }
+
+  /**
+   * Overrides and detaches a Master Page item for the target spread.
+   * Clones the master element into the spread's local element tree, unlocked and editable.
+   */
+  public overrideMasterElement(spreadId: string, masterElementId: string): CanvasElement | null {
+    const spread = this.state.spreads.find((s) => s.id === spreadId) || this.getActiveSpread();
+    if (!spread || !spread.masterSpreadId) return null;
+
+    const master = (this.state.masterSpreads || []).find((m) => m.id === spread.masterSpreadId);
+    if (!master) return null;
+
+    const mEl = master.elements.find((e) => e.id === masterElementId);
+    if (!mEl) return null;
+
+    const masterPage = master.pages.find((p) => p.id === mEl.pageId);
+    let targetPage = spread.pages.find((p) => masterPage && p.side === masterPage.side);
+    if (!targetPage) targetPage = spread.pages[0];
+    if (!targetPage) return null;
+
+    // Return existing clone if already overridden
+    const existing = spread.elements.find((e) => e.masterSourceId === mEl.id && e.pageId === targetPage.id);
+    if (existing) {
+      this.selectElements([existing.id]);
+      return existing;
+    }
+
+    if (!spread.detachedMasterElementIds) {
+      spread.detachedMasterElementIds = [];
+    }
+    if (!spread.detachedMasterElementIds.includes(mEl.id)) {
+      spread.detachedMasterElementIds.push(mEl.id);
+    }
+
+    // Clone element
+    const cloned: CanvasElement = {
+      ...JSON.parse(JSON.stringify(mEl)),
+      id: `override-${mEl.id}-${Date.now()}`,
+      pageId: targetPage.id,
+      masterSourceId: mEl.id,
+      isOverridden: true,
+      locked: false,
+    };
+
+    if (cloned.type === 'text') {
+      cloned.text = this.evaluateTokens(cloned.text, targetPage.pageNumber);
+    }
+
+    spread.elements.push(cloned);
+    this.selectElements([cloned.id]);
+    this.pushHistory();
+    this.notify();
+    return cloned;
+  }
+
+  /**
+   * Restores an overridden master element back to inheriting directly from the Master Spread.
+   */
+  public restoreMasterElement(spreadId: string, masterElementId: string): boolean {
+    const spread = this.state.spreads.find((s) => s.id === spreadId) || this.getActiveSpread();
+    if (!spread) return false;
+
+    if (spread.detachedMasterElementIds) {
+      spread.detachedMasterElementIds = spread.detachedMasterElementIds.filter((id) => id !== masterElementId);
+    }
+
+    spread.elements = spread.elements.filter((e) => e.masterSourceId !== masterElementId);
+    this.pushHistory();
+    this.notify();
+    return true;
+  }
+
+  /**
+   * Checks if a master item is currently overridden or detached on a spread.
+   */
+  public isMasterElementOverridden(spreadId: string, masterElementId: string): boolean {
+    const spread = this.state.spreads.find((s) => s.id === spreadId) || this.getActiveSpread();
+    if (!spread) return false;
+    if (spread.detachedMasterElementIds?.includes(masterElementId)) return true;
+    return spread.elements.some((e) => e.masterSourceId === masterElementId);
+  }
+
+  /**
+   * Registers an image asset and generates a 72 DPI screen proxy.
+   */
+  public async registerImageAsset(elementId: string, data: ArrayBuffer | string, name?: string): Promise<boolean> {
+    const el = this.getElementById(elementId);
+    if (!el || el.type !== 'image') return false;
+    const meta = await assetStore.registerAsset(data, { name, width: el.width, height: el.height });
+    const img = el as ImageElement;
+    img.assetId = meta.id;
+    img.proxySrc = meta.proxyDataUrl;
+    img.name = meta.name;
+    img.originalWidth = meta.width;
+    img.originalHeight = meta.height;
+    this.pushHistory();
+    this.notify();
+    return true;
   }
 
   public evaluateTokens(text: string, pageNum: number): string {

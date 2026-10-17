@@ -49,6 +49,7 @@ export interface DocumentSettings {
   baselineGrid: BaselineGridSettings;
   colorMode?: 'cmyk' | 'rgb';
   iccProfile?: 'FOGRA39' | 'GRACoL2006' | 'SWOP2006' | 'sRGB';
+  overprintBlack?: boolean;
   footnotes?: Footnote[];
   footnoteSettings?: FootnoteSettings;
 }
@@ -162,6 +163,8 @@ export interface BaseElement {
   locked: boolean;
   layerId?: string;
   textWrap?: TextWrapSettings;
+  masterSourceId?: string;
+  isOverridden?: boolean;
 }
 
 export interface TextElement extends BaseElement {
@@ -206,6 +209,8 @@ export type ImageFitMode = 'fill' | 'fit' | 'frameToContent' | 'contentToFrame' 
 export interface ImageElement extends BaseElement {
   type: 'image';
   src: string;
+  proxySrc?: string;
+  assetId?: string;
   fitMode: ImageFitMode;
   borderColor: string;
   borderWidthMm: number;
@@ -320,6 +325,7 @@ export interface Spread {
   pages: Page[];
   elements: CanvasElement[];
   masterSpreadId?: string | null;
+  detachedMasterElementIds?: string[];
 }
 
 export type ToolType = 'select' | 'text' | 'frame' | 'table' | 'pen' | 'shape-rect' | 'shape-ellipse' | 'shape-line' | 'hand' | 'zoom';

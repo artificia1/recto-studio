@@ -143,6 +143,47 @@ export function PropertiesTab({ state }: PropertiesTabProps) {
           </div>
         )}
 
+        {selectedEl.isOverridden && (
+          <div
+            className="override-master-banner"
+            style={{
+              background: 'rgba(13, 153, 255, 0.12)',
+              border: '1px solid #0d99ff',
+              borderRadius: '4px',
+              padding: '6px 8px',
+              marginBottom: '10px',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              fontSize: '11px',
+              color: '#0d99ff',
+            }}
+          >
+            <span>Overridden Master Item</span>
+            <button
+              className="sm-btn"
+              style={{
+                fontSize: '10px',
+                padding: '2px 6px',
+                background: '#222',
+                border: '1px solid #444',
+                color: '#fff',
+                borderRadius: '3px',
+                cursor: 'pointer',
+              }}
+              onClick={() => {
+                const spread = stateManager.getActiveSpread();
+                if (selectedEl.masterSourceId) {
+                  stateManager.restoreMasterElement(spread.id, selectedEl.masterSourceId);
+                }
+              }}
+              title="Restore this frame to inherit dynamically from Master Spread"
+            >
+              Restore to Master
+            </button>
+          </div>
+        )}
+
         <div className="input-grid-2">
           <label>
             X:
@@ -909,9 +950,9 @@ function ImageInspector({ element }: { element: ImageElement }) {
         reader.readAsArrayBuffer(file);
       } else {
         const reader = new FileReader();
-        reader.onload = (re) => {
+        reader.onload = async (re) => {
           if (typeof re.target?.result === 'string') {
-            stateManager.updateElement(element.id, { src: re.target.result, isPsd: false });
+            await stateManager.registerImageAsset(element.id, re.target.result, file.name);
           }
         };
         reader.readAsDataURL(file);
@@ -922,6 +963,22 @@ function ImageInspector({ element }: { element: ImageElement }) {
   return (
     <div className="inspector-section">
       <div className="section-header">IMAGE FRAME</div>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '4px 6px',
+          background: '#252526',
+          borderRadius: '3px',
+          marginBottom: '8px',
+          fontSize: '10px',
+          color: '#888',
+        }}
+      >
+        <span>Memory Pipeline:</span>
+        <span style={{ color: '#0d99ff', fontWeight: 600 }}>72 DPI Proxy · 300 DPI Stream</span>
+      </div>
       <button
         className="action-btn-primary"
         style={{ width: '100%', marginBottom: '8px' }}
