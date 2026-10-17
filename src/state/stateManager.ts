@@ -31,6 +31,8 @@ import {
 import { RectoDB } from './persistence';
 import { parseIdmlPackage } from '../idmlImport';
 import { parseCsv, generateMergedSpreads, substituteElementTokens } from '../dataMerge';
+import { KnuthPlassComposer, ComposerOptions } from '../engine/knuthPlass';
+import { psdEngine } from '../engine/psdParser';
 
 const SUPERSCRIPTS: Record<string, string> = {
   '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
@@ -3136,40 +3138,31 @@ export class StateManager {
    * Multi-line Paragraph Composer (Knuth-Plass / line balancing heuristic):
    * Balances line lengths across a paragraph to eliminate rag and awkward lone words.
    */
-  public balanceParagraphLines(elementId: string): boolean {
+  public balanceParagraphLines(elementId: string, options?: ComposerOptions): boolean {
     const el = this.getElementById(elementId);
     if (!el || el.type !== 'text') return false;
     const txt = el as TextElement;
     const paragraphs = txt.text.split('\n');
     let modified = false;
 
+    const composer = new KnuthPlassComposer(options);
+    const charWidthPt = (txt.fontSizePt * 0.55);
+    const measureWidth = (str: string) => str.length * charWidthPt;
+    const padding = (txt.paddingMm || 2);
+    const availWidthPt = ((txt.width - (padding * 2)) / 25.4) * 72;
+
     const balancedParagraphs = paragraphs.map((para) => {
       const words = para.trim().split(/\s+/);
-      if (words.length < 6 || words.length > 50) return para;
+      if (words.length < 5) return para;
 
-      const totalChars = words.reduce((sum, w) => sum + w.length, 0) + (words.length - 1);
-      const targetLines = Math.max(2, Math.round(words.length / 8));
-      const targetPerLine = Math.floor(totalChars / targetLines);
-
-      let currentLineLen = 0;
-      let result = '';
-      for (let i = 0; i < words.length; i++) {
-        const word = words[i];
-        if (i === 0) {
-          result += word;
-          currentLineLen += word.length;
-        } else {
-          if (currentLineLen + 1 + word.length > targetPerLine && i < words.length - 2) {
-            result += '\n' + word;
-            currentLineLen = word.length;
-            modified = true;
-          } else {
-            result += ' ' + word;
-            currentLineLen += 1 + word.length;
-          }
-        }
+      const items = composer.tokenize(para, measureWidth);
+      const targetLineWidth = Math.max(availWidthPt, charWidthPt * 20);
+      const lines = composer.breakLines(items, targetLineWidth);
+      if (lines.length > 1) {
+        modified = true;
+        return lines.map(l => l.text).join('\n');
       }
-      return result;
+      return para;
     });
 
     if (modified) {
@@ -3178,6 +3171,67 @@ export class StateManager {
       this.notify();
     }
     return modified;
+  }
+
+  /**
+   * Loads a binary Adobe Photoshop PSD buffer into an ImageElement without flattening.
+   */
+  public loadPsdForElement(elementId: string, psdBuffer: ArrayBuffer | Uint8Array, fileName?: string): boolean {
+    const el = this.getElementById(elementId);
+    if (!el || el.type !== 'image') return false;
+    const img = el as ImageElement;
+
+    const psdData = psdEngine.parse(psdBuffer);
+    img.isPsd = true;
+    img.format = 'PSD';
+    img.name = fileName || img.name || 'document.psd';
+    img.originalWidth = psdData.width;
+    img.originalHeight = psdData.height;
+    img.psdLayers = psdData.layers.map((l) => ({
+      id: l.id,
+      name: l.name,
+      visible: l.visible,
+      opacity: l.opacity,
+      left: l.left,
+      top: l.top,
+      width: l.width,
+      height: l.height,
+    }));
+    img.activePsdLayerIds = psdData.layers.filter((l) => l.visible).map((l) => l.id);
+    if (psdData.compositeDataUrl) {
+      img.src = psdData.compositeDataUrl;
+    }
+
+    this.pushHistory();
+    this.notify();
+    return true;
+  }
+
+  /**
+   * Toggles visibility of a specific Photoshop layer in an ImageElement.
+   */
+  public togglePsdLayer(elementId: string, layerId: number, visible?: boolean): boolean {
+    const el = this.getElementById(elementId);
+    if (!el || el.type !== 'image') return false;
+    const img = el as ImageElement;
+    if (!img.isPsd || !img.psdLayers) return false;
+
+    const layer = img.psdLayers.find((l) => l.id === layerId);
+    if (!layer) return false;
+
+    layer.visible = typeof visible === 'boolean' ? visible : !layer.visible;
+    if (layer.visible) {
+      if (!img.activePsdLayerIds) img.activePsdLayerIds = [];
+      if (!img.activePsdLayerIds.includes(layerId)) {
+        img.activePsdLayerIds.push(layerId);
+      }
+    } else {
+      img.activePsdLayerIds = (img.activePsdLayerIds || []).filter((id) => id !== layerId);
+    }
+
+    this.pushHistory();
+    this.notify();
+    return true;
   }
 
   private saveSnapshotsToStorage() {

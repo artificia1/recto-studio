@@ -15,6 +15,7 @@ export interface ExportOptions {
   includeColorBars?: boolean;
   exportFormat?: 'pages' | 'spreads';
   spreadRange?: 'all' | 'current' | number[];
+  compress?: boolean;
 }
 
 export async function exportDocumentToPdf(
@@ -41,7 +42,7 @@ export async function exportDocumentToPdf(
     orientation,
     unit: 'mm',
     format: [pdfPageWidth, pdfPageHeight],
-    compress: true,
+    compress: options.compress !== undefined ? options.compress : true,
   });
 
   // PDF/UA & Section 508 Universal Accessibility Metadata
@@ -83,8 +84,8 @@ export async function exportDocumentToPdf(
     const originX = slug + bleed;
     const originY = slug + bleed;
 
-    // 1. Fill page background
-    doc.setFillColor(255, 255, 255);
+    // 1. Fill page background (DeviceCMYK 0%)
+    doc.setFillColor(0, 0, 0, 0);
     doc.rect(originX, originY, widthMm, heightMm, 'F');
 
     // 2. Commercial Print Marks
@@ -130,8 +131,8 @@ export async function exportDocumentToPdf(
 
           if (mEl.type === 'shape') {
             const shape = mEl as ShapeElement;
-            doc.setFillColor(shape.fillColor || '#ffffff');
-            doc.setDrawColor(shape.strokeColor || '#000000');
+            applyCmykFillColor(doc, shape.fillColor);
+            applyCmykDrawColor(doc, shape.strokeColor);
             doc.setLineWidth(shape.strokeWidthMm || 0.2);
             if (shape.shapeKind === 'line') {
               doc.line(mX, mY, mX + shape.width, mY + shape.height);
@@ -141,7 +142,7 @@ export async function exportDocumentToPdf(
           } else if (mEl.type === 'text') {
             const textEl = mEl as TextElement;
             const evalText = stateManager.evaluateTokens(textEl.text, page.pageNumber);
-            doc.setTextColor(textEl.color || '#666666');
+            applyCmykTextColor(doc, textEl.color || '#000000');
             doc.setFontSize(textEl.fontSizePt);
             applyFont(doc, textEl.fontFamily);
             doc.text(evalText, mX, mY + (textEl.fontSizePt * 0.3527), {
@@ -163,8 +164,8 @@ export async function exportDocumentToPdf(
 
       if (el.type === 'shape') {
         const shape = el as ShapeElement;
-        doc.setFillColor(shape.fillColor || '#ffffff');
-        doc.setDrawColor(shape.strokeColor || '#000000');
+        applyCmykFillColor(doc, shape.fillColor);
+        applyCmykDrawColor(doc, shape.strokeColor);
         doc.setLineWidth(shape.strokeWidthMm || 0.2);
 
         if (shape.shapeKind === 'rectangle') {
@@ -177,7 +178,7 @@ export async function exportDocumentToPdf(
       } else if (el.type === 'path') {
         const pathEl = el as VectorPathElement;
         if (pathEl.nodes.length >= 2) {
-          doc.setDrawColor(pathEl.strokeColor || '#000000');
+          applyCmykDrawColor(doc, pathEl.strokeColor);
           doc.setLineWidth(pathEl.strokeWidthMm || 0.3);
           for (let i = 1; i < pathEl.nodes.length; i++) {
             const prev = pathEl.nodes[i - 1];
@@ -193,16 +194,16 @@ export async function exportDocumentToPdf(
       } else if (el.type === 'text') {
         const text = el as TextElement;
         if (text.backgroundColor && text.backgroundColor !== 'transparent') {
-          doc.setFillColor(text.backgroundColor);
+          applyCmykFillColor(doc, text.backgroundColor);
           doc.rect(elX, elY, text.width, text.height, 'F');
         }
         if (text.borderWidthMm > 0 && text.borderColor !== 'transparent') {
-          doc.setDrawColor(text.borderColor);
+          applyCmykDrawColor(doc, text.borderColor);
           doc.setLineWidth(text.borderWidthMm);
           doc.rect(elX, elY, text.width, text.height, 'S');
         }
 
-        doc.setTextColor(text.color || '#000000');
+        applyCmykTextColor(doc, text.color || '#000000');
         doc.setFontSize(text.fontSizePt);
         applyFont(doc, text.fontFamily);
 
@@ -243,12 +244,12 @@ export async function exportDocumentToPdf(
           const fnStartY = elY + text.height - padding - totalFnHtMm + 1;
           const ruleWidthMm = Math.min(availableWidth * 0.45, fnSettings.separatorRuleWidthMm || 30);
 
-          doc.setDrawColor(128, 128, 128);
+          applyCmykDrawColor(doc, '#808080');
           doc.setLineWidth((fnSettings.separatorRuleThicknessPt || 0.5) * 0.3527);
           doc.line(elX + padding, fnStartY, elX + padding + ruleWidthMm, fnStartY);
 
           doc.setFontSize(fnFontSizePt);
-          doc.setTextColor(text.color || '#222222');
+          applyCmykTextColor(doc, text.color || '#222222');
           footnotes.forEach((fn, idx) => {
             const lineY = fnStartY + 2 + (idx * fnLineHeightMm);
             const marker = numberToSuperscript(fn.number);
@@ -330,6 +331,95 @@ export async function exportDocumentToPdf(
   return doc;
 }
 
+/**
+ * Converts a hex or CSS color string to DeviceCMYK percentages (0-100).
+ * Implements the "Pure Black" prepress rule: black colors map to 100% K (0, 0, 0, 100).
+ */
+export function colorToCmyk(colorStr: string | undefined): [number, number, number, number] {
+  if (!colorStr || colorStr === 'transparent') {
+    return [0, 0, 0, 0];
+  }
+  const clean = colorStr.trim().toLowerCase();
+
+  // Pure Black Golden Rule for offset press plates
+  if (
+    clean === '#000' ||
+    clean === '#000000' ||
+    clean === 'black' ||
+    clean === 'rgb(0,0,0)' ||
+    clean === 'rgb(0, 0, 0)'
+  ) {
+    return [0, 0, 0, 100];
+  }
+
+  // Pure White
+  if (
+    clean === '#fff' ||
+    clean === '#ffffff' ||
+    clean === 'white' ||
+    clean === 'rgb(255,255,255)' ||
+    clean === 'rgb(255, 255, 255)'
+  ) {
+    return [0, 0, 0, 0];
+  }
+
+  let r = 0, g = 0, b = 0;
+  if (clean.startsWith('#')) {
+    const hex = clean.slice(1);
+    if (hex.length === 3) {
+      r = parseInt(hex[0] + hex[0], 16);
+      g = parseInt(hex[1] + hex[1], 16);
+      b = parseInt(hex[2] + hex[2], 16);
+    } else if (hex.length >= 6) {
+      r = parseInt(hex.slice(0, 2), 16);
+      g = parseInt(hex.slice(2, 4), 16);
+      b = parseInt(hex.slice(4, 6), 16);
+    }
+  } else if (clean.startsWith('rgb')) {
+    const m = clean.match(/\d+/g);
+    if (m && m.length >= 3) {
+      r = parseInt(m[0], 10);
+      g = parseInt(m[1], 10);
+      b = parseInt(m[2], 10);
+    }
+  }
+
+  const rNorm = r / 255;
+  const gNorm = g / 255;
+  const bNorm = b / 255;
+
+  const kNorm = 1 - Math.max(rNorm, gNorm, bNorm);
+  if (kNorm >= 0.999) {
+    return [0, 0, 0, 100];
+  }
+
+  const cNorm = (1 - rNorm - kNorm) / (1 - kNorm);
+  const mNorm = (1 - gNorm - kNorm) / (1 - kNorm);
+  const yNorm = (1 - bNorm - kNorm) / (1 - kNorm);
+
+  return [
+    Math.round(cNorm * 100),
+    Math.round(mNorm * 100),
+    Math.round(yNorm * 100),
+    Math.round(kNorm * 100),
+  ];
+}
+
+export function applyCmykTextColor(doc: any, colorStr: string | undefined): void {
+  const [c, m, y, k] = colorToCmyk(colorStr || '#000000');
+  doc.setTextColor(c, m, y, k);
+}
+
+export function applyCmykFillColor(doc: any, colorStr: string | undefined): void {
+  const [c, m, y, k] = colorToCmyk(colorStr || '#ffffff');
+  doc.setFillColor(c, m, y, k);
+}
+
+export function applyCmykDrawColor(doc: any, colorStr: string | undefined): void {
+  const [c, m, y, k] = colorToCmyk(colorStr || '#000000');
+  doc.setDrawColor(c, m, y, k);
+}
+
 function applyFont(doc: any, fontFamily: string) {
   const fam = fontFamily ? fontFamily.toLowerCase() : '';
   if (fam.includes('sans') || fam.includes('inter') || fam.includes('grotesk')) {
@@ -358,7 +448,8 @@ function drawPlaceholderImage(doc: any, x: number, y: number, w: number, h: numb
 }
 
 export function drawCropMarks(doc: any, x: number, y: number, w: number, h: number, bleed: number) {
-  doc.setDrawColor(0, 0, 0);
+  // Pure 100% K Black for ultra-crisp offset press registration
+  doc.setDrawColor(0, 0, 0, 100);
   doc.setLineWidth(0.1);
 
   const markLen = 6;
@@ -382,8 +473,9 @@ export function drawCropMarks(doc: any, x: number, y: number, w: number, h: numb
 }
 
 export function drawRegistrationTargets(doc: any, x: number, y: number, w: number, h: number, slug: number) {
-  doc.setDrawColor(0, 0, 0);
-  doc.setFillColor(0, 0, 0);
+  // 4-Color Registration Plate (100C 100M 100Y 100K)
+  doc.setDrawColor(100, 100, 100, 100);
+  doc.setFillColor(100, 100, 100, 100);
   doc.setLineWidth(0.15);
 
   const targets = [
@@ -406,23 +498,23 @@ export function drawCMYKCalibrationBar(doc: any, x: number, y: number, w: number
   const swatchW = 7;
   const swatchH = 3;
 
-  // CMYK primary density swatches: Cyan, Magenta, Yellow, Black, 75% Gray, 50% Gray, 25% Gray
-  const swatches = [
-    { r: 0, g: 163, b: 224 },   // C 100%
-    { r: 236, g: 0, b: 140 },   // M 100%
-    { r: 255, g: 242, b: 0 },   // Y 100%
-    { r: 20, g: 20, b: 20 },     // K 100%
-    { r: 80, g: 80, b: 80 },     // K 75%
-    { r: 140, g: 140, b: 140 }, // K 50%
-    { r: 200, g: 200, b: 200 }, // K 25%
+  // Native DeviceCMYK primary density swatches: C 100%, M 100%, Y 100%, K 100%, K 75%, K 50%, K 25%
+  const swatches: [number, number, number, number][] = [
+    [100, 0, 0, 0],   // Cyan 100%
+    [0, 100, 0, 0],   // Magenta 100%
+    [0, 0, 100, 0],   // Yellow 100%
+    [0, 0, 0, 100],   // Black 100% (Pure K)
+    [0, 0, 0, 75],    // Black 75%
+    [0, 0, 0, 50],    // Black 50%
+    [0, 0, 0, 25],    // Black 25%
   ];
 
   const startX = x + (w - swatches.length * swatchW) / 2;
   doc.setLineWidth(0.1);
-  doc.setDrawColor(180, 180, 180);
+  doc.setDrawColor(0, 0, 0, 40);
 
-  swatches.forEach((color, i) => {
-    doc.setFillColor(color.r, color.g, color.b);
+  swatches.forEach(([c, m, y, k], i) => {
+    doc.setFillColor(c, m, y, k);
     doc.rect(startX + (i * swatchW), barY, swatchW, swatchH, 'FD');
   });
 }

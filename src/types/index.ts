@@ -217,6 +217,18 @@ export interface ImageElement extends BaseElement {
   originalWidth?: number;
   originalHeight?: number;
   actualDpi?: number;
+  isPsd?: boolean;
+  psdLayers?: {
+    id: number;
+    name: string;
+    visible: boolean;
+    opacity: number;
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  }[];
+  activePsdLayerIds?: number[];
 }
 
 export type ShapeKind = 'rectangle' | 'ellipse' | 'line';

@@ -898,13 +898,24 @@ function ImageInspector({ element }: { element: ImageElement }) {
     const target = e.target as HTMLInputElement;
     const file = target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (re) => {
-        if (typeof re.target?.result === 'string') {
-          stateManager.updateElement(element.id, { src: re.target.result });
-        }
-      };
-      reader.readAsDataURL(file);
+      const isPsd = file.name.toLowerCase().endsWith('.psd') || file.name.toLowerCase().endsWith('.psb');
+      if (isPsd) {
+        const reader = new FileReader();
+        reader.onload = (re) => {
+          if (re.target?.result instanceof ArrayBuffer) {
+            stateManager.loadPsdForElement(element.id, re.target.result, file.name);
+          }
+        };
+        reader.readAsArrayBuffer(file);
+      } else {
+        const reader = new FileReader();
+        reader.onload = (re) => {
+          if (typeof re.target?.result === 'string') {
+            stateManager.updateElement(element.id, { src: re.target.result, isPsd: false });
+          }
+        };
+        reader.readAsDataURL(file);
+      }
     }
   };
 
@@ -916,15 +927,71 @@ function ImageInspector({ element }: { element: ImageElement }) {
         style={{ width: '100%', marginBottom: '8px' }}
         onClick={() => fileInputRef.current?.click()}
       >
-        {element.src ? 'Replace Photo' : 'Upload Photo'}
+        {element.src ? (element.isPsd ? 'Replace PSD File' : 'Replace Photo') : 'Upload Photo or PSD'}
       </button>
       <input
         type="file"
         ref={fileInputRef}
-        accept="image/*"
+        accept="image/*,.psd,.psb"
         style={{ display: 'none' }}
         onChange={handleFileChange}
       />
+
+      {element.isPsd && element.psdLayers && element.psdLayers.length > 0 && (
+        <div
+          className="psd-layers-box"
+          style={{
+            marginTop: '8px',
+            marginBottom: '10px',
+            padding: '8px',
+            background: 'var(--panel-bg-dark, rgba(0,0,0,0.25))',
+            border: '1px solid var(--border-color)',
+            borderRadius: '4px',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+            <span style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase' }}>
+              Photoshop Layers ({element.psdLayers.length})
+            </span>
+            <span style={{ fontSize: '9px', color: '#0d99ff', fontWeight: 600 }}>Active PSD</span>
+          </div>
+          <div style={{ maxHeight: '140px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+            {element.psdLayers.map((l) => (
+              <label
+                key={l.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontSize: '11px',
+                  cursor: 'pointer',
+                  padding: '2px 4px',
+                  borderRadius: '3px',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={l.visible}
+                  onChange={(e) =>
+                    stateManager.togglePsdLayer(element.id, l.id, (e.target as HTMLInputElement).checked)
+                  }
+                />
+                <span
+                  style={{
+                    flex: 1,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    opacity: l.visible ? 1 : 0.45,
+                  }}
+                >
+                  {l.name}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
 
       <label className="full-label" style={{ marginTop: '8px' }}>
         Fitting Mode:
