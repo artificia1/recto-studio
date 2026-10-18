@@ -43,47 +43,189 @@ export function extractXmlTags(xml: string, tagName: string): string[] {
   return results;
 }
 
-export function parseGeometricBounds(xmlOrBoundsStr: string | null): { x: number; y: number; width: number; height: number } {
-  if (!xmlOrBoundsStr) return { x: 20, y: 20, width: 60, height: 40 };
+export function parseTransform(str: string | null | undefined): [number, number, number, number, number, number] {
+  if (!str) return [1, 0, 0, 1, 0, 0];
+  const parts = str.trim().split(/\s+/).map(Number);
+  if (parts.length >= 6 && !parts.some(isNaN)) {
+    return parts as [number, number, number, number, number, number];
+  }
+  return [1, 0, 0, 1, 0, 0];
+}
 
-  let boundsStr = xmlOrBoundsStr;
-  if (xmlOrBoundsStr.includes('<')) {
-    const attr = extractXmlAttr(xmlOrBoundsStr, 'GeometricBounds');
-    if (attr) {
-      boundsStr = attr;
-    } else {
-      const tagMatch = xmlOrBoundsStr.match(/<GeometricBounds\b[^>]*>([\s\S]*?)<\/GeometricBounds>/i);
-      if (tagMatch) {
-        const inner = tagMatch[1];
-        if (inner.includes('<ListItem')) {
-          const listMatches = inner.match(/<ListItem\b[^>]*>([^<]+)<\/ListItem>/gi);
-          if (listMatches && listMatches.length >= 4) {
-            boundsStr = listMatches.map(m => m.replace(/<[^>]+>/g, '').trim()).join(' ');
-          } else {
-            boundsStr = inner.replace(/<[^>]+>/g, ' ').trim();
-          }
-        } else {
-          boundsStr = inner.trim();
+export interface PageSpreadBox {
+  id: string;
+  name: string;
+  pageNumber: number;
+  spreadLeft: number;
+  spreadTop: number;
+  spreadRight: number;
+  spreadBottom: number;
+  widthMm: number;
+  heightMm: number;
+  side: 'left' | 'right' | 'single';
+}
+
+export function parseSpreadPages(
+  spreadXml: string,
+  startPageNumber: number,
+  facingPages: boolean,
+  defaultWidthMm: number,
+  defaultHeightMm: number
+): PageSpreadBox[] {
+  const pageMatches = spreadXml.match(/<Page\b[\s\S]*?<\/Page>/gi) || spreadXml.match(/<Page\b[^>]*\/>/gi) || [];
+  const pages: PageSpreadBox[] = [];
+
+  let pNum = startPageNumber;
+  for (let idx = 0; idx < pageMatches.length; idx++) {
+    const pXml = pageMatches[idx];
+    const id = extractXmlAttr(pXml, 'Self') || `idml-p-${pNum}`;
+    const name = extractXmlAttr(pXml, 'Name') || `${pNum}`;
+    const geomStr = extractXmlAttr(pXml, 'GeometricBounds');
+    const transStr = extractXmlAttr(pXml, 'ItemTransform');
+
+    const defaultHPt = defaultHeightMm / PT_TO_MM;
+    const defaultWPt = defaultWidthMm / PT_TO_MM;
+    const geomParts = (geomStr || `0 0 ${defaultHPt} ${defaultWPt}`).trim().split(/\s+/).map(Number);
+    const [y1, x1, y2, x2] = geomParts.length >= 4 && !geomParts.some(isNaN) ? geomParts : [0, 0, defaultHPt, defaultWPt];
+    const [a, b, c, d, tx, ty] = parseTransform(transStr);
+
+    const left = x1 + tx;
+    const top = y1 + ty;
+    const right = x2 + tx;
+    const bottom = y2 + ty;
+
+    const wPt = Math.abs(x2 - x1) || defaultWPt;
+    const hPt = Math.abs(y2 - y1) || defaultHPt;
+
+    let side: 'left' | 'right' | 'single' = 'single';
+    if (facingPages) {
+      if (pageMatches.length === 1) {
+        side = pNum % 2 === 0 ? 'left' : 'right';
+      } else {
+        side = idx === 0 ? 'left' : 'right';
+      }
+    }
+
+    pages.push({
+      id,
+      name,
+      pageNumber: pNum,
+      spreadLeft: Math.min(left, right),
+      spreadTop: Math.min(top, bottom),
+      spreadRight: Math.max(left, right),
+      spreadBottom: Math.max(top, bottom),
+      widthMm: Math.round(wPt * PT_TO_MM * 10) / 10,
+      heightMm: Math.round(hPt * PT_TO_MM * 10) / 10,
+      side,
+    });
+    pNum++;
+  }
+
+  if (pages.length === 0) {
+    pages.push({
+      id: `idml-p-${startPageNumber}`,
+      name: `${startPageNumber}`,
+      pageNumber: startPageNumber,
+      spreadLeft: 0,
+      spreadTop: 0,
+      spreadRight: defaultWidthMm / PT_TO_MM,
+      spreadBottom: defaultHeightMm / PT_TO_MM,
+      widthMm: defaultWidthMm,
+      heightMm: defaultHeightMm,
+      side: facingPages ? 'right' : 'single',
+    });
+  }
+
+  return pages;
+}
+
+export function parseElementSpreadBounds(
+  elXml: string,
+  defaultXPt: number = 56.7,
+  defaultYPt: number = 56.7
+): { spreadLeft: number; spreadTop: number; widthPt: number; heightPt: number } {
+  const transStr = extractXmlAttr(elXml, 'ItemTransform');
+  const [a, b, c, d, tx, ty] = parseTransform(transStr);
+
+  // Check PathGeometry anchors first
+  const pathMatches = elXml.match(/<PathPointType\b[^>]*Anchor="([^"]+)"/gi);
+  if (pathMatches && pathMatches.length > 0) {
+    const worldXs: number[] = [];
+    const worldYs: number[] = [];
+
+    for (const pm of pathMatches) {
+      const anchor = pm.match(/Anchor="([^"]+)"/)?.[1];
+      if (anchor) {
+        const [ax, ay] = anchor.trim().split(/\s+/).map(Number);
+        if (!isNaN(ax) && !isNaN(ay)) {
+          const wx = a * ax + c * ay + tx;
+          const wy = b * ax + d * ay + ty;
+          worldXs.push(wx);
+          worldYs.push(wy);
         }
       }
     }
+
+    if (worldXs.length > 0) {
+      const minX = Math.min(...worldXs);
+      const maxX = Math.max(...worldXs);
+      const minY = Math.min(...worldYs);
+      const maxY = Math.max(...worldYs);
+      return {
+        spreadLeft: minX,
+        spreadTop: minY,
+        widthPt: Math.max(10, maxX - minX),
+        heightPt: Math.max(10, maxY - minY),
+      };
+    }
   }
 
-  const parts = boundsStr.trim().split(/\s+/).map(Number);
-  if (parts.length >= 4 && !parts.some(isNaN)) {
-    const [y1Pt, x1Pt, y2Pt, x2Pt] = parts;
-    const yMm = Math.max(0, y1Pt * PT_TO_MM);
-    const xMm = Math.max(0, x1Pt * PT_TO_MM);
-    const widthMm = Math.max(5, (x2Pt - x1Pt) * PT_TO_MM);
-    const heightMm = Math.max(5, (y2Pt - y1Pt) * PT_TO_MM);
-    return {
-      x: Math.round(xMm * 10) / 10,
-      y: Math.round(yMm * 10) / 10,
-      width: Math.round(widthMm * 10) / 10,
-      height: Math.round(heightMm * 10) / 10,
-    };
+  let geomStr = extractXmlAttr(elXml, 'GeometricBounds');
+  if (!geomStr) {
+    const tagMatch = elXml.match(/<GeometricBounds\b[^>]*>([\s\S]*?)<\/GeometricBounds>/i);
+    if (tagMatch) {
+      geomStr = tagMatch[1].replace(/<[^>]+>/g, ' ').trim();
+    }
   }
-  return { x: 20, y: 20, width: 60, height: 40 };
+
+  if (geomStr) {
+    const parts = geomStr.trim().split(/\s+/).map(Number);
+    if (parts.length >= 4 && !parts.some(isNaN)) {
+      const [y1, x1, y2, x2] = parts;
+      const wx1 = a * x1 + c * y1 + tx;
+      const wy1 = b * x1 + d * y1 + ty;
+      const wx2 = a * x2 + c * y2 + tx;
+      const wy2 = b * x2 + d * y2 + ty;
+      const minX = Math.min(wx1, wx2);
+      const maxX = Math.max(wx1, wx2);
+      const minY = Math.min(wy1, wy2);
+      const maxY = Math.max(wy1, wy2);
+      return {
+        spreadLeft: minX,
+        spreadTop: minY,
+        widthPt: Math.max(10, maxX - minX),
+        heightPt: Math.max(10, maxY - minY),
+      };
+    }
+  }
+
+  return {
+    spreadLeft: defaultXPt,
+    spreadTop: defaultYPt,
+    widthPt: 200,
+    heightPt: 100,
+  };
+}
+
+export function parseGeometricBounds(xmlOrBoundsStr: string | null): { x: number; y: number; width: number; height: number } {
+  if (!xmlOrBoundsStr) return { x: 20, y: 20, width: 60, height: 40 };
+  const bounds = parseElementSpreadBounds(xmlOrBoundsStr, 56.7, 56.7);
+  return {
+    x: Math.round(Math.max(0, bounds.spreadLeft * PT_TO_MM) * 10) / 10,
+    y: Math.round(Math.max(0, bounds.spreadTop * PT_TO_MM) * 10) / 10,
+    width: Math.round(bounds.widthPt * PT_TO_MM * 10) / 10,
+    height: Math.round(bounds.heightPt * PT_TO_MM * 10) / 10,
+  };
 }
 
 export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array): Promise<ProjectState> {
@@ -103,7 +245,6 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array): Pr
   let columnGutterMm = 5;
   let docTitle = 'Imported InDesign Project';
 
-  // Search designmap.xml or Preferences.xml
   const prefFile = files.get('Resources/Preferences.xml') || files.get('designmap.xml');
   if (prefFile) {
     const xml = textDecoder.decode(prefFile);
@@ -156,13 +297,13 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array): Pr
       else if (just.includes('Just')) alignment = 'justify';
 
       const styleId = `idml-style-${name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
-      if (!parsedStyles.some(s => s.id === styleId)) {
+      if (!parsedStyles.some((s) => s.id === styleId)) {
         parsedStyles.push({
           id: styleId,
           name,
           fontFamily: extractXmlAttr(tag, 'AppliedFont') || 'serif',
           fontSizePt: !isNaN(ptSize) ? ptSize : 10,
-          lineHeight: (!isNaN(leadingPt) && !isNaN(ptSize) && ptSize > 0) ? Math.round((leadingPt / ptSize) * 100) / 100 : 1.3,
+          lineHeight: !isNaN(leadingPt) && !isNaN(ptSize) && ptSize > 0 ? Math.round((leadingPt / ptSize) * 100) / 100 : 1.3,
           letterSpacingPt: 0,
           color: '#1a1a1a',
           alignment,
@@ -174,87 +315,169 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array): Pr
   }
 
   // 3. Parse Stories from Stories/Story_*.xml
-  const storiesMap = new Map<string, { text: string; styleId?: string }>();
+  const storiesMap = new Map<
+    string,
+    {
+      text: string;
+      styleId?: string;
+      fontSizePt?: number;
+      fontFamily?: string;
+      lineHeight?: number;
+      alignment?: 'left' | 'center' | 'right' | 'justify';
+    }
+  >();
+
   for (const [filename, content] of files.entries()) {
     if (filename.startsWith('Stories/Story_') && filename.endsWith('.xml')) {
       const xml = textDecoder.decode(content);
       const storyId = extractXmlAttr(xml, 'Self') || filename.replace('Stories/', '').replace('.xml', '');
 
-      // Extract all <Content> tags
-      const contentTags = extractXmlTags(xml, 'Content');
-      const textPieces: string[] = [];
-      for (const ct of contentTags) {
-        const inner = ct.replace(/<Content[^>]*>/, '').replace(/<\/Content>/, '');
-        textPieces.push(inner);
-      }
-
-      // Check paragraph style ranges
-      const pRangeTags = extractXmlTags(xml, 'ParagraphStyleRange');
+      const pRanges = extractXmlTags(xml, 'ParagraphStyleRange');
+      const paragraphs: string[] = [];
       let detectedStyleId: string | undefined;
-      for (const pr of pRangeTags) {
+      let detectedFontSize: number | undefined;
+      let detectedFontFamily: string | undefined;
+      let detectedLineHeight: number | undefined;
+      let detectedAlignment: 'left' | 'center' | 'right' | 'justify' | undefined;
+
+      for (const pr of pRanges) {
         const applied = extractXmlAttr(pr, 'AppliedParagraphStyle');
         if (applied) {
           const cleanName = applied.replace('ParagraphStyle/', '');
-          const match = parsedStyles.find(s => s.name.toLowerCase() === cleanName.toLowerCase());
-          if (match) detectedStyleId = match.id;
+          const match = parsedStyles.find((s) => s.name.toLowerCase() === cleanName.toLowerCase());
+          if (match && !detectedStyleId) detectedStyleId = match.id;
+        }
+
+        const just = extractXmlAttr(pr, 'Justification') || '';
+        if (just.includes('Center')) detectedAlignment = 'center';
+        else if (just.includes('Right')) detectedAlignment = 'right';
+        else if (just.includes('Just')) detectedAlignment = 'justify';
+        else if (just.includes('Left')) detectedAlignment = 'left';
+
+        // Extract content and breaks within paragraph
+        const cRanges = extractXmlTags(pr, 'CharacterStyleRange');
+        const paraTokens: string[] = [];
+
+        for (const cr of cRanges) {
+          const ptSize = parseFloat(extractXmlAttr(cr, 'PointSize') || '');
+          if (!isNaN(ptSize) && ptSize > 0 && !detectedFontSize) detectedFontSize = ptSize;
+
+          const appliedFont = extractXmlAttr(cr, 'AppliedFont') || cr.match(/<AppliedFont[^>]*>([^<]+)<\/AppliedFont>/)?.[1];
+          if (appliedFont && !detectedFontFamily) detectedFontFamily = appliedFont.trim();
+
+          const leading = parseFloat(cr.match(/<Leading[^>]*>([^<]+)<\/Leading>/)?.[1] || '');
+          if (!isNaN(leading) && detectedFontSize && !detectedLineHeight) {
+            detectedLineHeight = Math.round((leading / detectedFontSize) * 100) / 100;
+          }
+
+          // Read Content and Br
+          const tokens = cr.match(/<Content[^>]*>([\s\S]*?)<\/Content>|<Br\s*\/?>/gi) || [];
+          for (const tok of tokens) {
+            if (tok.toLowerCase().startsWith('<br')) {
+              paraTokens.push('\n');
+            } else {
+              const textContent = tok.replace(/<Content[^>]*>/, '').replace(/<\/Content>/, '');
+              paraTokens.push(textContent);
+            }
+          }
+        }
+
+        const paraStr = paraTokens.join('');
+        if (paraStr.length > 0) {
+          paragraphs.push(paraStr);
         }
       }
 
-      let fullText = textPieces.join('\n').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+      let fullText = paragraphs.join('\n');
+      // Entity decoding
+      fullText = fullText
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&apos;/g, "'");
+
       if (!fullText.trim()) {
         fullText = 'Imported text frame content';
       }
 
-      storiesMap.set(storyId, { text: fullText, styleId: detectedStyleId });
+      storiesMap.set(storyId, {
+        text: fullText,
+        styleId: detectedStyleId,
+        fontSizePt: detectedFontSize,
+        fontFamily: detectedFontFamily,
+        lineHeight: detectedLineHeight,
+        alignment: detectedAlignment,
+      });
     }
   }
 
-  // 4. Parse Spreads from Spreads/Spread_*.xml
-  const spreads: Spread[] = [];
-  const spreadFiles = Array.from(files.keys())
-    .filter(f => f.startsWith('Spreads/Spread_') && f.endsWith('.xml'))
-    .sort();
+  // 4. Determine Spread Sequence from designmap.xml
+  let spreadFileOrder: string[] = [];
+  const designmapFile = files.get('designmap.xml');
+  if (designmapFile) {
+    const dmXml = textDecoder.decode(designmapFile);
+    const spreadSrcMatches = Array.from(dmXml.matchAll(/<idPkg:Spread\s+src="([^"]+)"/gi)).map((m) => m[1]);
+    if (spreadSrcMatches.length > 0) {
+      spreadFileOrder = spreadSrcMatches;
+    }
+  }
 
+  if (spreadFileOrder.length === 0) {
+    spreadFileOrder = Array.from(files.keys())
+      .filter((f) => f.startsWith('Spreads/Spread_') && f.endsWith('.xml'))
+      .sort();
+  }
+
+  // 5. Parse Spreads and Elements
+  const spreads: Spread[] = [];
   let globalPageCounter = 1;
 
-  for (let sIdx = 0; sIdx < spreadFiles.length; sIdx++) {
-    const sFile = spreadFiles[sIdx];
-    const xml = textDecoder.decode(files.get(sFile)!);
+  for (let sIdx = 0; sIdx < spreadFileOrder.length; sIdx++) {
+    const sFile = spreadFileOrder[sIdx];
+    const sContent = files.get(sFile);
+    if (!sContent) continue;
 
-    // Extract pages in spread
-    const pageTags = extractXmlTags(xml, 'Page');
-    const pages: Page[] = [];
+    const xml = textDecoder.decode(sContent);
+    const parsedPages = parseSpreadPages(xml, globalPageCounter, facingPages, pageWidthMm, pageHeightMm);
+    globalPageCounter += parsedPages.length;
 
-    if (pageTags.length > 0) {
-      for (let pIdx = 0; pIdx < pageTags.length; pIdx++) {
-        const side: 'left' | 'right' | 'single' = facingPages
-          ? (globalPageCounter % 2 === 0 ? 'left' : 'right')
-          : 'single';
-
-        pages.push({
-          id: `idml-p-${globalPageCounter}`,
-          pageNumber: globalPageCounter,
-          side,
-        });
-        globalPageCounter++;
-      }
-    } else {
-      // Default single or facing page setup
-      pages.push({
-        id: `idml-p-${globalPageCounter}`,
-        pageNumber: globalPageCounter,
-        side: facingPages ? 'right' : 'single',
-      });
-      globalPageCounter++;
+    // Adopt document width/height from the first parsed page if appropriate
+    if (sIdx === 0 && parsedPages[0]) {
+      pageWidthMm = parsedPages[0].widthMm;
+      pageHeightMm = parsedPages[0].heightMm;
     }
 
+    const pages: Page[] = parsedPages.map((p) => ({
+      id: p.id,
+      pageNumber: p.pageNumber,
+      side: p.side,
+    }));
+
     const spreadElements: CanvasElement[] = [];
+
+    // Helper to find target page for an element in spread coordinates
+    const findTargetPage = (b: { spreadLeft: number; spreadTop: number; widthPt: number; heightPt: number }): { page: PageSpreadBox; localX: number; localY: number } => {
+      const centerSpreadX = b.spreadLeft + b.widthPt / 2;
+      let target = parsedPages[0];
+      for (const p of parsedPages) {
+        if (centerSpreadX >= p.spreadLeft && centerSpreadX <= p.spreadRight) {
+          target = p;
+          break;
+        }
+      }
+      const localX = Math.round((b.spreadLeft - target.spreadLeft) * PT_TO_MM * 10) / 10;
+      const localY = Math.round((b.spreadTop - target.spreadTop) * PT_TO_MM * 10) / 10;
+      return { page: target, localX, localY };
+    };
 
     // Parse Text Frames
     const textFrameTags = extractXmlTags(xml, 'TextFrame');
     for (let tfIdx = 0; tfIdx < textFrameTags.length; tfIdx++) {
       const tfXml = textFrameTags[tfIdx];
-      const bounds = parseGeometricBounds(tfXml);
+      const b = parseElementSpreadBounds(tfXml);
+      const { page: targetPage, localX, localY } = findTargetPage(b);
+
       const parentStory = extractXmlAttr(tfXml, 'ParentStory');
       const storyData = parentStory ? storiesMap.get(parentStory) : null;
 
@@ -262,33 +485,28 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array): Pr
       const colGutterPt = parseFloat(extractXmlAttr(tfXml, 'TextColumnGutter') || '12');
       const colGutterMm = !isNaN(colGutterPt) ? Math.round(colGutterPt * PT_TO_MM) : 4;
 
-      // In facing spreads, normalize x coordinate to local page
-      let targetPage = pages[0];
-      let localX = bounds.x;
-      if (pages.length > 1 && localX >= pageWidthMm) {
-        targetPage = pages[1];
-        localX -= pageWidthMm;
-      }
+      const widthMm = Math.max(5, Math.round(b.widthPt * PT_TO_MM * 10) / 10);
+      const heightMm = Math.max(5, Math.round(b.heightPt * PT_TO_MM * 10) / 10);
 
       const textEl: TextElement = {
         id: `idml-text-${sIdx}-${tfIdx}`,
         type: 'text',
         pageId: targetPage.id,
         x: localX,
-        y: bounds.y,
-        width: bounds.width,
-        height: bounds.height,
+        y: localY,
+        width: widthMm,
+        height: heightMm,
         rotation: 0,
         opacity: 1,
         zIndex: 10 + tfIdx,
         locked: false,
         text: storyData ? storyData.text : 'Text Frame',
-        fontFamily: 'serif',
-        fontSizePt: 10,
-        lineHeight: 1.3,
+        fontFamily: storyData?.fontFamily || 'serif',
+        fontSizePt: storyData?.fontSizePt || 10,
+        lineHeight: storyData?.lineHeight || 1.3,
         letterSpacingPt: 0,
         color: '#1a1a1a',
-        alignment: 'left',
+        alignment: storyData?.alignment || 'left',
         columns: cols,
         columnGutterMm,
         backgroundColor: 'transparent',
@@ -310,13 +528,11 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array): Pr
     const rectTags = extractXmlTags(xml, 'Rectangle');
     for (let rIdx = 0; rIdx < rectTags.length; rIdx++) {
       const rXml = rectTags[rIdx];
-      const bounds = parseGeometricBounds(rXml);
-      let targetPage = pages[0];
-      let localX = bounds.x;
-      if (pages.length > 1 && localX >= pageWidthMm) {
-        targetPage = pages[1];
-        localX -= pageWidthMm;
-      }
+      const b = parseElementSpreadBounds(rXml);
+      const { page: targetPage, localX, localY } = findTargetPage(b);
+
+      const widthMm = Math.max(5, Math.round(b.widthPt * PT_TO_MM * 10) / 10);
+      const heightMm = Math.max(5, Math.round(b.heightPt * PT_TO_MM * 10) / 10);
 
       const isImage = rXml.includes('<Image') || rXml.includes('Image/');
       if (isImage) {
@@ -325,14 +541,14 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array): Pr
           type: 'image',
           pageId: targetPage.id,
           x: localX,
-          y: bounds.y,
-          width: bounds.width,
-          height: bounds.height,
+          y: localY,
+          width: widthMm,
+          height: heightMm,
           rotation: 0,
           opacity: 1,
           zIndex: 5 + rIdx,
           locked: false,
-          src: '', // InDesign linked image placeholder
+          src: '',
           fitMode: 'fill',
           borderColor: '#111111',
           borderWidthMm: 0,
@@ -345,9 +561,9 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array): Pr
           type: 'shape',
           pageId: targetPage.id,
           x: localX,
-          y: bounds.y,
-          width: bounds.width,
-          height: bounds.height,
+          y: localY,
+          width: widthMm,
+          height: heightMm,
           rotation: 0,
           opacity: 1,
           zIndex: 4 + rIdx,
@@ -366,22 +582,20 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array): Pr
     const ovalTags = extractXmlTags(xml, 'Oval');
     for (let oIdx = 0; oIdx < ovalTags.length; oIdx++) {
       const oXml = ovalTags[oIdx];
-      const bounds = parseGeometricBounds(oXml);
-      let targetPage = pages[0];
-      let localX = bounds.x;
-      if (pages.length > 1 && localX >= pageWidthMm) {
-        targetPage = pages[1];
-        localX -= pageWidthMm;
-      }
+      const b = parseElementSpreadBounds(oXml);
+      const { page: targetPage, localX, localY } = findTargetPage(b);
+
+      const widthMm = Math.max(5, Math.round(b.widthPt * PT_TO_MM * 10) / 10);
+      const heightMm = Math.max(5, Math.round(b.heightPt * PT_TO_MM * 10) / 10);
 
       const ovalEl: ShapeElement = {
         id: `idml-oval-${sIdx}-${oIdx}`,
         type: 'shape',
         pageId: targetPage.id,
         x: localX,
-        y: bounds.y,
-        width: bounds.width,
-        height: bounds.height,
+        y: localY,
+        width: widthMm,
+        height: heightMm,
         rotation: 0,
         opacity: 1,
         zIndex: 4 + oIdx,
@@ -403,7 +617,6 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array): Pr
     });
   }
 
-  // If no spreads were found in IDML, provide clean default spread
   if (spreads.length === 0) {
     spreads.push({
       id: 'idml-spread-0',

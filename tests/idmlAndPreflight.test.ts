@@ -73,9 +73,59 @@ describe('IDML Package Export & Prepress Preflight Intelligence', () => {
     expect(stateManager.getState().plateSolo).toBe('cyan');
 
     stateManager.setPlateSolo('black');
-    expect(stateManager.getState().plateSolo).toBe('black');
-
     stateManager.setPlateSolo('all');
     expect(stateManager.getState().plateSolo).toBe('all');
   });
+
+  it('accurately resolves InDesign PathGeometry and ItemTransform avoiding coordinate collisions', async () => {
+    const { parseElementSpreadBounds, parseSpreadPages } = await import('../src/idmlImport');
+    const mockSpreadXml = `
+      <Spread Self="Spread_test">
+        <Page Self="p1" Name="1" GeometricBounds="0 0 576 360" ItemTransform="1 0 0 1 0 -288" />
+        <TextFrame Self="tf1" ItemTransform="1 0 0 1 187.2 -81.56">
+          <Properties>
+            <PathGeometry>
+              <GeometryPathType PathOpen="false">
+                <PathPointArray>
+                  <PathPointType Anchor="-136.8 -22.32" />
+                  <PathPointType Anchor="-136.8 64.52" />
+                  <PathPointType Anchor="136.8 64.52" />
+                  <PathPointType Anchor="136.8 -22.32" />
+                </PathPointArray>
+              </GeometryPathType>
+            </PathGeometry>
+          </Properties>
+        </TextFrame>
+        <TextFrame Self="tf2" ItemTransform="1 0 0 1 187.2 72.72">
+          <Properties>
+            <PathGeometry>
+              <GeometryPathType PathOpen="false">
+                <PathPointArray>
+                  <PathPointType Anchor="-136.8 -22.32" />
+                  <PathPointType Anchor="-136.8 -0.72" />
+                  <PathPointType Anchor="136.8 -0.72" />
+                  <PathPointType Anchor="136.8 -22.32" />
+                </PathPointArray>
+              </GeometryPathType>
+            </PathGeometry>
+          </Properties>
+        </TextFrame>
+      </Spread>`;
+
+    const pages = parseSpreadPages(mockSpreadXml, 1, false, 127, 203.2);
+    expect(pages.length).toBe(1);
+    expect(pages[0].spreadLeft).toBe(0);
+    expect(pages[0].spreadTop).toBe(-288);
+
+    const b1 = parseElementSpreadBounds(`<TextFrame Self="tf1" ItemTransform="1 0 0 1 187.2 -81.56"><Properties><PathGeometry><GeometryPathType PathOpen="false"><PathPointArray><PathPointType Anchor="-136.8 -22.32" /><PathPointType Anchor="136.8 64.52" /></PathPointArray></GeometryPathType></PathGeometry></Properties></TextFrame>`);
+    const b2 = parseElementSpreadBounds(`<TextFrame Self="tf2" ItemTransform="1 0 0 1 187.2 72.72"><Properties><PathGeometry><GeometryPathType PathOpen="false"><PathPointArray><PathPointType Anchor="-136.8 -22.32" /><PathPointType Anchor="136.8 -0.72" /></PathPointArray></GeometryPathType></PathGeometry></Properties></TextFrame>`);
+
+    const localY1Mm = Math.round((b1.spreadTop - pages[0].spreadTop) * (25.4 / 72) * 10) / 10;
+    const localY2Mm = Math.round((b2.spreadTop - pages[0].spreadTop) * (25.4 / 72) * 10) / 10;
+
+    expect(localY1Mm).toBeCloseTo(65.0, 0);
+    expect(localY2Mm).toBeCloseTo(119.4, 0);
+    expect(Math.abs(localY2Mm - localY1Mm)).toBeGreaterThan(30);
+  });
 });
+

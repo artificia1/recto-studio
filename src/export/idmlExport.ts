@@ -157,17 +157,41 @@ ${styleDefs}
   </Story>
 </idPkg:Story>`;
 
-        elementXmls.push(`      <TextFrame Self="TextFrame_${el.id}" ParentStory="${storyId}" ContentType="TextType" GeometricBounds="${boundsStr}">
+        const pathGeometry = `
+          <PathGeometry>
+            <GeometryPathType PathOpen="false">
+              <PathPointArray>
+                <PathPointType Anchor="${x1Pt} ${y1Pt}" LeftDirection="${x1Pt} ${y1Pt}" RightDirection="${x1Pt} ${y1Pt}" />
+                <PathPointType Anchor="${x2Pt} ${y1Pt}" LeftDirection="${x2Pt} ${y1Pt}" RightDirection="${x2Pt} ${y1Pt}" />
+                <PathPointType Anchor="${x2Pt} ${y2Pt}" LeftDirection="${x2Pt} ${y2Pt}" RightDirection="${x2Pt} ${y2Pt}" />
+                <PathPointType Anchor="${x1Pt} ${y2Pt}" LeftDirection="${x1Pt} ${y2Pt}" RightDirection="${x1Pt} ${y2Pt}" />
+              </PathPointArray>
+            </GeometryPathType>
+          </PathGeometry>`;
+
+        elementXmls.push(`      <TextFrame Self="TextFrame_${el.id}" ParentStory="${storyId}" ContentType="TextType" ItemTransform="1 0 0 1 0 0" GeometricBounds="${boundsStr}">
         <Properties>
-          <GeometricBounds>${boundsStr}</GeometricBounds>
+          <GeometricBounds>${boundsStr}</GeometricBounds>${pathGeometry}
         </Properties>
         <TextFramePreference TextColumnCount="${textEl.columns || 1}" TextColumnGutter="${Math.round((textEl.columnGutterMm || 4) * MM_TO_PT * 100) / 100}" />
       </TextFrame>`);
       } else if (el.type === 'image') {
         const imgEl = el as ImageElement;
-        elementXmls.push(`      <Rectangle Self="Rectangle_${el.id}" ContentType="GraphicType" GeometricBounds="${boundsStr}">
+        const pathGeometry = `
+          <PathGeometry>
+            <GeometryPathType PathOpen="false">
+              <PathPointArray>
+                <PathPointType Anchor="${x1Pt} ${y1Pt}" LeftDirection="${x1Pt} ${y1Pt}" RightDirection="${x1Pt} ${y1Pt}" />
+                <PathPointType Anchor="${x2Pt} ${y1Pt}" LeftDirection="${x2Pt} ${y1Pt}" RightDirection="${x2Pt} ${y1Pt}" />
+                <PathPointType Anchor="${x2Pt} ${y2Pt}" LeftDirection="${x2Pt} ${y2Pt}" RightDirection="${x2Pt} ${y2Pt}" />
+                <PathPointType Anchor="${x1Pt} ${y2Pt}" LeftDirection="${x1Pt} ${y2Pt}" RightDirection="${x1Pt} ${y2Pt}" />
+              </PathPointArray>
+            </GeometryPathType>
+          </PathGeometry>`;
+
+        elementXmls.push(`      <Rectangle Self="Rectangle_${el.id}" ContentType="GraphicType" ItemTransform="1 0 0 1 0 0" GeometricBounds="${boundsStr}">
         <Properties>
-          <GeometricBounds>${boundsStr}</GeometricBounds>
+          <GeometricBounds>${boundsStr}</GeometricBounds>${pathGeometry}
         </Properties>
         <Image Self="Image_${el.id}">
           <Properties>
@@ -178,16 +202,28 @@ ${styleDefs}
       </Rectangle>`);
       } else if (el.type === 'shape') {
         const shape = el as ShapeElement;
+        const pathGeometry = `
+          <PathGeometry>
+            <GeometryPathType PathOpen="false">
+              <PathPointArray>
+                <PathPointType Anchor="${x1Pt} ${y1Pt}" LeftDirection="${x1Pt} ${y1Pt}" RightDirection="${x1Pt} ${y1Pt}" />
+                <PathPointType Anchor="${x2Pt} ${y1Pt}" LeftDirection="${x2Pt} ${y1Pt}" RightDirection="${x2Pt} ${y1Pt}" />
+                <PathPointType Anchor="${x2Pt} ${y2Pt}" LeftDirection="${x2Pt} ${y2Pt}" RightDirection="${x2Pt} ${y2Pt}" />
+                <PathPointType Anchor="${x1Pt} ${y2Pt}" LeftDirection="${x1Pt} ${y2Pt}" RightDirection="${x1Pt} ${y2Pt}" />
+              </PathPointArray>
+            </GeometryPathType>
+          </PathGeometry>`;
+
         if (shape.shapeKind === 'ellipse') {
-          elementXmls.push(`      <Oval Self="Oval_${el.id}" ContentType="Unassigned" GeometricBounds="${boundsStr}">
+          elementXmls.push(`      <Oval Self="Oval_${el.id}" ContentType="Unassigned" ItemTransform="1 0 0 1 0 0" GeometricBounds="${boundsStr}">
         <Properties>
-          <GeometricBounds>${boundsStr}</GeometricBounds>
+          <GeometricBounds>${boundsStr}</GeometricBounds>${pathGeometry}
         </Properties>
       </Oval>`);
         } else {
-          elementXmls.push(`      <Rectangle Self="Rectangle_${el.id}" ContentType="Unassigned" GeometricBounds="${boundsStr}">
+          elementXmls.push(`      <Rectangle Self="Rectangle_${el.id}" ContentType="Unassigned" ItemTransform="1 0 0 1 0 0" GeometricBounds="${boundsStr}">
         <Properties>
-          <GeometricBounds>${boundsStr}</GeometricBounds>
+          <GeometricBounds>${boundsStr}</GeometricBounds>${pathGeometry}
         </Properties>
       </Rectangle>`);
         }
