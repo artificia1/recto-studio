@@ -163,12 +163,21 @@ export async function exportDocumentToPdf(
           } else if (mEl.type === 'text') {
             const textEl = mEl as TextElement;
             const evalText = stateManager.evaluateTokens(textEl.text, page.pageNumber);
-            applyCmykTextColor(doc, textEl.color || '#000000');
+            applyCmykTextColor(doc, textEl.color || '#000000', overprintBlack);
             doc.setFontSize(textEl.fontSizePt);
             applyFont(doc, textEl.fontFamily);
-            doc.text(evalText, mX, mY + (textEl.fontSizePt * 0.3527), {
+            let mTargetX = mX;
+            let mAlign: 'left' | 'center' | 'right' = 'left';
+            if (textEl.alignment === 'center') {
+              mTargetX = mX + textEl.width / 2;
+              mAlign = 'center';
+            } else if (textEl.alignment === 'right') {
+              mTargetX = mX + textEl.width;
+              mAlign = 'right';
+            }
+            doc.text(evalText, mTargetX, mY + (textEl.fontSizePt * 0.3527), {
               maxWidth: textEl.width,
-              align: textEl.alignment === 'right' ? 'right' : (textEl.alignment === 'center' ? 'center' : 'left'),
+              align: mAlign,
             });
           }
         }
@@ -224,44 +233,71 @@ export async function exportDocumentToPdf(
           doc.rect(elX, elY, text.width, text.height, 'S');
         }
 
-        applyCmykTextColor(doc, text.color || '#000000');
+        applyCmykTextColor(doc, text.color || '#000000', overprintBlack);
         doc.setFontSize(text.fontSizePt);
         applyFont(doc, text.fontFamily);
 
-        const padding = text.paddingMm || 2;
-        const availableWidth = text.width - (padding * 2);
+        const padding = text.paddingMm ?? 0;
+        const availableWidth = Math.max(2, text.width - (padding * 2));
 
-        if (text.columns > 1) {
-          const colGutter = text.columnGutterMm || 5;
-          const colWidth = (availableWidth - (colGutter * (text.columns - 1))) / text.columns;
-          const paragraphs = text.text.split('\n');
-          const linesPerCol = Math.ceil(paragraphs.length / text.columns);
-          for (let c = 0; c < text.columns; c++) {
-            const colText = paragraphs.slice(c * linesPerCol, (c + 1) * linesPerCol).join('\n');
-            const colX = elX + padding + (c * (colWidth + colGutter));
-            doc.text(colText, colX, elY + padding + (text.fontSizePt * 0.3527), {
-              maxWidth: colWidth,
-              align: text.alignment === 'justify' ? 'justify' : text.alignment,
-            });
+        const footnotes = stateManager.getFootnotesForElement(text.id);
+        const fnSettings = state.settings.footnoteSettings || {
+          numberingStyle: 'superscript',
+          separatorRuleWidthMm: 30,
+          separatorRuleThicknessPt: 0.5,
+          fontSizePt: 8,
+        };
+        const fnFontSizePt = fnSettings.fontSizePt || 8;
+        const fnLineHeightMm = fnFontSizePt * 0.3527 * 1.35;
+        const totalFnHtMm = footnotes.length > 0 ? (footnotes.length * fnLineHeightMm) + 3 : 0;
+        const availableHeight = Math.max(0, text.height - (padding * 2) - totalFnHtMm);
+
+        const colCount = Math.max(1, text.columns || 1);
+        const colGutter = text.columnGutterMm || 4;
+        const colWidth = Math.max(2, (availableWidth - (colGutter * (colCount - 1))) / colCount);
+
+        const lineHeight = text.lineHeight || 1.3;
+        if (typeof (doc as any).setLineHeightFactor === 'function') {
+          (doc as any).setLineHeightFactor(lineHeight);
+        }
+        const lineSpacingMm = (text.fontSizePt * lineHeight * 25.4) / 72;
+        const maxLinesPerCol = Math.max(1, Math.floor((availableHeight - (text.fontSizePt * 0.3527)) / lineSpacingMm) + 1);
+
+        const evalText = stateManager.evaluateTokens(text.text || '', page.pageNumber);
+        const allWrappedLines: string[] = doc.splitTextToSize(evalText, colWidth);
+        const totalCapacity = colCount * maxLinesPerCol;
+        const visibleLines = allWrappedLines.slice(0, totalCapacity);
+
+        for (let c = 0; c < colCount; c++) {
+          const colLines = visibleLines.slice(c * maxLinesPerCol, (c + 1) * maxLinesPerCol);
+          if (colLines.length === 0) continue;
+
+          const colX = elX + padding + (c * (colWidth + colGutter));
+          const startY = elY + padding + (text.fontSizePt * 0.3527);
+
+          let textX = colX;
+          let alignOpt: 'left' | 'center' | 'right' | 'justify' = 'left';
+          if (text.alignment === 'center') {
+            textX = colX + colWidth / 2;
+            alignOpt = 'center';
+          } else if (text.alignment === 'right') {
+            textX = colX + colWidth;
+            alignOpt = 'right';
+          } else if (text.alignment === 'justify') {
+            textX = colX;
+            alignOpt = 'justify';
+          } else {
+            textX = colX;
+            alignOpt = 'left';
           }
-        } else {
-          doc.text(text.text, elX + padding, elY + padding + (text.fontSizePt * 0.3527), {
-            maxWidth: availableWidth,
-            align: text.alignment === 'justify' ? 'justify' : text.alignment,
+
+          doc.text(colLines, textX, startY, {
+            maxWidth: colWidth,
+            align: alignOpt,
           });
         }
 
-        const footnotes = stateManager.getFootnotesForElement(text.id);
         if (footnotes.length > 0) {
-          const fnSettings = state.settings.footnoteSettings || {
-            numberingStyle: 'superscript',
-            separatorRuleWidthMm: 30,
-            separatorRuleThicknessPt: 0.5,
-            fontSizePt: 8,
-          };
-          const fnFontSizePt = fnSettings.fontSizePt || 8;
-          const fnLineHeightMm = fnFontSizePt * 0.3527 * 1.35;
-          const totalFnHtMm = (footnotes.length * fnLineHeightMm) + 3;
           const fnStartY = elY + text.height - padding - totalFnHtMm + 1;
           const ruleWidthMm = Math.min(availableWidth * 0.45, fnSettings.separatorRuleWidthMm || 30);
 

@@ -147,7 +147,37 @@ export function parseElementSpreadBounds(
   const transStr = extractXmlAttr(elXml, 'ItemTransform');
   const [a, b, c, d, tx, ty] = parseTransform(transStr);
 
-  // Check PathGeometry anchors first
+  let geomBoundsParsed: { spreadLeft: number; spreadTop: number; widthPt: number; heightPt: number } | null = null;
+  let geomStr = extractXmlAttr(elXml, 'GeometricBounds');
+  if (!geomStr) {
+    const tagMatch = elXml.match(/<GeometricBounds\b[^>]*>([\s\S]*?)<\/GeometricBounds>/i);
+    if (tagMatch) {
+      geomStr = tagMatch[1].replace(/<[^>]+>/g, ' ').trim();
+    }
+  }
+
+  if (geomStr) {
+    const parts = geomStr.trim().split(/\s+/).map(Number);
+    if (parts.length >= 4 && !parts.some(isNaN)) {
+      const [y1, x1, y2, x2] = parts;
+      const wx1 = a * x1 + c * y1 + tx;
+      const wy1 = b * x1 + d * y1 + ty;
+      const wx2 = a * x2 + c * y2 + tx;
+      const wy2 = b * x2 + d * y2 + ty;
+      const minX = Math.min(wx1, wx2);
+      const maxX = Math.max(wx1, wx2);
+      const minY = Math.min(wy1, wy2);
+      const maxY = Math.max(wy1, wy2);
+      geomBoundsParsed = {
+        spreadLeft: minX,
+        spreadTop: minY,
+        widthPt: Math.max(10, maxX - minX),
+        heightPt: Math.max(10, maxY - minY),
+      };
+    }
+  }
+
+  // Check PathGeometry anchors
   const pathMatches = elXml.match(/<PathPointType\b[^>]*Anchor="([^"]+)"/gi);
   if (pathMatches && pathMatches.length > 0) {
     const worldXs: number[] = [];
@@ -171,42 +201,29 @@ export function parseElementSpreadBounds(
       const maxX = Math.max(...worldXs);
       const minY = Math.min(...worldYs);
       const maxY = Math.max(...worldYs);
+      const pathW = Math.max(10, maxX - minX);
+      const pathH = Math.max(10, maxY - minY);
+
+      if (geomBoundsParsed) {
+        return {
+          spreadLeft: minX,
+          spreadTop: minY,
+          widthPt: Math.max(pathW, geomBoundsParsed.widthPt),
+          heightPt: Math.max(pathH, geomBoundsParsed.heightPt),
+        };
+      }
+
       return {
         spreadLeft: minX,
         spreadTop: minY,
-        widthPt: Math.max(10, maxX - minX),
-        heightPt: Math.max(10, maxY - minY),
+        widthPt: pathW,
+        heightPt: pathH,
       };
     }
   }
 
-  let geomStr = extractXmlAttr(elXml, 'GeometricBounds');
-  if (!geomStr) {
-    const tagMatch = elXml.match(/<GeometricBounds\b[^>]*>([\s\S]*?)<\/GeometricBounds>/i);
-    if (tagMatch) {
-      geomStr = tagMatch[1].replace(/<[^>]+>/g, ' ').trim();
-    }
-  }
-
-  if (geomStr) {
-    const parts = geomStr.trim().split(/\s+/).map(Number);
-    if (parts.length >= 4 && !parts.some(isNaN)) {
-      const [y1, x1, y2, x2] = parts;
-      const wx1 = a * x1 + c * y1 + tx;
-      const wy1 = b * x1 + d * y1 + ty;
-      const wx2 = a * x2 + c * y2 + tx;
-      const wy2 = b * x2 + d * y2 + ty;
-      const minX = Math.min(wx1, wx2);
-      const maxX = Math.max(wx1, wx2);
-      const minY = Math.min(wy1, wy2);
-      const maxY = Math.max(wy1, wy2);
-      return {
-        spreadLeft: minX,
-        spreadTop: minY,
-        widthPt: Math.max(10, maxX - minX),
-        heightPt: Math.max(10, maxY - minY),
-      };
-    }
+  if (geomBoundsParsed) {
+    return geomBoundsParsed;
   }
 
   return {
@@ -226,6 +243,55 @@ export function parseGeometricBounds(xmlOrBoundsStr: string | null): { x: number
     width: Math.round(bounds.widthPt * PT_TO_MM * 10) / 10,
     height: Math.round(bounds.heightPt * PT_TO_MM * 10) / 10,
   };
+}
+
+function distributeStoryAcrossFrames(chain: TextElement[], fullStoryText: string) {
+  if (chain.length === 0) return;
+  const headFrame = chain[0];
+  headFrame.rawStoryText = fullStoryText;
+
+  if (chain.length === 1) {
+    headFrame.text = fullStoryText;
+    return;
+  }
+
+  const words = fullStoryText.split(/\s+/).filter(Boolean);
+  let wordIdx = 0;
+
+  for (let i = 0; i < chain.length; i++) {
+    const frame = chain[i];
+    if (wordIdx >= words.length) {
+      frame.text = '';
+      continue;
+    }
+
+    const isLastFrame = (i === chain.length - 1);
+    if (isLastFrame) {
+      frame.text = words.slice(wordIdx).join(' ');
+      wordIdx = words.length;
+    } else {
+      const padding = frame.paddingMm || 0;
+      const availHeightMm = Math.max(10, frame.height - (padding * 2));
+      const availWidthMm = Math.max(10, frame.width - (padding * 2));
+      const fontSizeMm = (frame.fontSizePt * 25.4) / 72;
+      const lineSpacingMm = fontSizeMm * (frame.lineHeight || 1.3);
+      const colCount = Math.max(1, frame.columns || 1);
+      const gutterMm = frame.columnGutterMm || 4;
+      const singleColWidthMm = Math.max(10, (availWidthMm - (gutterMm * (colCount - 1))) / colCount);
+
+      const linesPerCol = Math.max(1, Math.floor(availHeightMm / lineSpacingMm));
+      const totalLines = linesPerCol * colCount;
+
+      const avgCharWidthMm = Math.max(1.2, fontSizeMm * 0.48);
+      const charsPerLine = Math.max(15, Math.floor(singleColWidthMm / avgCharWidthMm));
+      const wordsPerLine = Math.max(3, Math.floor(charsPerLine / 5.2));
+      const frameWordCapacity = Math.max(5, totalLines * wordsPerLine);
+
+      const frameWords = words.slice(wordIdx, wordIdx + frameWordCapacity);
+      frame.text = frameWords.join(' ');
+      wordIdx += frameWordCapacity;
+    }
+  }
 }
 
 export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array): Promise<ProjectState> {
@@ -488,8 +554,20 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array): Pr
       const widthMm = Math.max(5, Math.round(b.widthPt * PT_TO_MM * 10) / 10);
       const heightMm = Math.max(5, Math.round(b.heightPt * PT_TO_MM * 10) / 10);
 
-      const textEl: TextElement = {
-        id: `idml-text-${sIdx}-${tfIdx}`,
+      const selfId = extractXmlAttr(tfXml, 'Self');
+      const elId = selfId ? `idml-${selfId}` : `idml-text-${sIdx}-${tfIdx}`;
+
+      let paddingMm = 0;
+      const insetMatch = tfXml.match(/(?:TextInset|InsetSpacing)="([^"]+)"/i);
+      if (insetMatch) {
+        const insetVals = insetMatch[1].trim().split(/\s+/).map(Number);
+        if (insetVals.length > 0 && !isNaN(insetVals[0])) {
+          paddingMm = Math.round(insetVals[0] * PT_TO_MM * 10) / 10;
+        }
+      }
+
+      const textEl: TextElement & { parentStoryId?: string } = {
+        id: elId,
         type: 'text',
         pageId: targetPage.id,
         x: localX,
@@ -512,14 +590,18 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array): Pr
         backgroundColor: 'transparent',
         borderColor: 'transparent',
         borderWidthMm: 0,
-        paddingMm: 2,
+        paddingMm,
         paragraphStyleId: storyData?.styleId,
       };
 
+      if (parentStory) {
+        (textEl as any).parentStoryId = parentStory;
+      }
+
       const nextFrame = extractXmlAttr(tfXml, 'NextTextFrame');
       const prevFrame = extractXmlAttr(tfXml, 'PreviousTextFrame');
-      if (nextFrame && nextFrame !== 'kInvalidRef') textEl.nextFrameId = nextFrame;
-      if (prevFrame && prevFrame !== 'kInvalidRef') textEl.prevFrameId = prevFrame;
+      if (nextFrame && nextFrame !== 'kInvalidRef') textEl.nextFrameId = `idml-${nextFrame}`;
+      if (prevFrame && prevFrame !== 'kInvalidRef') textEl.prevFrameId = `idml-${prevFrame}`;
 
       spreadElements.push(textEl);
     }
@@ -615,6 +697,65 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array): Pr
       pages,
       elements: spreadElements,
     });
+  }
+
+  // Post-Process Story Flow and Text Threading across Spreads
+  const allTextElements: (TextElement & { parentStoryId?: string })[] = [];
+  for (const sp of spreads) {
+    for (const el of sp.elements) {
+      if (el.type === 'text') allTextElements.push(el as TextElement & { parentStoryId?: string });
+    }
+  }
+
+  const textElementMap = new Map<string, TextElement & { parentStoryId?: string }>();
+  for (const el of allTextElements) {
+    textElementMap.set(el.id, el);
+  }
+
+  const processedFrameIds = new Set<string>();
+
+  // 1. Process explicitly threaded chains (NextTextFrame / PreviousTextFrame)
+  for (const el of allTextElements) {
+    if (processedFrameIds.has(el.id)) continue;
+    const isHead = !el.prevFrameId || !textElementMap.has(el.prevFrameId);
+    if (isHead && el.nextFrameId && textElementMap.has(el.nextFrameId)) {
+      const chain: TextElement[] = [el];
+      processedFrameIds.add(el.id);
+      let curr = el;
+      while (curr.nextFrameId && textElementMap.has(curr.nextFrameId)) {
+        const next = textElementMap.get(curr.nextFrameId)!;
+        if (processedFrameIds.has(next.id)) break;
+        processedFrameIds.add(next.id);
+        chain.push(next);
+        curr = next;
+      }
+
+      const fullStory = el.rawStoryText || el.text;
+      distributeStoryAcrossFrames(chain, fullStory);
+    }
+  }
+
+  // 2. Group frames that share parentStoryId if not already chained
+  const storyToElements = new Map<string, (TextElement & { parentStoryId?: string })[]>();
+  for (const el of allTextElements) {
+    if (processedFrameIds.has(el.id)) continue;
+    const storyId = el.parentStoryId;
+    if (storyId) {
+      if (!storyToElements.has(storyId)) storyToElements.set(storyId, []);
+      storyToElements.get(storyId)!.push(el);
+    }
+  }
+
+  for (const [storyId, frames] of storyToElements.entries()) {
+    if (frames.length > 1) {
+      for (let i = 0; i < frames.length; i++) {
+        processedFrameIds.add(frames[i].id);
+        if (i < frames.length - 1) frames[i].nextFrameId = frames[i + 1].id;
+        if (i > 0) frames[i].prevFrameId = frames[i - 1].id;
+      }
+      const fullStory = frames[0].rawStoryText || frames[0].text;
+      distributeStoryAcrossFrames(frames, fullStory);
+    }
   }
 
   if (spreads.length === 0) {

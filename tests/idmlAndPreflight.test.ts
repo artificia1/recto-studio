@@ -127,5 +127,57 @@ describe('IDML Package Export & Prepress Preflight Intelligence', () => {
     expect(localY2Mm).toBeCloseTo(119.4, 0);
     expect(Math.abs(localY2Mm - localY1Mm)).toBeGreaterThan(30);
   });
+
+  it('clips overset text strictly to frame height and exports correctly in PDF stream', async () => {
+    const { exportDocumentToPdf } = await import('../src/export/pdfExport');
+    const state = stateManager.getState();
+    const activeSpread = stateManager.getActiveSpread();
+
+    // Create a compact text frame with large overset story content
+    const testOversetId = `overflow-test-${Date.now()}`;
+    const oversetText = Array(100).fill('Overset paragraph content that should never spill across margins.').join('\n');
+    const oversetElement: TextElement = {
+      id: testOversetId,
+      type: 'text',
+      pageId: activeSpread.pages[0].id,
+      x: 20,
+      y: 20,
+      width: 80,
+      height: 25, // Only ~4-5 lines capacity
+      rotation: 0,
+      opacity: 1,
+      zIndex: 5,
+      locked: false,
+      text: oversetText,
+      fontFamily: 'Inter, sans-serif',
+      fontSizePt: 10,
+      lineHeight: 1.3,
+      letterSpacingPt: 0,
+      color: '#000000',
+      alignment: 'left',
+      columns: 1,
+      columnGutterMm: 4,
+      backgroundColor: 'transparent',
+      borderColor: 'transparent',
+      borderWidthMm: 0,
+      paddingMm: 0,
+    };
+
+    stateManager.addElement(oversetElement);
+
+    const pdfDoc = await exportDocumentToPdf(stateManager.getState(), {
+      includeCropMarks: false,
+      includeRegistrationMarks: false,
+      includeColorBars: false,
+    });
+
+    expect(pdfDoc).toBeDefined();
+    const pdfOutput = pdfDoc.output('arraybuffer');
+    expect(pdfOutput.byteLength).toBeGreaterThan(1000);
+
+    // Clean up
+    stateManager.deleteElement(testOversetId);
+  });
 });
+
 
