@@ -2893,8 +2893,21 @@ assert.strictEqual(Boolean(stateManager.getState().settings.facingPages), !facin
 
 console.log('✓ Dynamic Smart Magnetic Guides, Find/Change GREP Engine, and Layout Polish verified.');
 
+// --- Suite 49: Blank Book Generation & Minimalist Studio Identity ---
+console.log('\n--- Suite 49: Blank Book Generation & Minimalist Studio Identity ---');
+stateManager.createBlankProject('Book-Trade-6x9', 'New Blank Novel Document', true);
+const blankState = stateManager.getState();
+assert.strictEqual(blankState.settings.title, 'New Blank Novel Document', 'Title must match');
+assert.strictEqual(blankState.settings.preset, 'Book-Trade-6x9', 'Preset must match');
+assert.strictEqual(blankState.spreads.length, 1, 'Must have exactly 1 spread');
+assert.strictEqual(blankState.spreads[0].elements.length, 0, 'Initial spread must have 0 elements');
+assert.strictEqual(blankState.selectedElementId, null, 'No element selected');
+assert.strictEqual(blankState.selectedElementIds.length, 0, 'No elements selected');
+assert.strictEqual(blankState.spreads[0].pages[0].pageNumber, 1, 'First page is page 1');
+console.log('✓ Blank Book Generation and Pristine Canvas Initialization verified.');
+
 console.log('\n=============================================');
-console.log('ALL 48 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
+console.log('ALL 49 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
 console.log('=============================================\n');
 
 

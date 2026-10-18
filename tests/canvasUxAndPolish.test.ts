@@ -220,5 +220,26 @@ describe('Canvas UX & Layout Polish', () => {
       stateManager.toggleFacingPages();
       expect(Boolean(stateManager.getState().settings.facingPages)).toBe(!origFacing);
     });
+
+    it('creates a pristine blank document with zero elements and custom presets', () => {
+      // 1. Create blank A4 project
+      stateManager.createBlankProject('A4', 'Blank Portfolio Book', true);
+      const state = stateManager.getState();
+      expect(state.settings.title).toBe('Blank Portfolio Book');
+      expect(state.settings.preset).toBe('A4');
+      expect(state.spreads.length).toBe(1);
+      expect(state.spreads[0].elements.length).toBe(0);
+      expect(state.selectedElementId).toBeNull();
+      expect(state.selectedElementIds.length).toBe(0);
+
+      // 2. Create blank 6x9 Novel project
+      stateManager.createBlankProject('Book-Trade-6x9', 'My Debut Novel', true);
+      const novelState = stateManager.getState();
+      expect(novelState.settings.preset).toBe('Book-Trade-6x9');
+      expect(novelState.settings.widthMm).toBeCloseTo(152.4, 1);
+      expect(novelState.settings.heightMm).toBeCloseTo(228.6, 1);
+      expect(novelState.spreads[0].elements.length).toBe(0);
+      expect(novelState.spreads[0].pages[0].pageNumber).toBe(1);
+    });
   });
 });

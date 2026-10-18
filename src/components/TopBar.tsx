@@ -44,9 +44,11 @@ export function TopBar({ state, onOpenFindChange, onOpenQuickApply }: TopBarProp
   const [copiedLink, setCopiedLink] = useState(false);
 
   const [csvText, setCsvText] = useState('');
-  const [showImportMenu, setShowImportMenu] = useState(false);
+  const [showNewMenu, setShowNewMenu] = useState(false);
+  const [showFileMenu, setShowFileMenu] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
-  const importMenuRef = useRef<HTMLDivElement>(null);
+  const newMenuRef = useRef<HTMLDivElement>(null);
+  const fileMenuRef = useRef<HTMLDivElement>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const idmlInputRef = useRef<HTMLInputElement>(null);
@@ -55,8 +57,11 @@ export function TopBar({ state, onOpenFindChange, onOpenQuickApply }: TopBarProp
 
   useEffect(() => {
     const handleOutsideClick = (e: MouseEvent) => {
-      if (importMenuRef.current && !importMenuRef.current.contains(e.target as Node)) {
-        setShowImportMenu(false);
+      if (newMenuRef.current && !newMenuRef.current.contains(e.target as Node)) {
+        setShowNewMenu(false);
+      }
+      if (fileMenuRef.current && !fileMenuRef.current.contains(e.target as Node)) {
+        setShowFileMenu(false);
       }
       if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
         setShowExportMenu(false);
@@ -108,6 +113,14 @@ export function TopBar({ state, onOpenFindChange, onOpenQuickApply }: TopBarProp
       stateManager.setPan(0, 0);
     } else {
       stateManager.setZoom(parseFloat(val));
+    }
+  };
+
+  const handleCreateBlank = (preset: PagePreset = 'A4', facing: boolean = true) => {
+    if (confirm('Create a new blank document? All unsaved modifications in current session will be cleared.')) {
+      stateManager.createBlankProject(preset, 'Untitled Publication', facing);
+      setShowNewMenu(false);
+      setShowFileMenu(false);
     }
   };
 
@@ -325,8 +338,15 @@ export function TopBar({ state, onOpenFindChange, onOpenQuickApply }: TopBarProp
   return (
     <header className="top-bar">
       <div className="brand-section">
-        <div className="brand-logo">
-          <span>RECTO</span>
+        <div className="brand-logo" title="Recto Studio · Designed by Abhinav Sidhu">
+          <svg className="brand-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="1.5" y="2.5" width="5.5" height="11" rx="0.5" stroke="#71717a" strokeWidth="1" />
+            <rect x="9" y="2.5" width="5.5" height="11" rx="0.5" fill="#e4e4e7" stroke="#e4e4e7" strokeWidth="1" />
+            <line x1="10.5" y1="5.5" x2="13" y2="5.5" stroke="#18181b" strokeWidth="0.8" />
+            <line x1="10.5" y1="7.5" x2="13" y2="7.5" stroke="#18181b" strokeWidth="0.8" />
+            <line x1="10.5" y1="9.5" x2="12" y2="9.5" stroke="#18181b" strokeWidth="0.8" />
+          </svg>
+          <span className="brand-name">RECTO</span>
           <span className="brand-badge">STUDIO</span>
         </div>
         <input
@@ -482,27 +502,224 @@ export function TopBar({ state, onOpenFindChange, onOpenQuickApply }: TopBarProp
       </div>
 
       <div className="top-actions">
-        <button
-          className="action-btn"
-          onClick={() => stateManager.addSpread()}
-          title="Insert New Page Spread"
-        >
-          + Add Spread
-        </button>
+        {/* New Blank Book / Document Dropdown */}
+        <div className="top-dropdown" ref={newMenuRef}>
+          <div className="btn-group-joined">
+            <button
+              className="action-btn"
+              onClick={() => handleCreateBlank(state.settings.preset || 'A4', state.settings.facingPages !== false)}
+              title="Create New Blank Document (0 canvas elements)"
+            >
+              + New Blank
+            </button>
+            <button
+              className="action-btn dropdown-arrow-btn"
+              onClick={() => setShowNewMenu((prev) => !prev)}
+              title="Choose Blank Book Preset: A4, 6x9 Novel, US Letter, Square..."
+            >
+              ▾
+            </button>
+          </div>
+          {showNewMenu && (
+            <div className="top-dropdown-menu new-dropdown-menu">
+              <button
+                className="top-dropdown-item"
+                onClick={() => handleCreateBlank('A4', true)}
+                title="Create blank facing spread magazine (210 x 297 mm)"
+              >
+                <div>
+                  <div className="dropdown-item-title">Blank Editorial Magazine (A4)</div>
+                  <div className="dropdown-item-sub">210 × 297 mm · Facing Pages · Pristine Canvas</div>
+                </div>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => handleCreateBlank('Book-Trade-6x9', true)}
+                title="Create blank fiction / trade paperback book (6 x 9 in)"
+              >
+                <div>
+                  <div className="dropdown-item-title">Blank Novel / Trade Book (6 × 9 in)</div>
+                  <div className="dropdown-item-sub">152.4 × 228.6 mm · Standard Fiction & Nonfiction</div>
+                </div>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => handleCreateBlank('US-Letter', true)}
+                title="Create blank North American standard publication (8.5 x 11 in)"
+              >
+                <div>
+                  <div className="dropdown-item-title">Blank Magazine (US Letter)</div>
+                  <div className="dropdown-item-sub">8.5 × 11 in · North American Standard</div>
+                </div>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => handleCreateBlank('Digest-5.5x8.5', true)}
+                title="Create blank digest journal / essay book (5.5 x 8.5 in)"
+              >
+                <div>
+                  <div className="dropdown-item-title">Blank Digest (5.5 × 8.5 in)</div>
+                  <div className="dropdown-item-sub">139.7 × 215.9 mm · Literary Journal & Memoir</div>
+                </div>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => handleCreateBlank('Zine-A5', true)}
+                title="Create blank compact zine or chapbook (148 x 210 mm)"
+              >
+                <div>
+                  <div className="dropdown-item-title">Blank Zine / Pamphlet (A5)</div>
+                  <div className="dropdown-item-sub">148 × 210 mm · Underground Press & Poetry</div>
+                </div>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => handleCreateBlank('A4', false)}
+                title="Create blank single page poster or flyer (210 x 297 mm)"
+              >
+                <div>
+                  <div className="dropdown-item-title">Single Sheet / Poster (A4)</div>
+                  <div className="dropdown-item-sub">210 × 297 mm · Non-facing Single Pages</div>
+                </div>
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Quick Save Project */}
         <button
           className="action-btn"
           onClick={handleSave}
-          title="Save .recto project to disk"
+          title="Save .recto project to disk (Ctrl+S)"
         >
           Save
         </button>
-        <button
-          className="action-btn"
-          onClick={handleOpenClick}
-          title="Load .recto project"
-        >
-          Open
-        </button>
+
+        {/* Unified File & Content Menu */}
+        <div className="top-dropdown" ref={fileMenuRef}>
+          <button
+            className={`action-btn ${showFileMenu ? 'active' : ''}`}
+            onClick={() => setShowFileMenu((prev) => !prev)}
+            title="File Management, Project IO, and Document Imports"
+          >
+            File ▾
+          </button>
+          {showFileMenu && (
+            <div className="top-dropdown-menu file-dropdown-menu">
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowFileMenu(false);
+                  handleCreateBlank(state.settings.preset || 'A4', state.settings.facingPages !== false);
+                }}
+                title="Create a brand new blank document"
+              >
+                <div>
+                  <div className="dropdown-item-title">New Blank Document...</div>
+                  <div className="dropdown-item-sub">Zero elements, pristine layout</div>
+                </div>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowFileMenu(false);
+                  handleOpenClick();
+                }}
+                title="Load .recto or .idml project file"
+              >
+                <div>
+                  <div className="dropdown-item-title">Open Project...</div>
+                  <div className="dropdown-item-sub">Load .recto, .idml, or .json file</div>
+                </div>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowFileMenu(false);
+                  handleSave();
+                }}
+                title="Save current project to .recto package"
+              >
+                <div>
+                  <div className="dropdown-item-title">Save Project (.recto)</div>
+                  <div className="dropdown-item-sub">Download local publication bundle</div>
+                </div>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowFileMenu(false);
+                  stateManager.addSpread();
+                }}
+                title="Insert New Page Spread"
+              >
+                <div>
+                  <div className="dropdown-item-title">+ Add Page Spread</div>
+                  <div className="dropdown-item-sub">Append blank facing spread to book</div>
+                </div>
+              </button>
+              <div className="dropdown-menu-divider" />
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowFileMenu(false);
+                  handlePlaceClick();
+                }}
+                title="Place markdown, text, or Word document into selected frame"
+              >
+                <div>
+                  <div className="dropdown-item-title">Place Manuscript Text...</div>
+                  <div className="dropdown-item-sub">.md, .txt, .docx into text frame</div>
+                </div>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowFileMenu(false);
+                  handleIdmlClick();
+                }}
+                title="Open Adobe InDesign (.idml) package"
+              >
+                <div>
+                  <div className="dropdown-item-title">Open InDesign Package...</div>
+                  <div className="dropdown-item-sub">Convert .idml publication spreads</div>
+                </div>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowFileMenu(false);
+                  setShowDataMergeModal(true);
+                }}
+                title="Merge CSV dataset into publication spreads"
+              >
+                <div>
+                  <div className="dropdown-item-title">Data Merge...</div>
+                  <div className="dropdown-item-sub">Batch populate records via CSV</div>
+                </div>
+              </button>
+              {selectedElements.length === 1 && selectedElements[0].type === 'text' && (
+                <button
+                  className="top-dropdown-item"
+                  onClick={() => {
+                    setShowFileMenu(false);
+                    const note = prompt('Enter Footnote Reference Text:', 'Citation or footnote note');
+                    if (note !== null) {
+                      stateManager.insertFootnote(selectedElements[0].id, note);
+                    }
+                  }}
+                  title="Insert Footnote into selected text frame"
+                >
+                  <div>
+                    <div className="dropdown-item-title">Insert Footnote...</div>
+                    <div className="dropdown-item-sub">Anchored reference and footnote block</div>
+                  </div>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
         <input
           type="file"
           ref={fileInputRef}
@@ -525,81 +742,9 @@ export function TopBar({ state, onOpenFindChange, onOpenQuickApply }: TopBarProp
           onChange={handlePlaceFileChange}
         />
 
-        {/* Content & Import Dropdown */}
-        <div className="top-dropdown" ref={importMenuRef}>
-          <button
-            className={`action-btn ${showImportMenu ? 'active' : ''}`}
-            onClick={() => setShowImportMenu((prev) => !prev)}
-            title="Import Manuscript, InDesign IDML, or CSV Dataset"
-          >
-            Import ▾
-          </button>
-          {showImportMenu && (
-            <div className="top-dropdown-menu import-dropdown-menu">
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowImportMenu(false);
-                  handlePlaceClick();
-                }}
-                title="Place markdown, text, or Word document into selected frame"
-              >
-                <div>
-                  <div className="dropdown-item-title">Place Manuscript Text...</div>
-                  <div className="dropdown-item-sub">.md, .txt, .docx into text frame</div>
-                </div>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowImportMenu(false);
-                  handleIdmlClick();
-                }}
-                title="Open Adobe InDesign (.idml) package"
-              >
-                <div>
-                  <div className="dropdown-item-title">Open InDesign Package...</div>
-                  <div className="dropdown-item-sub">Convert .idml publication spreads</div>
-                </div>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowImportMenu(false);
-                  setShowDataMergeModal(true);
-                }}
-                title="Merge CSV dataset into publication spreads"
-              >
-                <div>
-                  <div className="dropdown-item-title">Data Merge...</div>
-                  <div className="dropdown-item-sub">Batch populate records via CSV</div>
-                </div>
-              </button>
-              {selectedElements.length === 1 && selectedElements[0].type === 'text' && (
-                <button
-                  className="top-dropdown-item"
-                  onClick={() => {
-                    setShowImportMenu(false);
-                    const note = prompt('Enter Footnote Reference Text:', 'Citation or footnote note');
-                    if (note !== null) {
-                      stateManager.insertFootnote(selectedElements[0].id, note);
-                    }
-                  }}
-                  title="Insert Footnote into selected text frame"
-                >
-                  <div>
-                    <div className="dropdown-item-title">Insert Footnote...</div>
-                    <div className="dropdown-item-sub">Anchored reference and footnote block</div>
-                  </div>
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-
         {onOpenQuickApply && (
           <button
-            className="action-btn"
+            className="action-btn top-btn-quick-apply"
             onClick={onOpenQuickApply}
             title="Quick Apply Styles & Commands (Ctrl+/ or Ctrl+Enter)"
           >
@@ -609,7 +754,7 @@ export function TopBar({ state, onOpenFindChange, onOpenQuickApply }: TopBarProp
 
         {onOpenFindChange && (
           <button
-            className="action-btn"
+            className="action-btn top-btn-find"
             onClick={onOpenFindChange}
             title="Find / Change (GREP) (Ctrl+F)"
           >
@@ -619,7 +764,7 @@ export function TopBar({ state, onOpenFindChange, onOpenQuickApply }: TopBarProp
 
         {/* Version History Drawer Trigger */}
         <button
-          className="action-btn"
+          className="action-btn top-btn-history"
           onClick={openVersionModal}
           title="Local-First Git Version Snapshots & Checkpoints"
         >
@@ -628,7 +773,7 @@ export function TopBar({ state, onOpenFindChange, onOpenQuickApply }: TopBarProp
 
         {/* Real-time Collaboration Trigger */}
         <button
-          className={`action-btn ${isConnected ? 'active' : ''}`}
+          className={`action-btn top-btn-collab ${isConnected ? 'active' : ''}`}
           onClick={() => setShowCollabModal(true)}
           style={{
             borderColor: isConnected ? '#10b981' : undefined,

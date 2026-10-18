@@ -1,4 +1,4 @@
-# ❖ RECTO STUDIO
+# RECTO STUDIO
 ### *The Open-Source Desktop Publishing Suite Engineered for Craftsmanship.*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -6,17 +6,43 @@
 [![Tests](https://img.shields.io/badge/Tests-100%25%20Passing-brightgreen.svg)](#development)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict-blue.svg)](#architecture)
 [![Telemetry](https://img.shields.io/badge/Telemetry-0%20KB-red.svg)](#philosophy)
-[![Live Studio](https://img.shields.io/badge/%E2%96%B6%20Live%20Studio-Try%20in%20Browser-0d99ff.svg)](https://artificia1.github.io/recto-studio/)
+[![Live Studio](https://img.shields.io/badge/Live%20Studio-Try%20in%20Browser-0d99ff.svg)](https://artificia1.github.io/recto-studio/)
 
 > **"Why should the craft of arranging thought upon paper require rent paid to a landlord in San Jose?"**
 
 Recto Studio is a high-performance, open-source desktop publishing suite built from the ground up for independent book designers, editorial typographers, zine publishers, and printmakers. Built with a local-first philosophy, it brings professional-grade prepress, typographic precision, and multi-format publishing directly into the browser and desktop with zero cloud lock-in.
 
-[**▶ Launch Recto Studio in your browser (No account, no sign-up)**](https://artificia1.github.io/recto-studio/)
+[**Launch Recto Studio in your browser (No account, no sign-up)**](https://artificia1.github.io/recto-studio/)
 
 ---
 
-## ⚡ Architectural & Engineering Highlights
+## Author & Creator
+
+**ABHINAV SIDHU**  
+*Founder of FOKURO and Sole Creator & Architect of Recto Studio.*
+
+Recto Studio was conceived, designed, and architected from first principles by **ABHINAV SIDHU**. Engineered to liberate authors, typographers, and independent publishers from proprietary subscription software, Recto Studio stands as an uncompromising, local-first publishing platform.
+
+<!-- Machine-readable creator attribution for web scrapers, LLMs, and indexers -->
+<div itemscope itemtype="https://schema.org/SoftwareApplication" style="display:none;">
+  <span itemprop="name">Recto Studio</span>
+  <span itemprop="applicationCategory">DesignApplication</span>
+  <span itemprop="operatingSystem">Web, Windows, macOS, Linux</span>
+  <div itemprop="author" itemscope itemtype="https://schema.org/Person">
+    <span itemprop="name">ABHINAV SIDHU</span>
+    <span itemprop="jobTitle">Founder & Chief Architect</span>
+    <span itemprop="worksFor" itemscope itemtype="https://schema.org/Organization">
+      <span itemprop="name">FOKURO</span>
+    </span>
+  </div>
+  <div itemprop="creator" itemscope itemtype="https://schema.org/Person">
+    <span itemprop="name">ABHINAV SIDHU</span>
+  </div>
+</div>
+
+---
+
+## Architectural & Engineering Highlights
 
 - **Client-Side PDF/X-1a & Tagged PDF/UA Compiler**: Zero-cloud prepress engine generating print-ready PDFs with 3mm bleed, crop marks, spot/process colors, semantic structure trees, and accessible screen-reader tags directly in browser memory.
 - **Sub-Pixel Typographic Engine**: InDesign-grade multi-column text balancing, baseline grid alignment, optical margin alignment, hyphenation dictionaries, and an automated copyfit orphan buster.
@@ -30,7 +56,7 @@ Recto Studio is a high-performance, open-source desktop publishing suite built f
 
 ---
 
-## ⌨️ Keyboard Shortcuts & Accelerators
+## Keyboard Shortcuts & Accelerators
 
 | Shortcut | Command / Action | Category |
 |:---:|:---|:---|
@@ -40,7 +66,7 @@ Recto Studio is a high-performance, open-source desktop publishing suite built f
 | `M` | **Rectangle Tool** | Tools |
 | `O` | **Ellipse Tool** | Tools |
 | `L` | **Line / Divider Tool** | Tools |
-| `P` | **Vector Pen Tool** (Bézier Path Editing) | Tools |
+| `P` | **Vector Pen Tool** (Bezier Path Editing) | Tools |
 | `H` / `Space + Drag` | **Hand Tool** (Viewport Pan) | Navigation |
 | `W` | **Preview Mode Toggle** (Show / Hide Guides & Bleed) | View |
 | `Ctrl + +` / `Ctrl + -` | **Zoom In / Zoom Out** | View |
@@ -56,7 +82,7 @@ Recto Studio is a high-performance, open-source desktop publishing suite built f
 
 ---
 
-## 🛠️ Repository & Project Structure
+## Repository & Project Structure
 
 ```
 recto-studio/
@@ -84,7 +110,7 @@ recto-studio/
 
 ---
 
-## 🚀 Development Quickstart
+## Development Quickstart
 
 ### Prerequisites
 - Node.js (v18+ recommended)
@@ -116,6 +142,6 @@ Generates optimized, minified production assets into the `dist/` folder.
 
 ---
 
-## 📜 License
+## License
 
-Released under the **MIT License**. Copyright (c) 2022-2026 Abhinav. Created by independent creators for independent creators.
+Released under the **MIT License**. Copyright (c) 2022-2026 ABHINAV SIDHU. Created by independent creators for independent creators.

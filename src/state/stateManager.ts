@@ -6,6 +6,7 @@
 
 import {
   ProjectState,
+  PagePreset,
   CanvasElement,
   Spread,
   PAGE_PRESETS,
@@ -2101,6 +2102,98 @@ export class StateManager {
 
   public resetToDefault() {
     this.state = JSON.parse(JSON.stringify(INITIAL_STATE));
+    this.pushHistory();
+    this.notify();
+  }
+
+  /**
+   * Initializes a brand new, completely blank publication / book with 0 canvas elements.
+   * Cleans spreads, resets selection, master spreads, and history stack.
+   */
+  public createBlankProject(
+    preset: PagePreset = 'A4',
+    title: string = 'Untitled Document',
+    facingPages: boolean = true
+  ) {
+    const presetConfig = PAGE_PRESETS[preset] || PAGE_PRESETS['A4'];
+    const now = Date.now();
+
+    const blankState: ProjectState = {
+      settings: {
+        title,
+        preset,
+        widthMm: presetConfig.widthMm,
+        heightMm: presetConfig.heightMm,
+        facingPages,
+        bleedMm: 3,
+        margins: {
+          topMm: 20,
+          bottomMm: 20,
+          insideMm: 25,
+          outsideMm: 18,
+        },
+        columnCount: 1,
+        columnGutterMm: 5,
+        baselineGrid: {
+          enabled: true,
+          incrementPt: 12,
+          startMm: 20,
+        },
+        colorMode: 'cmyk',
+        iccProfile: 'FOGRA39',
+        footnotes: [],
+        footnoteSettings: {
+          numberingStyle: 'superscript',
+          separatorRuleWidthMm: 30,
+          separatorRuleThicknessPt: 0.5,
+          fontSizePt: 8,
+          scope: 'document',
+        },
+      },
+      spreads: [
+        {
+          id: `spread-blank-${now}`,
+          spreadIndex: 0,
+          pages: facingPages
+            ? [{ id: `page-blank-${now}-1`, pageNumber: 1, side: 'right' }]
+            : [{ id: `page-blank-${now}-1`, pageNumber: 1, side: 'single' }],
+          elements: [],
+        },
+      ],
+      activeSpreadIndex: 0,
+      selectedElementId: null,
+      selectedElementIds: [],
+      activeTool: 'select',
+      zoom: 1.0,
+      panX: 0,
+      panY: 0,
+      showGuides: true,
+      showBleed: true,
+      showBaselineGrid: true,
+      snapToGuides: true,
+      displayQuality: 'typical',
+      paragraphStyles: JSON.parse(JSON.stringify(DEFAULT_PARAGRAPH_STYLES)),
+      masterSpreads: [
+        {
+          id: 'master-a',
+          name: 'A-Master Spread',
+          prefix: 'A',
+          pages: [
+            { id: `master-a-p1-${now}`, pageNumber: 1, side: 'left' },
+            { id: `master-a-p2-${now}`, pageNumber: 2, side: 'right' },
+          ],
+          elements: [],
+        },
+      ],
+      linkingFromFrameId: null,
+      layers: JSON.parse(JSON.stringify(DEFAULT_LAYERS)),
+      activeLayerId: 'layer-1',
+    };
+
+    this.state = blankState;
+    this.renumberPages();
+    this.history = [];
+    this.historyIndex = -1;
     this.pushHistory();
     this.notify();
   }

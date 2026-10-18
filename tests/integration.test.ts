@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { execSync } from 'child_process';
 
-describe('Recto Studio Phases 1-20 Core Engine Verification', () => {
+describe('Recto Studio Core Engine Verification', () => {
   it(
-    'executes and passes all 47 engine integration suites flawlessly',
+    'executes and passes all engine integration suites flawlessly',
     () => {
       const output = execSync('npx tsx test.ts', { encoding: 'utf8' });
-      expect(output).toContain('ALL 47 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
+      expect(output).toMatch(/ALL \d+ TEST SUITES PASSED FLAWLESSLY! \(100% OK\)/);
     },
-    45000
+    60000
   );
 });

@@ -61,6 +61,51 @@ export function QuickApply({ isOpen, onClose, state, onOpenFindChange }: QuickAp
   // 3. Publishing Commands
   allItems.push(
     {
+      id: 'cmd-new-blank-a4',
+      kind: 'cmd',
+      title: 'New Blank Document (A4 Editorial)',
+      subtitle: 'Create clean 0-element publication spread',
+      shortcut: 'Ctrl+Alt+N',
+      action: () => {
+        if (confirm('Create a new blank document? All unsaved modifications in current session will be cleared.')) {
+          stateManager.createBlankProject('A4', 'Untitled Publication', true);
+        }
+      },
+    },
+    {
+      id: 'cmd-new-blank-novel',
+      kind: 'cmd',
+      title: 'New Blank Novel / Book (6 × 9 in)',
+      subtitle: 'Create clean 0-element trade book spread',
+      action: () => {
+        if (confirm('Create a new blank document? All unsaved modifications in current session will be cleared.')) {
+          stateManager.createBlankProject('Book-Trade-6x9', 'Untitled Novel', true);
+        }
+      },
+    },
+    {
+      id: 'cmd-new-blank-letter',
+      kind: 'cmd',
+      title: 'New Blank Document (US Letter)',
+      subtitle: 'Create clean 0-element standard letter spread',
+      action: () => {
+        if (confirm('Create a new blank document? All unsaved modifications in current session will be cleared.')) {
+          stateManager.createBlankProject('US-Letter', 'Untitled Publication', true);
+        }
+      },
+    },
+    {
+      id: 'cmd-new-blank-digest',
+      kind: 'cmd',
+      title: 'New Blank Digest Book (5.5 × 8.5 in)',
+      subtitle: 'Create clean 0-element digest journal spread',
+      action: () => {
+        if (confirm('Create a new blank document? All unsaved modifications in current session will be cleared.')) {
+          stateManager.createBlankProject('Digest-5.5x8.5', 'Untitled Digest', true);
+        }
+      },
+    },
+    {
       id: 'cmd-fit-prop',
       kind: 'cmd',
       title: 'Fit Content Proportionally',
