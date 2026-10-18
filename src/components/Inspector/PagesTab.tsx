@@ -60,9 +60,48 @@ export function PagesTab({ state }: PagesTabProps) {
                 {m.name}
               </span>
             </div>
-            <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>
-              {m.elements.length} elements · {'{{page}}'}
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>
+                {m.elements.length} elements · {'{{page}}'}
+              </span>
+              {masterSpreads.length > 1 && (
+                <button
+                  type="button"
+                  title="Delete Master Spread"
+                  aria-label={`Delete ${m.name}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (window.confirm(`Delete Master Spread "${m.name}"? Spreads using this master will be detached.`)) {
+                      stateManager.deleteMasterSpread(m.id);
+                    }
+                  }}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: 'var(--text-secondary)',
+                    cursor: 'pointer',
+                    padding: '2px 4px',
+                    fontSize: '12px',
+                    lineHeight: 1,
+                    borderRadius: '3px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    transition: 'color 0.15s, background-color 0.15s',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.color = '#ff4d4f';
+                    e.currentTarget.style.backgroundColor = 'rgba(255, 77, 79, 0.15)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.color = 'var(--text-secondary)';
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                  }}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
           </div>
         ))}
       </div>

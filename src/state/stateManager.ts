@@ -1677,6 +1677,24 @@ export class StateManager {
     return newMaster;
   }
 
+  public deleteMasterSpread(masterSpreadId: string): boolean {
+    if (!this.state.masterSpreads || this.state.masterSpreads.length <= 1) {
+      return false;
+    }
+    const idx = this.state.masterSpreads.findIndex((m) => m.id === masterSpreadId);
+    if (idx === -1) return false;
+
+    this.state.masterSpreads.splice(idx, 1);
+    for (const spread of this.state.spreads) {
+      if (spread.masterSpreadId === masterSpreadId) {
+        spread.masterSpreadId = null;
+      }
+    }
+    this.pushHistory();
+    this.notify();
+    return true;
+  }
+
   public assignMasterSpread(spreadIndex: number, masterSpreadId: string | null) {
     if (spreadIndex < 0 || spreadIndex >= this.state.spreads.length) return;
     this.state.spreads[spreadIndex].masterSpreadId = masterSpreadId;

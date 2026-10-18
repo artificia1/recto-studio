@@ -203,6 +203,8 @@ export class SpreadCanvas {
 
   private drawStartMmX: number = 0;
   private drawStartMmY: number = 0;
+  private drawCurrentMmX: number = 0;
+  private drawCurrentMmY: number = 0;
   private drawTargetPage: Page | null = null;
 
   private mouseMmX: number = 0;
@@ -518,6 +520,8 @@ export class SpreadCanvas {
         this.isDrawingNew = true;
         this.drawStartMmX = pageHit.localX;
         this.drawStartMmY = pageHit.localY;
+        this.drawCurrentMmX = pageHit.localX;
+        this.drawCurrentMmY = pageHit.localY;
         this.drawTargetPage = pageHit.page;
       }
       return;
@@ -879,6 +883,12 @@ export class SpreadCanvas {
     }
 
     if (this.isDrawingNew && this.drawTargetPage) {
+      const spread = stateManager.getActiveSpread();
+      const { pageWidthMm } = this.getSpreadDimensions(state);
+      const pageIdx = Math.max(0, spread.pages.findIndex((p) => p.id === this.drawTargetPage!.id));
+      const pageStartMm = pageIdx * pageWidthMm;
+      this.drawCurrentMmX = mmX - pageStartMm;
+      this.drawCurrentMmY = mmY;
       this.render();
       return;
     }
@@ -988,16 +998,41 @@ export class SpreadCanvas {
     if (this.isDrawingNew && this.drawTargetPage) {
       this.isDrawingNew = false;
       const { x: endMmX, y: endMmY } = this.screenToSpreadMm(screenX, screenY, state);
-      const pageHit = this.findPageAtMm(endMmX, endMmY, state);
+      const spread = stateManager.getActiveSpread();
+      const { pageWidthMm } = this.getSpreadDimensions(state);
+      const pageIdx = Math.max(0, spread.pages.findIndex((p) => p.id === this.drawTargetPage!.id));
+      const pageStartMm = pageIdx * pageWidthMm;
+      const targetLocalX = endMmX - pageStartMm;
+      const targetLocalY = endMmY;
 
-      let w = Math.abs((pageHit ? pageHit.localX : endMmX) - this.drawStartMmX);
-      let h = Math.abs((pageHit ? pageHit.localY : endMmY) - this.drawStartMmY);
+      const rawW = Math.abs(targetLocalX - this.drawStartMmX);
+      const rawH = Math.abs(targetLocalY - this.drawStartMmY);
 
-      if (w < 10) w = 60;
-      if (h < 10) h = 40;
+      let w = rawW;
+      let h = rawH;
+      let x = Math.min(this.drawStartMmX, targetLocalX);
+      let y = Math.min(this.drawStartMmY, targetLocalY);
 
-      const x = Math.min(this.drawStartMmX, (pageHit ? pageHit.localX : endMmX));
-      const y = Math.min(this.drawStartMmY, (pageHit ? pageHit.localY : endMmY));
+      if (rawW < 5 && rawH < 5) {
+        if (state.activeTool === 'text') {
+          w = 60;
+          h = 30;
+        } else if (state.activeTool === 'frame') {
+          w = 60;
+          h = 45;
+        } else if (state.activeTool === 'table') {
+          w = 80;
+          h = 40;
+        } else if (state.activeTool.startsWith('shape')) {
+          w = 40;
+          h = 40;
+        } else {
+          w = 60;
+          h = 40;
+        }
+        x = this.drawStartMmX;
+        y = this.drawStartMmY;
+      }
 
       const newId = `elem-${Date.now()}`;
       if (state.activeTool === 'text') {
@@ -1100,6 +1135,8 @@ export class SpreadCanvas {
 
       stateManager.setTool('select');
       this.drawTargetPage = null;
+      this.drawCurrentMmX = 0;
+      this.drawCurrentMmY = 0;
     }
   }
 
@@ -3033,6 +3070,50 @@ export class SpreadCanvas {
       ctx.setLineDash([3, 3]);
       ctx.strokeRect(mScreenX, mScreenY, mScreenW, mScreenH);
       ctx.restore();
+
+      const mW = mMaxX - mMinX;
+      const mH = mMaxY - mMinY;
+      if (mW > 2 && mH > 2) {
+        const cursorScreenX = origin.x + this.marqueeCurrentMmX * pxPerMm;
+        const cursorScreenY = origin.y + this.marqueeCurrentMmY * pxPerMm;
+        this.drawDimensionHud(ctx, cursorScreenX + 14, cursorScreenY + 14, mW, mH, 'Select');
+      }
+    }
+
+    if (!state.previewMode && this.isDrawingNew && this.drawTargetPage) {
+      const pageIdx = Math.max(0, spread.pages.findIndex((p) => p.id === this.drawTargetPage!.id));
+      const pageStartMm = pageIdx * pageWidthMm;
+      const curX = this.drawCurrentMmX !== undefined ? this.drawCurrentMmX : this.drawStartMmX;
+      const curY = this.drawCurrentMmY !== undefined ? this.drawCurrentMmY : this.drawStartMmY;
+
+      const minX = Math.min(this.drawStartMmX, curX);
+      const maxX = Math.max(this.drawStartMmX, curX);
+      const minY = Math.min(this.drawStartMmY, curY);
+      const maxY = Math.max(this.drawStartMmY, curY);
+
+      const wMm = maxX - minX;
+      const hMm = maxY - minY;
+
+      const screenX = origin.x + (pageStartMm + minX) * pxPerMm;
+      const screenY = origin.y + minY * pxPerMm;
+      const screenW = wMm * pxPerMm;
+      const screenH = hMm * pxPerMm;
+
+      const cursorScreenX = origin.x + (pageStartMm + curX) * pxPerMm;
+      const cursorScreenY = origin.y + curY * pxPerMm;
+
+      this.renderDrawingPreview(
+        ctx,
+        screenX,
+        screenY,
+        screenW,
+        screenH,
+        wMm,
+        hMm,
+        state.activeTool,
+        cursorScreenX,
+        cursorScreenY
+      );
     }
 
     // Draw real-time collaboration peers
@@ -3162,6 +3243,203 @@ export class SpreadCanvas {
     }
 
     this.drawRulers();
+  }
+
+  private drawDimensionHud(
+    ctx: CanvasRenderingContext2D,
+    badgeX: number,
+    badgeY: number,
+    wMm: number,
+    hMm: number,
+    extraLabel?: string
+  ) {
+    ctx.save();
+    const textW = `W: ${wMm.toFixed(1)} mm`;
+    const textH = `H: ${hMm.toFixed(1)} mm`;
+    const fullText = extraLabel ? `${extraLabel}  ${textW}  ${textH}` : `${textW}   ${textH}`;
+
+    ctx.font = '600 11px Inter, system-ui, sans-serif';
+    const textMetrics = ctx.measureText(fullText);
+    const padX = 8;
+    const pillW = textMetrics.width + padX * 2;
+    const pillH = 22;
+
+    let bx = badgeX;
+    let by = badgeY;
+    if (bx + pillW > this.canvas.width - 10) bx = badgeX - pillW - 20;
+    if (by + pillH > this.canvas.height - 10) by = badgeY - pillH - 20;
+    if (bx < 10) bx = 10;
+    if (by < 10) by = 10;
+
+    // Dark sleek backdrop pill with subtle border
+    ctx.fillStyle = 'rgba(18, 18, 22, 0.92)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
+    ctx.lineWidth = 1;
+
+    if (typeof (ctx as any).roundRect === 'function') {
+      ctx.beginPath();
+      (ctx as any).roundRect(bx, by, pillW, pillH, 5);
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      ctx.fillRect(bx, by, pillW, pillH);
+      ctx.strokeRect(bx, by, pillW, pillH);
+    }
+
+    // Typography
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    let curX = bx + padX;
+    const centerY = by + pillH / 2;
+
+    if (extraLabel) {
+      ctx.fillStyle = '#0d99ff';
+      ctx.fillText(extraLabel, curX, centerY);
+      curX += ctx.measureText(extraLabel).width + 6;
+    }
+
+    ctx.fillStyle = '#0d99ff';
+    ctx.fillText('W:', curX, centerY);
+    curX += ctx.measureText('W:').width + 3;
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(`${wMm.toFixed(1)} mm`, curX, centerY);
+    curX += ctx.measureText(`${wMm.toFixed(1)} mm`).width + 7;
+
+    ctx.fillStyle = '#0d99ff';
+    ctx.fillText('H:', curX, centerY);
+    curX += ctx.measureText('H:').width + 3;
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(`${hMm.toFixed(1)} mm`, curX, centerY);
+
+    ctx.restore();
+  }
+
+  private renderDrawingPreview(
+    ctx: CanvasRenderingContext2D,
+    screenX: number,
+    screenY: number,
+    screenW: number,
+    screenH: number,
+    wMm: number,
+    hMm: number,
+    activeTool: string,
+    cursorScreenX: number,
+    cursorScreenY: number
+  ) {
+    ctx.save();
+
+    const isEllipse = activeTool === 'shape-ellipse';
+    const isLine = activeTool === 'shape-line';
+    const isFrame = activeTool === 'frame';
+    const isText = activeTool === 'text';
+    const isTable = activeTool === 'table';
+
+    // Ghost preview fill & stroke
+    ctx.fillStyle = 'rgba(13, 153, 255, 0.08)';
+    ctx.strokeStyle = '#0d99ff';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+
+    if (isLine) {
+      ctx.beginPath();
+      ctx.moveTo(screenX, screenY);
+      ctx.lineTo(screenX + screenW, screenY + screenH);
+      ctx.stroke();
+    } else if (isEllipse) {
+      const rx = Math.max(0.5, screenW / 2);
+      const ry = Math.max(0.5, screenH / 2);
+      const cx = screenX + rx;
+      const cy = screenY + ry;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      ctx.fillRect(screenX, screenY, screenW, screenH);
+      ctx.strokeRect(screenX, screenY, screenW, screenH);
+
+      // Frame diagonal cross lines
+      if (isFrame && screenW > 10 && screenH > 10) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(13, 153, 255, 0.35)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 2]);
+        ctx.beginPath();
+        ctx.moveTo(screenX, screenY);
+        ctx.lineTo(screenX + screenW, screenY + screenH);
+        ctx.moveTo(screenX + screenW, screenY);
+        ctx.lineTo(screenX, screenY + screenH);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Table 3x3 grid preview lines
+      if (isTable && screenW > 20 && screenH > 20) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(13, 153, 255, 0.3)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 3]);
+        ctx.beginPath();
+        for (let c = 1; c < 3; c++) {
+          const gx = screenX + (screenW * c) / 3;
+          ctx.moveTo(gx, screenY);
+          ctx.lineTo(gx, screenY + screenH);
+        }
+        for (let r = 1; r < 3; r++) {
+          const gy = screenY + (screenH * r) / 3;
+          ctx.moveTo(screenX, gy);
+          ctx.lineTo(screenX + screenW, gy);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Text icon indicator at top-left
+      if (isText && screenW > 24 && screenH > 18) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(13, 153, 255, 0.2)';
+        ctx.fillRect(screenX, screenY, 18, 16);
+        ctx.fillStyle = '#0d99ff';
+        ctx.font = 'bold 10px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('T', screenX + 9, screenY + 8);
+        ctx.restore();
+      }
+    }
+
+    // Corner handle markers
+    if (!isLine && screenW > 15 && screenH > 15) {
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#0d99ff';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([]);
+      const handles = [
+        [screenX, screenY],
+        [screenX + screenW, screenY],
+        [screenX + screenW, screenY + screenH],
+        [screenX, screenY + screenH],
+      ];
+      for (const [hx, hy] of handles) {
+        ctx.fillRect(hx - 3, hy - 3, 6, 6);
+        ctx.strokeRect(hx - 3, hy - 3, 6, 6);
+      }
+    }
+
+    ctx.restore();
+
+    // Floating Dimension HUD Pill beside cursor
+    let toolBadge = '';
+    if (isText) toolBadge = 'Text Frame';
+    else if (isFrame) toolBadge = 'Graphic Frame';
+    else if (isTable) toolBadge = 'Table';
+    else if (isEllipse) toolBadge = 'Ellipse';
+    else if (isLine) toolBadge = 'Line';
+    else toolBadge = 'Shape';
+
+    this.drawDimensionHud(ctx, cursorScreenX + 14, cursorScreenY + 14, wMm, hMm, toolBadge);
   }
 
   private drawRulers() {

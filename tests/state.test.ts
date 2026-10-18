@@ -149,4 +149,31 @@ describe('State Snapshot Stack & Mutation Engine', () => {
     stateManager.deleteElement(el2.id);
     expect(stateManager.getElementById(el2.id)).toBeNull();
   });
+
+  it('manages master spread lifecycle, assignment, and safe deletion', () => {
+    const initialMasters = stateManager.getState().masterSpreads.length;
+    expect(initialMasters).toBeGreaterThanOrEqual(1);
+
+    // Create a secondary master spread
+    const masterB = stateManager.createMasterSpread('Section Master', 'B');
+    expect(stateManager.getState().masterSpreads.length).toBe(initialMasters + 1);
+
+    // Assign master to active spread (index 1 is active by default)
+    const activeIdx = stateManager.getState().activeSpreadIndex;
+    stateManager.assignMasterSpread(activeIdx, masterB.id);
+    expect(stateManager.getActiveSpread().masterSpreadId).toBe(masterB.id);
+
+    // Deleting masterB should succeed, remove it from list, and clear references
+    const success = stateManager.deleteMasterSpread(masterB.id);
+    expect(success).toBe(true);
+    expect(stateManager.getState().masterSpreads.find((m) => m.id === masterB.id)).toBeUndefined();
+    expect(stateManager.getActiveSpread().masterSpreadId).toBeNull();
+
+    // Guard: deleting when only 1 master remains should be prevented
+    const remainingMasterId = stateManager.getState().masterSpreads[0].id;
+    const guarded = stateManager.deleteMasterSpread(remainingMasterId);
+    expect(guarded).toBe(false);
+    expect(stateManager.getState().masterSpreads.length).toBe(1);
+  });
 });
+
