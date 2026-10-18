@@ -602,10 +602,8 @@ export function TopBar({ state, onOpenFindChange, onOpenQuickApply }: TopBarProp
             className="action-btn"
             onClick={onOpenQuickApply}
             title="Quick Apply Styles & Commands (Ctrl+/ or Ctrl+Enter)"
-            style={{ display: 'flex', alignItems: 'center', gap: '5px' }}
           >
-            <span style={{ color: '#0d99ff', fontSize: '13px' }}>⚡</span>
-            <span>Quick Apply</span>
+            Quick Apply
           </button>
         )}
 
@@ -614,10 +612,8 @@ export function TopBar({ state, onOpenFindChange, onOpenQuickApply }: TopBarProp
             className="action-btn"
             onClick={onOpenFindChange}
             title="Find / Change (GREP) (Ctrl+F)"
-            style={{ display: 'flex', alignItems: 'center', gap: '5px' }}
           >
-            <span style={{ fontSize: '11px' }}>🔍</span>
-            <span>Find</span>
+            Find
           </button>
         )}
 

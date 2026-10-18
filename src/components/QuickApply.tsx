@@ -307,7 +307,10 @@ export function QuickApply({ isOpen, onClose, state, onOpenFindChange }: QuickAp
             gap: '10px',
           }}
         >
-          <span style={{ color: '#0d99ff', fontSize: '15px' }}>⚡</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0d99ff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
           <input
             ref={inputRef}
             type="text"
