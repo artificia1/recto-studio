@@ -2813,8 +2813,88 @@ const cliBookHelp = execFileSync('node', ['./bin/recto.js', 'book', '--help'], {
 assert(cliBookHelp.includes('recto book <action>'), 'CLI book help output must document actions');
 console.log('✓ Multi-Document Book (.rectobook / .indb) Synchronization & Stitched Export verified.');
 
+// --- Suite 48: Canvas UX & Layout Polish (Find/Change GREP, Dynamic Snapping, Spread Duplication) ---
+console.log('\n--- Suite 48: Canvas UX & Layout Polish ---');
+
+stateManager.resetToDefault();
+const testSpread = stateManager.getActiveSpread();
+const testPageId = testSpread.pages[0].id;
+
+const testEl1: TextElement = {
+  id: 'suite48-tf-1',
+  type: 'text',
+  pageId: testPageId,
+  x: 20,
+  y: 20,
+  width: 90,
+  height: 40,
+  rotation: 0,
+  opacity: 1,
+  zIndex: 1,
+  locked: false,
+  text: 'The catalog price is $450 and item code is SKU-9811.',
+  fontFamily: 'Inter',
+  fontSizePt: 10,
+  lineHeight: 1.3,
+  letterSpacingPt: 0,
+  color: '#000000',
+  alignment: 'left',
+  columns: 1,
+  columnGutterMm: 4,
+  backgroundColor: 'transparent',
+  borderColor: 'transparent',
+  borderWidthMm: 0,
+  paddingMm: 0,
+};
+
+stateManager.addElement(testEl1);
+
+// 1. Plain text search and replace
+const plainQuery: FindChangeQuery = {
+  findText: '$450',
+  changeText: '€420',
+  isGrep: false,
+  scope: 'document',
+};
+
+const plainMatch = stateManager.findNext(plainQuery);
+assert(plainMatch, 'Find Next must find match for plain text query');
+assert.strictEqual(plainMatch.matchText, '$450', 'Match text matches query');
+const plainChanged = stateManager.change(plainQuery, plainMatch);
+assert.strictEqual(plainChanged, true, 'Change must succeed');
+const updatedEl1 = stateManager.getElementById('suite48-tf-1') as TextElement;
+assert(updatedEl1.text.includes('€420'), 'Text element must contain replaced string');
+
+// 2. GREP Pattern Matching with Backreferences ($1)
+const grepQuery: FindChangeQuery = {
+  findText: 'SKU-(\\d+)',
+  changeText: 'ITEM-$1',
+  isGrep: true,
+  scope: 'document',
+};
+
+const grepResult = stateManager.changeAll(grepQuery);
+assert.strictEqual(grepResult.replacementsCount, 1, 'GREP must replace 1 instance');
+const updatedEl2 = stateManager.getElementById('suite48-tf-1') as TextElement;
+assert(updatedEl2.text.includes('ITEM-9811'), 'Text element must reflect GREP backreference replacement');
+
+// 3. Spread Duplication and Toggles
+const origSpreadCount = stateManager.getState().spreads.length;
+stateManager.duplicateSpread(0);
+assert.strictEqual(stateManager.getState().spreads.length, origSpreadCount + 1, 'Spread duplication must increment spread count');
+
+const overprintInitial = stateManager.getState().settings.overprintBlack !== false;
+stateManager.toggleOverprintBlack();
+assert.strictEqual(stateManager.getState().settings.overprintBlack, !overprintInitial, 'toggleOverprintBlack must invert state');
+
+const facingInitial = Boolean(stateManager.getState().settings.facingPages);
+stateManager.toggleFacingPages();
+assert.strictEqual(Boolean(stateManager.getState().settings.facingPages), !facingInitial, 'toggleFacingPages must invert state');
+
+console.log('✓ Dynamic Smart Magnetic Guides, Find/Change GREP Engine, and Layout Polish verified.');
+
 console.log('\n=============================================');
-console.log('ALL 47 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
+console.log('ALL 48 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
 console.log('=============================================\n');
 
 

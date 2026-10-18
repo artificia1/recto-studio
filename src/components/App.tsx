@@ -1,21 +1,40 @@
-import { useEffect, useRef } from 'preact/hooks';
+import { useState, useEffect, useRef } from 'preact/hooks';
 import { useProjectState } from '../hooks/useProjectState';
 import { TopBar } from './TopBar';
 import { ControlBar } from './ControlBar';
 import { Toolbar } from './Toolbar';
 import { InspectorPanel } from './Inspector/InspectorPanel';
 import { StatusBar } from './StatusBar';
+import { FindChangeModal } from './FindChangeModal';
+import { QuickApply } from './QuickApply';
 import { SpreadCanvas } from '../canvas';
 import { stateManager } from '../state';
 import { ingestManuscript } from '../contentImport';
 
 export function App() {
   const state = useProjectState();
+  const [showFindChange, setShowFindChange] = useState(false);
+  const [showQuickApply, setShowQuickApply] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rulerTopRef = useRef<HTMLCanvasElement>(null);
   const rulerLeftRef = useRef<HTMLCanvasElement>(null);
   const spreadCanvasRef = useRef<SpreadCanvas | null>(null);
+
+  useEffect(() => {
+    const handleGlobalShortcuts = (e: KeyboardEvent) => {
+      const isMod = e.ctrlKey || e.metaKey;
+      if (isMod && (e.key === 'f' || e.key === 'F')) {
+        e.preventDefault();
+        setShowFindChange((prev) => !prev);
+      } else if (isMod && (e.key === '/' || e.key === 'Enter')) {
+        e.preventDefault();
+        setShowQuickApply((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleGlobalShortcuts);
+    return () => window.removeEventListener('keydown', handleGlobalShortcuts);
+  }, []);
 
   useEffect(() => {
     if (
@@ -175,7 +194,11 @@ export function App() {
 
   return (
     <div id="app" onDragOver={handleDragOver} onDrop={handleDrop}>
-      <TopBar state={state} />
+      <TopBar
+        state={state}
+        onOpenFindChange={() => setShowFindChange(true)}
+        onOpenQuickApply={() => setShowQuickApply(true)}
+      />
       <ControlBar state={state} />
 
       <div className="workspace">
@@ -198,6 +221,21 @@ export function App() {
       </div>
 
       <StatusBar state={state} />
+
+      <FindChangeModal
+        isOpen={showFindChange}
+        onClose={() => setShowFindChange(false)}
+      />
+
+      <QuickApply
+        isOpen={showQuickApply}
+        onClose={() => setShowQuickApply(false)}
+        state={state}
+        onOpenFindChange={() => {
+          setShowQuickApply(false);
+          setShowFindChange(true);
+        }}
+      />
     </div>
   );
 }

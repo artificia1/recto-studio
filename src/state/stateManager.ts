@@ -68,6 +68,25 @@ export interface TocEntry {
   elementId: string;
 }
 
+export interface FindChangeQuery {
+  findText: string;
+  changeText: string;
+  isGrep?: boolean;
+  caseSensitive?: boolean;
+  wholeWord?: boolean;
+  scope?: 'document' | 'spread' | 'story';
+}
+
+export interface FindResult {
+  elementId: string;
+  spreadIndex: number;
+  matchText: string;
+  index: number;
+  length: number;
+  totalMatches: number;
+  currentMatchIndex: number;
+}
+
 // Local-first persistent storage keys
 const STORAGE_KEY = 'recto_project_autosave';
 const SNAPSHOTS_STORAGE_KEY = 'recto_version_snapshots';
@@ -2048,6 +2067,38 @@ export class StateManager {
     this.notify();
   }
 
+  public duplicateSpread(index: number) {
+    if (index < 0 || index >= this.state.spreads.length) return;
+    const src = this.state.spreads[index];
+    const newSpread: Spread = {
+      id: `spread-${Date.now()}`,
+      spreadIndex: this.state.spreads.length,
+      pages: src.pages.map((p, i) => ({
+        id: `page-${Date.now()}-${i}`,
+        pageNumber: 0,
+        side: p.side,
+      })),
+      elements: JSON.parse(JSON.stringify(src.elements)).map((el: CanvasElement) => ({
+        ...el,
+        id: `el-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+      })),
+    };
+    this.state.spreads.splice(index + 1, 0, newSpread);
+    this.renumberPages();
+    this.setActiveSpread(index + 1);
+    this.pushHistory();
+    this.notify();
+  }
+
+  public toggleOverprintBlack() {
+    const current = this.state.settings.overprintBlack !== false;
+    this.updateSettings({ overprintBlack: !current });
+  }
+
+  public toggleFacingPages() {
+    this.updateSettings({ facingPages: !this.state.settings.facingPages });
+  }
+
   public resetToDefault() {
     this.state = JSON.parse(JSON.stringify(INITIAL_STATE));
     this.pushHistory();
@@ -3403,6 +3454,220 @@ export class StateManager {
     this.pushHistory();
     this.notify();
     return true;
+  }
+
+  /**
+   * Compiles a RegExp for Find/Change search queries.
+   */
+  public compileFindRegex(query: FindChangeQuery): RegExp | null {
+    if (!query.findText) return null;
+    try {
+      if (query.isGrep) {
+        const flags = 'g' + (query.caseSensitive ? '' : 'i');
+        return new RegExp(query.findText, flags);
+      } else {
+        let pattern = query.findText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        if (query.wholeWord) {
+          pattern = `\\b${pattern}\\b`;
+        }
+        const flags = 'g' + (query.caseSensitive ? '' : 'i');
+        return new RegExp(pattern, flags);
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Collects all text matches matching the query across the specified scope.
+   */
+  public collectFindMatches(query: FindChangeQuery): { elementId: string; spreadIndex: number; matchText: string; index: number; length: number }[] {
+    const regex = this.compileFindRegex(query);
+    if (!regex) return [];
+
+    const matches: { elementId: string; spreadIndex: number; matchText: string; index: number; length: number }[] = [];
+    const scope = query.scope || 'document';
+
+    let targetSpreads: { spread: Spread; index: number }[] = [];
+    if (scope === 'spread') {
+      targetSpreads = [{ spread: this.getActiveSpread(), index: this.state.activeSpreadIndex }];
+    } else if (scope === 'story') {
+      const activeEl = this.state.selectedElementId ? this.getElementById(this.state.selectedElementId) : null;
+      if (activeEl && activeEl.type === 'text') {
+        const textEl = activeEl as TextElement;
+        const chain: TextElement[] = [];
+        let head: TextElement = textEl;
+        while (head.prevFrameId) {
+          const prev = this.getElementById(head.prevFrameId) as TextElement | undefined;
+          if (!prev) break;
+          head = prev;
+        }
+        let curr: TextElement | undefined = head;
+        while (curr) {
+          chain.push(curr);
+          curr = curr.nextFrameId ? (this.getElementById(curr.nextFrameId) as TextElement | undefined) : undefined;
+        }
+        for (const el of chain) {
+          const spIdx = this.state.spreads.findIndex((s) => s.elements.some((e) => e.id === el.id));
+          const text = el.text || '';
+          regex.lastIndex = 0;
+          let m: RegExpExecArray | null;
+          while ((m = regex.exec(text)) !== null) {
+            matches.push({
+              elementId: el.id,
+              spreadIndex: spIdx !== -1 ? spIdx : this.state.activeSpreadIndex,
+              matchText: m[0],
+              index: m.index,
+              length: m[0].length,
+            });
+            if (m.index === regex.lastIndex) regex.lastIndex++;
+          }
+        }
+        return matches;
+      } else {
+        targetSpreads = [{ spread: this.getActiveSpread(), index: this.state.activeSpreadIndex }];
+      }
+    } else {
+      targetSpreads = this.state.spreads.map((s, i) => ({ spread: s, index: i }));
+    }
+
+    for (const { spread, index } of targetSpreads) {
+      for (const el of spread.elements) {
+        if (el.type === 'text') {
+          const textEl = el as TextElement;
+          const text = textEl.text || '';
+          regex.lastIndex = 0;
+          let m: RegExpExecArray | null;
+          while ((m = regex.exec(text)) !== null) {
+            matches.push({
+              elementId: el.id,
+              spreadIndex: index,
+              matchText: m[0],
+              index: m.index,
+              length: m[0].length,
+            });
+            if (m.index === regex.lastIndex) regex.lastIndex++;
+          }
+        }
+      }
+    }
+
+    return matches;
+  }
+
+  /**
+   * Finds the next match and focuses/selects the element.
+   */
+  public findNext(
+    query: FindChangeQuery,
+    afterElementId?: string,
+    afterIndex?: number
+  ): FindResult | null {
+    const matches = this.collectFindMatches(query);
+    if (matches.length === 0) return null;
+
+    let targetIdx = 0;
+    if (afterElementId !== undefined && afterIndex !== undefined) {
+      const foundIdx = matches.findIndex(
+        (m) =>
+          (m.elementId === afterElementId && m.index > afterIndex) ||
+          (m.elementId !== afterElementId && matches.indexOf(m) > matches.findIndex((x) => x.elementId === afterElementId && x.index === afterIndex))
+      );
+      if (foundIdx !== -1) {
+        targetIdx = foundIdx;
+      }
+    }
+
+    const chosen = matches[targetIdx];
+    if (chosen.spreadIndex !== this.state.activeSpreadIndex) {
+      this.setActiveSpread(chosen.spreadIndex);
+    }
+    this.selectElement(chosen.elementId);
+
+    return {
+      ...chosen,
+      totalMatches: matches.length,
+      currentMatchIndex: targetIdx + 1,
+    };
+  }
+
+  /**
+   * Replaces a specific match instance.
+   */
+  public change(
+    query: FindChangeQuery,
+    targetMatch: { elementId: string; index: number; length: number; matchText?: string }
+  ): boolean {
+    const el = this.getElementById(targetMatch.elementId);
+    if (!el || el.type !== 'text') return false;
+
+    const textEl = el as TextElement;
+    const currentText = textEl.text || '';
+    if (targetMatch.index < 0 || targetMatch.index + targetMatch.length > currentText.length) {
+      return false;
+    }
+
+    let replacement = query.changeText;
+    if (query.isGrep && targetMatch.matchText) {
+      const regex = this.compileFindRegex(query);
+      if (regex) {
+        replacement = targetMatch.matchText.replace(regex, query.changeText);
+      }
+    }
+
+    const newText =
+      currentText.slice(0, targetMatch.index) +
+      replacement +
+      currentText.slice(targetMatch.index + targetMatch.length);
+
+    this.updateElement(targetMatch.elementId, { text: newText });
+    return true;
+  }
+
+  /**
+   * Batch replaces all occurrences matching the query in scope.
+   */
+  public changeAll(query: FindChangeQuery): { replacementsCount: number; elementsAffected: number } {
+    const regex = this.compileFindRegex(query);
+    if (!regex) return { replacementsCount: 0, elementsAffected: 0 };
+
+    const matches = this.collectFindMatches(query);
+    if (matches.length === 0) return { replacementsCount: 0, elementsAffected: 0 };
+
+    const elMap = new Map<string, typeof matches>();
+    for (const m of matches) {
+      if (!elMap.has(m.elementId)) elMap.set(m.elementId, []);
+      elMap.get(m.elementId)!.push(m);
+    }
+
+    let replacementsCount = 0;
+    const elementsAffected = elMap.size;
+
+    for (const [elId] of elMap.entries()) {
+      const el = this.getElementById(elId);
+      if (el && el.type === 'text') {
+        const textEl = el as TextElement;
+        const oldText = textEl.text || '';
+        regex.lastIndex = 0;
+        let countForEl = 0;
+        const newText = oldText.replace(regex, (...args) => {
+          countForEl++;
+          if (query.isGrep) {
+            return query.changeText.replace(/\$(\d+)/g, (_, group) => args[parseInt(group, 10)] || '');
+          }
+          return query.changeText;
+        });
+        replacementsCount += countForEl;
+        textEl.text = newText;
+      }
+    }
+
+    if (replacementsCount > 0) {
+      this.pushHistory();
+      this.notify();
+    }
+
+    return { replacementsCount, elementsAffected };
   }
 
   private saveSnapshotsToStorage() {

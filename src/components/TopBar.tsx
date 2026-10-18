@@ -18,9 +18,11 @@ import { collabSession } from '../collab';
 
 interface TopBarProps {
   state: ProjectState;
+  onOpenFindChange?: () => void;
+  onOpenQuickApply?: () => void;
 }
 
-export function TopBar({ state }: TopBarProps) {
+export function TopBar({ state, onOpenFindChange, onOpenQuickApply }: TopBarProps) {
   const [title, setTitle] = useState(state.settings.title);
   const [showDataMergeModal, setShowDataMergeModal] = useState(false);
   const [showVersionModal, setShowVersionModal] = useState(false);
@@ -594,6 +596,30 @@ export function TopBar({ state }: TopBarProps) {
             </div>
           )}
         </div>
+
+        {onOpenQuickApply && (
+          <button
+            className="action-btn"
+            onClick={onOpenQuickApply}
+            title="Quick Apply Styles & Commands (Ctrl+/ or Ctrl+Enter)"
+            style={{ display: 'flex', alignItems: 'center', gap: '5px' }}
+          >
+            <span style={{ color: '#0d99ff', fontSize: '13px' }}>⚡</span>
+            <span>Quick Apply</span>
+          </button>
+        )}
+
+        {onOpenFindChange && (
+          <button
+            className="action-btn"
+            onClick={onOpenFindChange}
+            title="Find / Change (GREP) (Ctrl+F)"
+            style={{ display: 'flex', alignItems: 'center', gap: '5px' }}
+          >
+            <span style={{ fontSize: '11px' }}>🔍</span>
+            <span>Find</span>
+          </button>
+        )}
 
         {/* Version History Drawer Trigger */}
         <button

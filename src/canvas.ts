@@ -190,7 +190,24 @@ export class SpreadCanvas {
   private marqueeStartMmY: number = 0;
   private marqueeCurrentMmX: number = 0;
   private marqueeCurrentMmY: number = 0;
-  private dragInitialPositions: Map<string, { x: number; y: number; locked: boolean }> = new Map();
+  private dragInitialPositions: Map<string, { x: number; y: number; locked: boolean; width: number; height: number; pageId: string }> = new Map();
+  private activeSmartGuides: {
+    lines: {
+      orientation: 'v' | 'h';
+      posMm: number;
+      minMm: number;
+      maxMm: number;
+      pageIndex: number;
+    }[];
+    spacings: {
+      orientation: 'h' | 'v';
+      startMm: number;
+      endMm: number;
+      crossMm: number;
+      gapMm: number;
+      pageIndex: number;
+    }[];
+  } = { lines: [], spacings: [] };
 
   private dragStartX: number = 0;
   private dragStartY: number = 0;
@@ -656,6 +673,7 @@ export class SpreadCanvas {
     this.dragStartX = screenX;
     this.dragStartY = screenY;
     this.dragInitialPositions.clear();
+    this.activeSmartGuides = { lines: [], spacings: [] };
     const spread = stateManager.getActiveSpread();
     const ids = state.selectedElementIds && state.selectedElementIds.length > 0
       ? state.selectedElementIds
@@ -666,7 +684,14 @@ export class SpreadCanvas {
       if (el) {
         const elLayer = state.layers?.find(l => l.id === (el.layerId || 'layer-1'));
         const isLocked = !!el.locked || Boolean(elLayer?.locked);
-        this.dragInitialPositions.set(id, { x: el.x, y: el.y, locked: isLocked });
+        this.dragInitialPositions.set(id, {
+          x: el.x,
+          y: el.y,
+          locked: isLocked,
+          width: el.width,
+          height: el.height,
+          pageId: el.pageId,
+        });
       }
     }
   }
@@ -809,34 +834,212 @@ export class SpreadCanvas {
 
       const updates = this._dragUpdates;
       updates.length = 0;
-      for (const [id, initPos] of this.dragInitialPositions.entries()) {
-        if (initPos.locked) continue;
-        let newX = initPos.x + deltaMmX;
-        let newY = initPos.y + deltaMmY;
+      this.activeSmartGuides = { lines: [], spacings: [] };
 
-        if (state.snapToGuides && this.dragInitialPositions.size === 1) {
-          newX = this.snapCoordinate(newX, [
-            state.settings.margins.insideMm,
-            state.settings.margins.outsideMm,
-            0,
-            state.settings.widthMm,
-          ]);
-          newY = this.snapCoordinate(newY, [
-            state.settings.margins.topMm,
-            state.settings.margins.bottomMm,
-            0,
-            state.settings.heightMm,
-          ]);
+      if (state.snapToGuides && this.dragInitialPositions.size === 1) {
+        const spread = stateManager.getActiveSpread();
+        const [id, initPos] = Array.from(this.dragInitialPositions.entries())[0];
+        if (!initPos.locked) {
+          let newX = initPos.x + deltaMmX;
+          let newY = initPos.y + deltaMmY;
+          const w = initPos.width;
+          const h = initPos.height;
+          const pageIdx = Math.max(0, spread.pages.findIndex((p) => p.id === initPos.pageId));
+          const pageWidthMm = state.settings.widthMm;
+          const pageHeightMm = state.settings.heightMm;
+          const snapThresholdMm = 2.0;
+
+          const otherElements = spread.elements.filter((e) => e.id !== id);
+
+          // 1. X-Axis Smart Guides (vertical laser lines)
+          let bestSnapDiffX = Infinity;
+          let snappedNewX = newX;
+          let activeLineX: { posMm: number; minMm: number; maxMm: number } | null = null;
+
+          const testPointsX = [
+            { offset: 0, type: 'left' },
+            { offset: w / 2, type: 'center' },
+            { offset: w, type: 'right' },
+          ];
+
+          const targetAnchorsX: { posMm: number; minY: number; maxY: number }[] = [];
+
+          // Page borders & center & margins
+          targetAnchorsX.push({ posMm: 0, minY: 0, maxY: pageHeightMm });
+          targetAnchorsX.push({ posMm: pageWidthMm / 2, minY: 0, maxY: pageHeightMm });
+          targetAnchorsX.push({ posMm: pageWidthMm, minY: 0, maxY: pageHeightMm });
+          targetAnchorsX.push({
+            posMm: state.settings.margins.insideMm,
+            minY: state.settings.margins.topMm,
+            maxY: pageHeightMm - state.settings.margins.bottomMm,
+          });
+          targetAnchorsX.push({
+            posMm: pageWidthMm - state.settings.margins.outsideMm,
+            minY: state.settings.margins.topMm,
+            maxY: pageHeightMm - state.settings.margins.bottomMm,
+          });
+
+          // Other elements
+          for (const other of otherElements) {
+            const oMinY = Math.min(newY, other.y);
+            const oMaxY = Math.max(newY + h, other.y + other.height);
+            targetAnchorsX.push({ posMm: other.x, minY: oMinY, maxY: oMaxY });
+            targetAnchorsX.push({ posMm: other.x + other.width / 2, minY: oMinY, maxY: oMaxY });
+            targetAnchorsX.push({ posMm: other.x + other.width, minY: oMinY, maxY: oMaxY });
+          }
+
+          for (const tp of testPointsX) {
+            const curTestX = newX + tp.offset;
+            for (const target of targetAnchorsX) {
+              const diff = Math.abs(curTestX - target.posMm);
+              if (diff <= snapThresholdMm && diff < bestSnapDiffX) {
+                bestSnapDiffX = diff;
+                snappedNewX = target.posMm - tp.offset;
+                activeLineX = {
+                  posMm: target.posMm,
+                  minMm: Math.min(target.minY, newY) - 4,
+                  maxMm: Math.max(target.maxY, newY + h) + 4,
+                };
+              }
+            }
+          }
+
+          if (activeLineX) {
+            newX = snappedNewX;
+            this.activeSmartGuides.lines.push({
+              orientation: 'v',
+              posMm: activeLineX.posMm,
+              minMm: activeLineX.minMm,
+              maxMm: activeLineX.maxMm,
+              pageIndex: pageIdx,
+            });
+          }
+
+          // 2. Y-Axis Smart Guides (horizontal laser lines)
+          let bestSnapDiffY = Infinity;
+          let snappedNewY = newY;
+          let activeLineY: { posMm: number; minMm: number; maxMm: number } | null = null;
+
+          const testPointsY = [
+            { offset: 0, type: 'top' },
+            { offset: h / 2, type: 'center' },
+            { offset: h, type: 'bottom' },
+          ];
+
+          const targetAnchorsY: { posMm: number; minX: number; maxX: number }[] = [];
+
+          // Page borders & center & margins
+          targetAnchorsY.push({ posMm: 0, minX: 0, maxX: pageWidthMm });
+          targetAnchorsY.push({ posMm: pageHeightMm / 2, minX: 0, maxX: pageWidthMm });
+          targetAnchorsY.push({ posMm: pageHeightMm, minX: 0, maxX: pageWidthMm });
+          targetAnchorsY.push({
+            posMm: state.settings.margins.topMm,
+            minX: state.settings.margins.insideMm,
+            maxX: pageWidthMm - state.settings.margins.outsideMm,
+          });
+          targetAnchorsY.push({
+            posMm: pageHeightMm - state.settings.margins.bottomMm,
+            minX: state.settings.margins.insideMm,
+            maxX: pageWidthMm - state.settings.margins.outsideMm,
+          });
+
+          // Other elements
+          for (const other of otherElements) {
+            const oMinX = Math.min(newX, other.x);
+            const oMaxX = Math.max(newX + w, other.x + other.width);
+            targetAnchorsY.push({ posMm: other.y, minX: oMinX, maxX: oMaxX });
+            targetAnchorsY.push({ posMm: other.y + other.height / 2, minX: oMinX, maxX: oMaxX });
+            targetAnchorsY.push({ posMm: other.y + other.height, minX: oMinX, maxX: oMaxX });
+          }
+
+          for (const tp of testPointsY) {
+            const curTestY = newY + tp.offset;
+            for (const target of targetAnchorsY) {
+              const diff = Math.abs(curTestY - target.posMm);
+              if (diff <= snapThresholdMm && diff < bestSnapDiffY) {
+                bestSnapDiffY = diff;
+                snappedNewY = target.posMm - tp.offset;
+                activeLineY = {
+                  posMm: target.posMm,
+                  minMm: Math.min(target.minX, newX) - 4,
+                  maxMm: Math.max(target.maxX, newX + w) + 4,
+                };
+              }
+            }
+          }
+
+          if (activeLineY) {
+            newY = snappedNewY;
+            this.activeSmartGuides.lines.push({
+              orientation: 'h',
+              posMm: activeLineY.posMm,
+              minMm: activeLineY.minMm,
+              maxMm: activeLineY.maxMm,
+              pageIndex: pageIdx,
+            });
+          }
+
+          // 3. Distance Snapping (Equal Gaps between horizontal neighbors)
+          const leftNeighbors = otherElements.filter((e) => (e.x + e.width) <= newX + snapThresholdMm);
+          const rightNeighbors = otherElements.filter((e) => e.x >= (newX + w) - snapThresholdMm);
+
+          if (leftNeighbors.length > 0 && rightNeighbors.length > 0) {
+            leftNeighbors.sort((a, b) => (b.x + b.width) - (a.x + a.width));
+            rightNeighbors.sort((a, b) => a.x - b.x);
+            const leftEl = leftNeighbors[0];
+            const rightEl = rightNeighbors[0];
+
+            const gap1 = newX - (leftEl.x + leftEl.width);
+            const gap2 = rightEl.x - (newX + w);
+
+            if (gap1 > 1 && gap2 > 1 && Math.abs(gap1 - gap2) <= snapThresholdMm) {
+              const equalGap = (gap1 + gap2) / 2;
+              newX = (leftEl.x + leftEl.width) + equalGap;
+              this.activeSmartGuides.spacings.push({
+                orientation: 'h',
+                startMm: leftEl.x + leftEl.width,
+                endMm: newX,
+                crossMm: newY + h / 2,
+                gapMm: equalGap,
+                pageIndex: pageIdx,
+              });
+              this.activeSmartGuides.spacings.push({
+                orientation: 'h',
+                startMm: newX + w,
+                endMm: rightEl.x,
+                crossMm: newY + h / 2,
+                gapMm: equalGap,
+                pageIndex: pageIdx,
+              });
+            }
+          }
+
+          updates.push({
+            id,
+            partial: {
+              x: Math.round(newX * 10) / 10,
+              y: Math.round(newY * 10) / 10,
+            },
+          });
         }
-
-        updates.push({
-          id,
-          partial: {
-            x: Math.round(newX * 10) / 10,
-            y: Math.round(newY * 10) / 10,
-          },
-        });
+      } else {
+        for (const [id, initPos] of this.dragInitialPositions.entries()) {
+          if (initPos.locked) continue;
+          updates.push({
+            id,
+            partial: {
+              x: Math.round((initPos.x + deltaMmX) * 10) / 10,
+              y: Math.round((initPos.y + deltaMmY) * 10) / 10,
+            },
+          });
+        }
       }
+
+      if (updates.length > 0) {
+        stateManager.updateElements(updates);
+      }
+      this.render();
+      return;
 
       if (updates.length > 0) {
         stateManager.updateElements(updates);
@@ -937,6 +1140,8 @@ export class SpreadCanvas {
     if (this.isDragging) {
       this.isDragging = false;
       this.dragInitialPositions.clear();
+      this.activeSmartGuides = { lines: [], spacings: [] };
+      this.render();
     }
     if (this.isResizing) {
       this.isResizing = false;
@@ -3116,6 +3321,11 @@ export class SpreadCanvas {
       );
     }
 
+    // Draw Dynamic Smart Magnetic Guides & Distance Snapping
+    if (!state.previewMode && this.isDragging && this.activeSmartGuides) {
+      this.drawSmartGuides(ctx, origin, pxPerMm, pageWidthMm);
+    }
+
     // Draw real-time collaboration peers
     const peers = collabSession.getPeers();
     if (peers.length > 0) {
@@ -3312,6 +3522,111 @@ export class SpreadCanvas {
 
     ctx.fillStyle = '#ffffff';
     ctx.fillText(`${hMm.toFixed(1)} mm`, curX, centerY);
+
+    ctx.restore();
+  }
+
+  private drawSmartGuides(
+    ctx: CanvasRenderingContext2D,
+    origin: { x: number; y: number },
+    pxPerMm: number,
+    pageWidthMm: number
+  ) {
+    if (!this.activeSmartGuides) return;
+    const { lines, spacings } = this.activeSmartGuides;
+    if (lines.length === 0 && spacings.length === 0) return;
+
+    ctx.save();
+
+    // 1. Draw Smart Guide Alignment Lines (InDesign Smart Magenta #e6007e)
+    for (const line of lines) {
+      const pageStartMm = line.pageIndex * pageWidthMm;
+      ctx.strokeStyle = '#e6007e';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+
+      if (line.orientation === 'v') {
+        const screenX = origin.x + (pageStartMm + line.posMm) * pxPerMm;
+        const screenY1 = origin.y + line.minMm * pxPerMm;
+        const screenY2 = origin.y + line.maxMm * pxPerMm;
+
+        ctx.beginPath();
+        ctx.moveTo(screenX, screenY1);
+        ctx.lineTo(screenX, screenY2);
+        ctx.stroke();
+
+        // Center alignment tick mark
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#e6007e';
+        ctx.fillRect(screenX - 2.5, (screenY1 + screenY2) / 2 - 2.5, 5, 5);
+      } else {
+        const screenY = origin.y + line.posMm * pxPerMm;
+        const screenX1 = origin.x + (pageStartMm + line.minMm) * pxPerMm;
+        const screenX2 = origin.x + (pageStartMm + line.maxMm) * pxPerMm;
+
+        ctx.beginPath();
+        ctx.moveTo(screenX1, screenY);
+        ctx.lineTo(screenX2, screenY);
+        ctx.stroke();
+
+        // Center alignment tick mark
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#e6007e';
+        ctx.fillRect((screenX1 + screenX2) / 2 - 2.5, screenY - 2.5, 5, 5);
+      }
+    }
+
+    // 2. Draw Equal Spacing Distance Indicators (Cyan dimension brackets + pills)
+    for (const sp of spacings) {
+      const pageStartMm = sp.pageIndex * pageWidthMm;
+      const x1 = origin.x + (pageStartMm + sp.startMm) * pxPerMm;
+      const x2 = origin.x + (pageStartMm + sp.endMm) * pxPerMm;
+      const y = origin.y + sp.crossMm * pxPerMm;
+
+      ctx.strokeStyle = '#00e5ff';
+      ctx.fillStyle = '#00e5ff';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([]);
+
+      // Dimension line
+      ctx.beginPath();
+      ctx.moveTo(x1, y);
+      ctx.lineTo(x2, y);
+      // End bracket bars
+      ctx.moveTo(x1, y - 5);
+      ctx.lineTo(x1, y + 5);
+      ctx.moveTo(x2, y - 5);
+      ctx.lineTo(x2, y + 5);
+      ctx.stroke();
+
+      // Dimension badge
+      const label = `↔ ${sp.gapMm.toFixed(1)} mm`;
+      ctx.font = 'bold 9px Inter, system-ui, sans-serif';
+      const textW = ctx.measureText(label).width;
+      const badgeW = textW + 10;
+      const badgeH = 16;
+      const badgeX = (x1 + x2) / 2 - badgeW / 2;
+      const badgeY = y - 20;
+
+      ctx.fillStyle = 'rgba(18, 18, 22, 0.92)';
+      ctx.strokeStyle = '#00e5ff';
+      ctx.lineWidth = 1;
+
+      if (typeof (ctx as any).roundRect === 'function') {
+        ctx.beginPath();
+        (ctx as any).roundRect(badgeX, badgeY, badgeW, badgeH, 3);
+        ctx.fill();
+        ctx.stroke();
+      } else {
+        ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
+        ctx.strokeRect(badgeX, badgeY, badgeW, badgeH);
+      }
+
+      ctx.fillStyle = '#00e5ff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, (x1 + x2) / 2, badgeY + badgeH / 2);
+    }
 
     ctx.restore();
   }
