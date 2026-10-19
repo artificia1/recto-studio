@@ -142,6 +142,10 @@ Generates optimized, minified production assets into the `dist/` folder.
 
 ---
 
-## License
+## License & Legal Notices
 
-Released under the **MIT License**. Copyright (c) 2022-2026 ABHINAV SIDHU. Created by independent creators for independent creators.
+Released under the **MIT License**. Copyright (c) 2022-2026 ABHINAV SIDHU. All rights reserved.
+
+---
+
+Recto Studio™ and the Recto logo are trademarks of Abhinav Sidhu. The source code is open, but commercial distribution under the name 'Recto' or 'Recto Studio' requires written authorization.

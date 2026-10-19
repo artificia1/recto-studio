@@ -21,6 +21,7 @@
     "zine"
   ],
   "license": "MIT",
+  "author": "Abhinav Sidhu <artificia1@users.noreply.github.com>",
   "type": "module",
   "scripts": {
     "dev": "vite",
