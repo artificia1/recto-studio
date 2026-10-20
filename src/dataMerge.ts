@@ -101,7 +101,7 @@ export function parseCsv(csvText: string): DataMergeResult {
 export function substituteTokens(templateStr: string, record: Record<string, string>): string {
   if (!templateStr || typeof templateStr !== 'string') return templateStr;
 
-  return templateStr.replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (match, key) => {
+  return templateStr.replace(/\{\{\s*([a-zA-Z0-9_.[\]-]+)\s*\}\}/g, (match, key) => {
     // Exact match
     if (record[key] !== undefined) {
       return record[key];
@@ -205,4 +205,173 @@ export function generateMergedSpreads(
   }
 
   return mergedSpreads;
+}
+
+/**
+ * Ingests either JSON dataset (array of objects or envelope) or CSV text.
+ */
+export function parseDataset(rawInput: string): DataMergeResult {
+  if (!rawInput || typeof rawInput !== 'string') {
+    return { headers: [], records: [] };
+  }
+
+  const trimmed = rawInput.trim();
+  if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      let items: any[] = [];
+      if (Array.isArray(parsed)) {
+        items = parsed;
+      } else if (parsed && typeof parsed === 'object') {
+        const candidateKey = ['products', 'data', 'records', 'items', 'rows', 'catalog', 'users', 'entries'].find(
+          (k) => Array.isArray(parsed[k])
+        );
+        if (candidateKey) {
+          items = parsed[candidateKey];
+        } else {
+          const arrVal = Object.values(parsed).find((v) => Array.isArray(v));
+          items = arrVal ? (arrVal as any[]) : [parsed];
+        }
+      }
+
+      if (items.length === 0) {
+        return { headers: [], records: [] };
+      }
+
+      const headerSet = new Set<string>();
+      items.forEach((item) => {
+        if (item && typeof item === 'object') {
+          Object.keys(item).forEach((k) => headerSet.add(k));
+        }
+      });
+
+      const headers = Array.from(headerSet);
+      const records: Record<string, string>[] = items.map((item) => {
+        const rec: Record<string, string> = {};
+        for (const h of headers) {
+          const val = item ? item[h] : '';
+          rec[h] = val !== undefined && val !== null ? String(val) : '';
+        }
+        return rec;
+      });
+
+      return { headers, records };
+    } catch {
+      return parseCsv(rawInput);
+    }
+  }
+
+  return parseCsv(rawInput);
+}
+
+/**
+ * Enhanced Spread Repeater with N-Up multi-card pagination.
+ * If templateSpread has N product slots (e.g. 4 cards per spread) or if recordsPerPage is specified,
+ * batches records and continuously generates spreads.
+ */
+export function generateRepeaterSpreads(
+  templateSpread: Spread,
+  records: Record<string, string>[],
+  options: {
+    startSpreadIndex?: number;
+    startPageNumber?: number;
+    recordsPerSpread?: number;
+  } = {}
+): Spread[] {
+  if (!templateSpread || !records || records.length === 0) {
+    return [];
+  }
+
+  const startSpreadIndex = options.startSpreadIndex || 0;
+  let pageCounter = options.startPageNumber || 1;
+
+  let itemsPerSpread = options.recordsPerSpread || 1;
+  if (!options.recordsPerSpread) {
+    let maxDetectedIndex = 0;
+    const tokenRegex = /\{\{\s*(?:items|records|products|item|product)?\[?(\d+)\]?[._]([a-zA-Z0-9_.-]+)\s*\}\}/gi;
+    for (const el of templateSpread.elements) {
+      const textToScan = (el as any).text || (el as any).src || '';
+      let m: RegExpExecArray | null;
+      while ((m = tokenRegex.exec(textToScan)) !== null) {
+        const idx = parseInt(m[1], 10);
+        if (!isNaN(idx) && idx + 1 > maxDetectedIndex) {
+          maxDetectedIndex = idx + 1;
+        }
+      }
+    }
+    if (maxDetectedIndex > 1) {
+      itemsPerSpread = maxDetectedIndex;
+    }
+  }
+
+  const mergedSpreads: Spread[] = [];
+  const totalSpreadsNeeded = Math.ceil(records.length / itemsPerSpread);
+
+  for (let sIdx = 0; sIdx < totalSpreadsNeeded; sIdx++) {
+    const spreadIndex = startSpreadIndex + sIdx;
+    const spreadId = `repeater-spread-${spreadIndex}-${Date.now()}`;
+    const batchStart = sIdx * itemsPerSpread;
+    const batch = records.slice(batchStart, batchStart + itemsPerSpread);
+
+    const pageIdMap = new Map<string, string>();
+    const newPages: Page[] = templateSpread.pages.map((oldP) => {
+      const newPageId = `repeater-page-${pageCounter}`;
+      pageIdMap.set(oldP.id, newPageId);
+      const page: Page = {
+        id: newPageId,
+        pageNumber: pageCounter,
+        side: oldP.side,
+      };
+      pageCounter++;
+      return page;
+    });
+
+    const spreadRecord: Record<string, string> = {};
+
+    if (batch[0]) {
+      Object.assign(spreadRecord, batch[0]);
+    }
+
+    batch.forEach((rec, slotIdx) => {
+      for (const [k, v] of Object.entries(rec)) {
+        spreadRecord[`[${slotIdx}].${k}`] = v;
+        spreadRecord[`${slotIdx}.${k}`] = v;
+        spreadRecord[`item[${slotIdx}].${k}`] = v;
+        spreadRecord[`items[${slotIdx}].${k}`] = v;
+        spreadRecord[`product[${slotIdx}].${k}`] = v;
+        spreadRecord[`products[${slotIdx}].${k}`] = v;
+        spreadRecord[`${k}_${slotIdx}`] = v;
+        spreadRecord[`${k}_${slotIdx + 1}`] = v;
+      }
+    });
+
+    const newElements: CanvasElement[] = templateSpread.elements.map((el, elIdx) => {
+      const cloned = substituteElementTokens(el, spreadRecord);
+      cloned.id = `repeater-el-${spreadIndex}-${elIdx}`;
+      cloned.pageId = pageIdMap.get(el.pageId) || newPages[0].id;
+      return cloned;
+    });
+
+    mergedSpreads.push({
+      id: spreadId,
+      spreadIndex,
+      pages: newPages,
+      elements: newElements,
+      masterSpreadId: templateSpread.masterSpreadId,
+    });
+  }
+
+  return mergedSpreads;
+}
+
+/**
+ * Fetches dataset from a remote URL (Google Sheets CSV or REST API endpoint).
+ */
+export async function fetchRemoteDataset(url: string): Promise<DataMergeResult> {
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    throw new Error(`Failed to fetch dataset from ${url} (HTTP ${resp.status})`);
+  }
+  const text = await resp.text();
+  return parseDataset(text);
 }

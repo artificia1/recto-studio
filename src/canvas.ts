@@ -683,7 +683,7 @@ export class SpreadCanvas {
       const el = spread.elements.find(item => item.id === id);
       if (el) {
         const elLayer = state.layers?.find(l => l.id === (el.layerId || 'layer-1'));
-        const isLocked = !!el.locked || Boolean(elLayer?.locked);
+        const isLocked = !!el.locked || Boolean(elLayer?.locked) || Boolean(el.editorialOnly);
         this.dragInitialPositions.set(id, {
           x: el.x,
           y: el.y,
@@ -1898,7 +1898,7 @@ export class SpreadCanvas {
     const el = spread.elements.find(item => item.id === state.selectedElementId);
     if (!el || el.type !== 'path') return null;
     const elLayer = state.layers?.find(l => l.id === (el.layerId || 'layer-1'));
-    if (el.locked || Boolean(elLayer?.locked) || elLayer?.visible === false) return null;
+    if (el.locked || Boolean(elLayer?.locked) || elLayer?.visible === false || Boolean(el.editorialOnly)) return null;
 
     const pathEl = el as VectorPathElement;
     const origin = this.getSpreadScreenOrigin(state);
@@ -2020,7 +2020,7 @@ export class SpreadCanvas {
     const el = spread.elements.find(item => item.id === state.selectedElementId);
     if (!el) return null;
     const elLayer = state.layers?.find(l => l.id === (el.layerId || 'layer-1'));
-    if (el.locked || Boolean(elLayer?.locked) || elLayer?.visible === false) return null;
+    if (el.locked || Boolean(elLayer?.locked) || elLayer?.visible === false || Boolean(el.editorialOnly)) return null;
 
     const pageIdx = spread.pages.findIndex(p => p.id === el.pageId);
     const { pageWidthMm } = this.getSpreadDimensions(state);
@@ -3028,38 +3028,58 @@ export class SpreadCanvas {
         const elLayer = layerMap.get(el.layerId || 'layer-1') || state.layers?.[0];
         const layerColor = elLayer?.colorHex || '#0d99ff';
         const isElementLocked = el.locked || Boolean(elLayer?.locked);
+        const isEditorial = Boolean(el.editorialOnly);
 
-        ctx.strokeStyle = isElementLocked ? '#f59e0b' : layerColor;
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(elScreenX, elScreenY, elScreenW, elScreenH);
+        if (isEditorial) {
+          ctx.strokeStyle = '#a855f7';
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([4, 4]);
+          ctx.strokeRect(elScreenX, elScreenY, elScreenW, elScreenH);
+          ctx.setLineDash([]);
 
-        if (isElementLocked) {
+          ctx.fillStyle = '#a855f7';
+          ctx.fillRect(elScreenX, elScreenY - 14, 82, 14);
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 8px Inter, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText('EDITORIAL LOCK', elScreenX + 41, elScreenY - 3);
+        } else if (isElementLocked) {
+          ctx.strokeStyle = '#f59e0b';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(elScreenX, elScreenY, elScreenW, elScreenH);
+
           ctx.fillStyle = '#f59e0b';
           ctx.fillRect(elScreenX, elScreenY - 14, 28, 14);
           ctx.fillStyle = '#111111';
           ctx.font = 'bold 8px Inter, sans-serif';
           ctx.textAlign = 'center';
           ctx.fillText('LOCK', elScreenX + 14, elScreenY - 3);
-        } else if (!state.selectedElementIds || state.selectedElementIds.length <= 1) {
-          const handleSize = 6;
-          ctx.fillStyle = '#ffffff';
+        } else {
           ctx.strokeStyle = layerColor;
           ctx.lineWidth = 1.5;
+          ctx.strokeRect(elScreenX, elScreenY, elScreenW, elScreenH);
 
-          const handlePoints = [
-            [elScreenX, elScreenY],
-            [elScreenX + elScreenW / 2, elScreenY],
-            [elScreenX + elScreenW, elScreenY],
-            [elScreenX + elScreenW, elScreenY + elScreenH / 2],
-            [elScreenX + elScreenW, elScreenY + elScreenH],
-            [elScreenX + elScreenW / 2, elScreenY + elScreenH],
-            [elScreenX, elScreenY + elScreenH],
-            [elScreenX, elScreenY + elScreenH / 2],
-          ];
+          if (!state.selectedElementIds || state.selectedElementIds.length <= 1) {
+            const handleSize = 6;
+            ctx.fillStyle = '#ffffff';
+            ctx.strokeStyle = layerColor;
+            ctx.lineWidth = 1.5;
 
-          for (const [hx, hy] of handlePoints) {
-            ctx.fillRect(hx - handleSize / 2, hy - handleSize / 2, handleSize, handleSize);
-            ctx.strokeRect(hx - handleSize / 2, hy - handleSize / 2, handleSize, handleSize);
+            const handlePoints = [
+              [elScreenX, elScreenY],
+              [elScreenX + elScreenW / 2, elScreenY],
+              [elScreenX + elScreenW, elScreenY],
+              [elScreenX + elScreenW, elScreenY + elScreenH / 2],
+              [elScreenX + elScreenW, elScreenY + elScreenH],
+              [elScreenX + elScreenW / 2, elScreenY + elScreenH],
+              [elScreenX, elScreenY + elScreenH],
+              [elScreenX, elScreenY + elScreenH / 2],
+            ];
+
+            for (const [hx, hy] of handlePoints) {
+              ctx.fillRect(hx - handleSize / 2, hy - handleSize / 2, handleSize, handleSize);
+              ctx.strokeRect(hx - handleSize / 2, hy - handleSize / 2, handleSize, handleSize);
+            }
           }
         }
 

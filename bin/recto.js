@@ -30,7 +30,7 @@ if (!process.env._RECTO_TSX) {
   const { exportDocumentToPdf } = await import('../src/export/pdfExport.js');
   const { generateFlipbookHtml } = await import('../src/flipbookExport.js');
   const { exportDocumentToEpub } = await import('../src/epubExport.js');
-  const { parseCsv, generateMergedSpreads } = await import('../src/dataMerge.js');
+  const { parseDataset, generateRepeaterSpreads, fetchRemoteDataset } = await import('../src/dataMerge.js');
   const { bookEngine } = await import('../src/engine/bookEngine.js');
 
   function printHelp() {
@@ -148,17 +148,25 @@ Examples:
       }
 
       if (parsed.data) {
-        const dataPath = path.resolve(process.cwd(), parsed.data);
-        if (!fs.existsSync(dataPath)) {
-          console.error(`Error: CSV data file not found: ${dataPath}`);
-          process.exitCode = 1;
-          return 1;
+        let dataset;
+        if (parsed.data.startsWith('http://') || parsed.data.startsWith('https://')) {
+          console.log(`[Recto CLI] Fetching remote dataset: ${parsed.data}...`);
+          dataset = await fetchRemoteDataset(parsed.data);
+        } else {
+          const dataPath = path.resolve(process.cwd(), parsed.data);
+          if (!fs.existsSync(dataPath)) {
+            console.error(`Error: Dataset file not found: ${dataPath}`);
+            process.exitCode = 1;
+            return 1;
+          }
+          console.log(`[Recto CLI] Ingesting dataset: ${path.basename(dataPath)}...`);
+          const raw = fs.readFileSync(dataPath, 'utf8');
+          dataset = parseDataset(raw);
         }
-        console.log(`[Recto CLI] Ingesting CSV dataset: ${path.basename(dataPath)}...`);
-        const csvRaw = fs.readFileSync(dataPath, 'utf8');
-        const csvData = parseCsv(csvRaw);
-        console.log(`[Recto CLI] Merging ${csvData.rows.length} records into publication layout...`);
-        const mergedSpreads = generateMergedSpreads(state, csvData);
+
+        console.log(`[Recto CLI] Merging ${dataset.records.length} records into publication layout...`);
+        const templateSpread = state.spreads[0];
+        const mergedSpreads = generateRepeaterSpreads(templateSpread, dataset.records);
         state.spreads = mergedSpreads;
         console.log(`[Recto CLI] Successfully generated ${mergedSpreads.length} dynamic spreads.`);
       }

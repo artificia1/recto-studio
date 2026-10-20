@@ -27,6 +27,8 @@ import { bookEngine } from './src/engine/bookEngine';
 import { jsPDF } from 'jspdf';
 import { calculateImpositionPlan } from './src/export/impositionEngine';
 import { calculateCoverSpineMetrics, createWrapCoverSpreadInProject, PAPER_STOCK_PRESETS } from './src/engine/spineCalculator';
+import { parseDataset, generateRepeaterSpreads } from './src/dataMerge';
+import { getFreeToneColor, getAllFreeToneColors, generatePdfSeparationDict } from './src/engine/spotColors';
 
 console.log('Running Recto Core Engine TypeScript Verification Tests...\n');
 
@@ -3041,8 +3043,146 @@ assert(firstSpread.elements.some((e) => e.name === 'Spine Title'), 'Cover spread
 assert(firstSpread.elements.some((e) => e.name === 'ISBN Barcode Box'), 'Cover spread must have barcode exclusion box');
 console.log('✓ Prepress Booklet Imposition Engine and Wrap Spine Calculator verified.');
 
+// --- Suite 51: OpenSpot / FreeTone Separation, Automated Data Ingestion & Editorial Locks ---
+console.log('\n--- Suite 51: OpenSpot / FreeTone Separation, Automated Data Ingestion & Editorial Locks ---');
+
+// 1. Editorial Frame Lock
+const editLockEl: TextElement = {
+  id: 'suite51-editorial-tf',
+  type: 'text',
+  pageId: stateManager.getActiveSpread().pages[0].id,
+  x: 20,
+  y: 20,
+  width: 100,
+  height: 40,
+  rotation: 0,
+  opacity: 1,
+  zIndex: 10,
+  locked: false,
+  text: 'Copywriters can edit this copy freely.',
+  fontFamily: 'Inter',
+  fontSizePt: 12,
+  lineHeight: 1.2,
+  letterSpacingPt: 0,
+  color: '#000000',
+  alignment: 'left',
+  columns: 1,
+  columnGutterMm: 4,
+  backgroundColor: 'transparent',
+  borderColor: 'transparent',
+  borderWidthMm: 0,
+  paddingMm: 0,
+};
+stateManager.addElement(editLockEl);
+assert.strictEqual(stateManager.getElementById('suite51-editorial-tf')?.editorialOnly, undefined);
+
+stateManager.toggleEditorialLock(['suite51-editorial-tf']);
+const editorialLockedEl = stateManager.getElementById('suite51-editorial-tf') as TextElement;
+assert.strictEqual(editorialLockedEl.editorialOnly, true, 'Element editorialOnly flag must be toggled on');
+
+// Alignment tools must protect editorial-locked element geometry
+const otherAlignEl: TextElement = {
+  ...editLockEl,
+  id: 'suite51-other-tf',
+  x: 80,
+  y: 20,
+};
+stateManager.addElement(otherAlignEl);
+stateManager.selectElements(['suite51-editorial-tf', 'suite51-other-tf']);
+stateManager.alignElements('left');
+assert.strictEqual(stateManager.getElementById('suite51-editorial-tf')?.x, 20, 'Editorial locked element X must not change during alignment');
+
+stateManager.toggleEditorialLock(['suite51-editorial-tf']);
+assert.strictEqual(stateManager.getElementById('suite51-editorial-tf')?.editorialOnly, false, 'Element editorialOnly flag toggled off');
+
+// 2. Automated Data-Driven Ingestion & Spread Repeater
+const jsonArrayRaw = JSON.stringify([
+  { sku: 'A100', name: 'Chronicle Watch', price: '$240' },
+  { sku: 'B200', name: 'Field Compass', price: '$85' },
+  { sku: 'C300', name: 'Leather Journal', price: '$35' },
+  { sku: 'D400', name: 'Brass Pen', price: '$55' },
+]);
+
+const parsedJson = parseDataset(jsonArrayRaw);
+assert.strictEqual(parsedJson.records.length, 4, 'Must parse 4 records from JSON array');
+assert(parsedJson.headers.includes('name'), 'Headers must include name');
+assert.strictEqual(parsedJson.records[0].name, 'Chronicle Watch');
+
+const jsonEnvelopeRaw = JSON.stringify({
+  products: [
+    { title: 'Alpha', tag: 'pro' },
+    { title: 'Beta', tag: 'free' },
+  ],
+});
+const parsedEnvelope = parseDataset(jsonEnvelopeRaw);
+assert.strictEqual(parsedEnvelope.records.length, 2, 'Must extract array from object envelope');
+assert.strictEqual(parsedEnvelope.records[1].title, 'Beta');
+
+// Spread Repeater with 2 cards per spread
+const repeaterTemplateSpread = {
+  ...stateManager.getActiveSpread(),
+  elements: [
+    {
+      ...editLockEl,
+      id: 'template-el-0',
+      text: 'Item: {{[0].name}} - {{[0].price}}',
+    },
+    {
+      ...editLockEl,
+      id: 'template-el-1',
+      y: 70,
+      text: 'Item: {{[1].name}} - {{[1].price}}',
+    },
+  ],
+};
+const repeatedSpreads = generateRepeaterSpreads(repeaterTemplateSpread as any, parsedJson.records, {
+  recordsPerSpread: 2,
+});
+assert.strictEqual(repeatedSpreads.length, 2, '4 records with 2 per spread must generate exactly 2 spreads');
+const firstSpreadEl0 = repeatedSpreads[0].elements[0] as TextElement;
+const firstSpreadEl1 = repeatedSpreads[0].elements[1] as TextElement;
+assert.strictEqual(firstSpreadEl0.text, 'Item: Chronicle Watch - $240', 'Slot 0 substituted');
+assert.strictEqual(firstSpreadEl1.text, 'Item: Field Compass - $85', 'Slot 1 substituted');
+
+// 3. OpenSpot / FreeTone Separation Engine
+const ft185 = getFreeToneColor('FreeTone 185 C');
+assert(ft185, 'Must find FreeTone 185 C in standard palette');
+assert.strictEqual(ft185?.code, '185 C');
+assert.strictEqual(ft185?.cmyk[1], 0.93, 'Magenta component must be 0.93');
+
+const allSpots = getAllFreeToneColors();
+assert(allSpots.length >= 15, 'FreeTone palette must contain comprehensive spot swatches');
+
+const sepDict = generatePdfSeparationDict(ft185!);
+assert(sepDict.includes('/Separation'), 'Must output PostScript /Separation operator');
+assert(sepDict.includes('/FreeTone_185_C'), 'Must output normalized safe spot identifier');
+assert(sepDict.includes('/DeviceCMYK'), 'Must output fallback DeviceCMYK color space');
+
+// Prepress PDF Export with Spot Separation
+const spotTestState = {
+  ...stateManager.getState(),
+  spreads: [
+    {
+      ...stateManager.getActiveSpread(),
+      elements: [
+        {
+          ...editLockEl,
+          id: 'spot-color-text-el',
+          spotColor: 'FreeTone 185 C',
+        },
+      ],
+    },
+  ],
+};
+const spotPdfDoc = await exportDocumentToPdf(spotTestState as any, { includeCropMarks: false });
+const spotPdfOutput = spotPdfDoc.output();
+assert(spotPdfOutput.includes('/Separation'), 'Exported PDF must contain PostScript /Separation resource definition');
+assert(spotPdfOutput.includes('/FreeTone_185_C'), 'Exported PDF must reference FreeTone_185_C separation plate');
+
+console.log('✓ OpenSpot / FreeTone Separation, Automated Data Ingestion & Editorial Locks verified.');
+
 console.log('\n=============================================');
-console.log('ALL 50 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
+console.log('ALL 51 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
 console.log('=============================================\n');
 
 

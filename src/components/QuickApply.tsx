@@ -248,6 +248,14 @@ export function QuickApply({
       action: () => stateManager.toggleLock(),
     },
     {
+      id: 'cmd-editorial-lock',
+      kind: 'cmd',
+      title: 'Toggle Editorial Frame Lock',
+      subtitle: 'Copywriters can edit text, geometry and position locked',
+      shortcut: 'Ctrl+Alt+L',
+      action: () => stateManager.toggleEditorialLock(),
+    },
+    {
       id: 'cmd-delete',
       kind: 'cmd',
       title: 'Delete Selected Elements',

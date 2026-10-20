@@ -34,6 +34,12 @@ export function App() {
       } else if (isMod && e.shiftKey && (e.key === 'b' || e.key === 'B')) {
         e.preventDefault();
         setShowCoverSpine((prev) => !prev);
+      } else if (isMod && e.altKey && (e.key === 'l' || e.key === 'L')) {
+        e.preventDefault();
+        stateManager.toggleEditorialLock();
+      } else if (isMod && !e.shiftKey && (e.key === 'l' || e.key === 'L')) {
+        e.preventDefault();
+        stateManager.toggleLock();
       } else if (isMod && (e.key === 'f' || e.key === 'F')) {
         e.preventDefault();
         setShowFindChange((prev) => !prev);

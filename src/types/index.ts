@@ -162,6 +162,8 @@ export interface BaseElement {
   opacity: number; // 0 to 1
   zIndex: number;
   locked: boolean;
+  editorialOnly?: boolean;
+  spotColor?: string;
   layerId?: string;
   textWrap?: TextWrapSettings;
   masterSourceId?: string;

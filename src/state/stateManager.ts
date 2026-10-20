@@ -1885,9 +1885,26 @@ export class StateManager {
     this.notify();
   }
 
+  public toggleEditorialLock(ids?: string[]) {
+    const targetIds = ids || this.state.selectedElementIds;
+    if (targetIds.length === 0) return;
+    const spread = this.getActiveSpread();
+    const targetSet = new Set(targetIds);
+    const targetElements = spread.elements.filter(el => targetSet.has(el.id));
+    if (targetElements.length === 0) return;
+
+    const allEditorial = targetElements.every(el => el.editorialOnly);
+    const nextEditorial = !allEditorial;
+    targetElements.forEach(el => {
+      el.editorialOnly = nextEditorial;
+    });
+    this.pushHistory();
+    this.notify();
+  }
+
   public alignElements(direction: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') {
     const spread = this.getActiveSpread();
-    const selectedElements = spread.elements.filter(el => this.state.selectedElementIds.includes(el.id) && !el.locked);
+    const selectedElements = spread.elements.filter(el => this.state.selectedElementIds.includes(el.id) && !el.locked && !el.editorialOnly);
     if (selectedElements.length < 2) return;
 
     const pageWidthMm = this.state.settings.widthMm;

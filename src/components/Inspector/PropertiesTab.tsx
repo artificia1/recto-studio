@@ -3,6 +3,7 @@ import { stateManager, numberToSuperscript } from '../../state';
 import { fontManager } from '../../fontManager';
 import { PAGE_PRESETS, ProjectState, CanvasElement, TextElement, ImageElement, ShapeElement, TableElement, TableCell, ParagraphStyle, VectorPathElement } from '../../types';
 import { MathInput } from '../common/MathInput';
+import { getAllFreeToneColors } from '../../engine/spotColors';
 
 interface PropertiesTabProps {
   state: ProjectState;
@@ -122,14 +123,39 @@ export function PropertiesTab({ state }: PropertiesTabProps) {
       <div className="inspector-section">
         <div className="multi-sel-header">
           <div className="section-header" style={{ marginBottom: 0 }}>GEOMETRY & TRANSFORM</div>
-          <button
-            className={`lock-btn ${selectedEl.locked ? 'locked' : ''}`}
-            onClick={() => stateManager.toggleLock([selectedEl.id])}
-            title={selectedEl.locked ? 'Click to Unlock (Ctrl+L)' : 'Click to Lock (Ctrl+L)'}
-          >
-            {selectedEl.locked ? 'Unlock' : 'Lock'}
-          </button>
+          <div style={{ display: 'flex', gap: '4px' }}>
+            <button
+              className={`lock-btn ${selectedEl.editorialOnly ? 'locked' : ''}`}
+              onClick={() => stateManager.toggleEditorialLock([selectedEl.id])}
+              style={{
+                backgroundColor: selectedEl.editorialOnly ? '#7e22ce' : undefined,
+                color: selectedEl.editorialOnly ? '#ffffff' : undefined,
+              }}
+              title={selectedEl.editorialOnly ? 'Unlock Editorial Frame (Ctrl+Alt+L)' : 'Lock Frame Geometry for Copywriters (Ctrl+Alt+L)'}
+            >
+              {selectedEl.editorialOnly ? 'Editorial: Locked' : 'Editorial Lock'}
+            </button>
+            <button
+              className={`lock-btn ${selectedEl.locked ? 'locked' : ''}`}
+              onClick={() => stateManager.toggleLock([selectedEl.id])}
+              title={selectedEl.locked ? 'Click to Unlock (Ctrl+L)' : 'Click to Lock (Ctrl+L)'}
+            >
+              {selectedEl.locked ? 'Unlock' : 'Lock'}
+            </button>
+          </div>
         </div>
+
+        {selectedEl.editorialOnly && (
+          <div className="lock-banner" style={{ background: '#581c87', borderColor: '#a855f7' }}>
+            <span>Editorial Lock: Copywriters can edit text, layout is protected</span>
+            <button
+              className="sm-btn"
+              onClick={() => stateManager.toggleEditorialLock([selectedEl.id])}
+            >
+              Unlock
+            </button>
+          </div>
+        )}
 
         {selectedEl.locked && (
           <div className="lock-banner">
@@ -556,6 +582,28 @@ function TextInspector({
                 backgroundColor: (e.target as HTMLInputElement).value,
               })}
           />
+        </label>
+      </div>
+
+      <div className="input-field" style={{ marginTop: '8px' }}>
+        <label>
+          OpenSpot / FreeTone Spot Ink:
+          <select
+            value={element.spotColor || ''}
+            onChange={(e) => {
+              const val = (e.target as HTMLSelectElement).value;
+              stateManager.updateElement(element.id, {
+                spotColor: val || undefined,
+              });
+            }}
+          >
+            <option value="">None (Standard Process CMYK / RGB)</option>
+            {getAllFreeToneColors().map((spot) => (
+              <option key={spot.name} value={spot.name}>
+                {spot.name} ({spot.category})
+              </option>
+            ))}
+          </select>
         </label>
       </div>
 
@@ -1593,6 +1641,29 @@ function VectorPathInspector({ element }: { element: VectorPathElement }) {
             }
           />
           Transparent Fill
+        </label>
+      </div>
+
+      <div className="input-field" style={{ marginTop: '8px' }}>
+        <label>
+          OpenSpot / FreeTone Spot Ink:
+          <select
+            value={element.spotColor || ''}
+            disabled={element.locked}
+            onChange={(e) => {
+              const val = (e.target as HTMLSelectElement).value;
+              stateManager.updateElement(element.id, {
+                spotColor: val || undefined,
+              });
+            }}
+          >
+            <option value="">None (Standard Process CMYK / RGB)</option>
+            {getAllFreeToneColors().map((spot) => (
+              <option key={spot.name} value={spot.name}>
+                {spot.name} ({spot.category})
+              </option>
+            ))}
+          </select>
         </label>
       </div>
 

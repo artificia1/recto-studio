@@ -9,6 +9,7 @@ import { ProjectState, Page, Spread, TextElement, ImageElement, ShapeElement, Ve
 import { stateManager, numberToSuperscript } from '../state';
 import { assetStore } from '../engine/assetStore';
 import { tableEngine } from '../engine/tableEngine';
+import { getFreeToneColor, getSafeSpotName, generatePdfSeparationDict, FreeToneSpotColor } from '../engine/spotColors';
 
 export interface ExportOptions {
   includeCropMarks?: boolean;
@@ -79,6 +80,29 @@ export async function exportDocumentToPdf(
     targetSpreads = [state.spreads[state.activeSpreadIndex] || state.spreads[0]];
   } else if (Array.isArray(spreadRange)) {
     targetSpreads = state.spreads.filter((_, idx) => spreadRange.includes(idx));
+  }
+
+  // Register FreeTone Spot Colors in PDF ColorSpace Resource Dictionary
+  const usedSpotColors = new Map<string, FreeToneSpotColor>();
+  for (const spread of targetSpreads) {
+    for (const el of spread.elements) {
+      if (el.spotColor) {
+        const spot = getFreeToneColor(el.spotColor);
+        if (spot) usedSpotColors.set(spot.name, spot);
+      }
+    }
+  }
+
+  if (usedSpotColors.size > 0) {
+    (doc.internal.events as any).subscribe('putResources', () => {
+      let csDict = '/ColorSpace << ';
+      for (const [_, spot] of usedSpotColors) {
+        const safeName = getSafeSpotName(spot.name);
+        csDict += `/CS_${safeName} ${generatePdfSeparationDict(spot)} `;
+      }
+      csDict += '>>';
+      (doc.internal as any).write(csDict);
+    });
   }
 
   const pagesToExport: { page: Page; spread: Spread }[] = [];
@@ -194,21 +218,29 @@ export async function exportDocumentToPdf(
 
       if (el.type === 'shape') {
         const shape = el as ShapeElement;
-        applyCmykFillColor(doc, shape.fillColor);
+        if (shape.spotColor) {
+          applySpotColor(doc, shape.spotColor, false);
+        } else {
+          applyCmykFillColor(doc, shape.fillColor);
+        }
         applyCmykDrawColor(doc, shape.strokeColor);
         doc.setLineWidth(shape.strokeWidthMm || 0.2);
 
         if (shape.shapeKind === 'rectangle') {
-          doc.rect(elX, elY, shape.width, shape.height, shape.fillColor && shape.fillColor !== 'transparent' ? 'FD' : 'S');
+          doc.rect(elX, elY, shape.width, shape.height, (shape.fillColor && shape.fillColor !== 'transparent') || shape.spotColor ? 'FD' : 'S');
         } else if (shape.shapeKind === 'ellipse') {
-          doc.ellipse(elX + shape.width / 2, elY + shape.height / 2, shape.width / 2, shape.height / 2, shape.fillColor && shape.fillColor !== 'transparent' ? 'FD' : 'S');
+          doc.ellipse(elX + shape.width / 2, elY + shape.height / 2, shape.width / 2, shape.height / 2, (shape.fillColor && shape.fillColor !== 'transparent') || shape.spotColor ? 'FD' : 'S');
         } else if (shape.shapeKind === 'line') {
           doc.line(elX, elY, elX + shape.width, elY + shape.height);
         }
       } else if (el.type === 'path') {
         const pathEl = el as VectorPathElement;
         if (pathEl.nodes.length >= 2) {
-          applyCmykDrawColor(doc, pathEl.strokeColor);
+          if (pathEl.spotColor) {
+            applySpotColor(doc, pathEl.spotColor, true);
+          } else {
+            applyCmykDrawColor(doc, pathEl.strokeColor);
+          }
           doc.setLineWidth(pathEl.strokeWidthMm || 0.3);
           for (let i = 1; i < pathEl.nodes.length; i++) {
             const prev = pathEl.nodes[i - 1];
@@ -233,7 +265,11 @@ export async function exportDocumentToPdf(
           doc.rect(elX, elY, text.width, text.height, 'S');
         }
 
-        applyCmykTextColor(doc, text.color || '#000000', overprintBlack);
+        if (text.spotColor) {
+          applySpotColor(doc, text.spotColor, false);
+        } else {
+          applyCmykTextColor(doc, text.color || '#000000', overprintBlack);
+        }
         doc.setFontSize(text.fontSizePt);
         applyFont(doc, text.fontFamily);
 
@@ -492,6 +528,26 @@ export function applyCmykFillColor(doc: any, colorStr: string | undefined): void
 export function applyCmykDrawColor(doc: any, colorStr: string | undefined): void {
   const [c, m, y, k] = colorToCmyk(colorStr || '#000000');
   doc.setDrawColor(c, m, y, k);
+}
+
+export function applySpotColor(doc: any, spotName: string, isStroke: boolean = false, tint: number = 1.0): void {
+  const spot = getFreeToneColor(spotName);
+  if (!spot) return;
+  const safeName = getSafeSpotName(spot.name);
+  if (typeof (doc.internal as any).out === 'function') {
+    if (isStroke) {
+      (doc.internal as any).out(`/CS_${safeName} CS ${tint.toFixed(3)} SC`);
+    } else {
+      (doc.internal as any).out(`/CS_${safeName} cs ${tint.toFixed(3)} sc`);
+    }
+  } else {
+    const [c, m, y, k] = spot.cmyk;
+    if (isStroke) {
+      doc.setDrawColor(Math.round(c * 100), Math.round(m * 100), Math.round(y * 100), Math.round(k * 100));
+    } else {
+      doc.setFillColor(Math.round(c * 100), Math.round(m * 100), Math.round(y * 100), Math.round(k * 100));
+    }
+  }
 }
 
 function applyFont(doc: any, fontFamily: string) {
