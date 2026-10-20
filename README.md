@@ -151,7 +151,25 @@ Creative tools should not be locked behind a $60/month subscription tollbooth. R
 
 Your sponsorship directly supports ongoing development, new prepress engines, and keeping the core suite accessible for bedroom zine makers, independent book publishers, and designers worldwide.
 
-- **GitHub Sponsors**: [github.com/sponsors/artificia1](https://github.com/sponsors/artificia1)
+### Ways to Support
+
+#### 1. International Backers (Crypto: USDC / SOL)
+Fast, zero-fee direct support via the Solana network (accepts SOL or USDC SPL tokens):
+- **Address**: `26Z52ETXSHwQWLZX6BdgVFyDaTPSeKMbxJeY9S7SVmE6`
+- **Network**: Solana
+- **Explorer**: [Verify on Solscan](https://solscan.io/account/26Z52ETXSHwQWLZX6BdgVFyDaTPSeKMbxJeY9S7SVmE6)
+
+#### 2. Domestic Backers (India: Direct UPI)
+Direct instant bank transfer via Google Pay, PhonePe, Paytm, or BHIM:
+- **UPI ID**: `artificiaisme@okhdfcbank`
+- **Scan to Pay**:
+
+<p align="left">
+  <img src="public/upi-qr.png" width="180" alt="UPI QR Code" />
+</p>
+
+#### 3. GitHub Sponsors
+- **Profile**: [github.com/sponsors/artificia1](https://github.com/sponsors/artificia1)
 
 ### Sponsor Tiers
 - **$3 / month — Coffee Tier**: Fuels late-night typesetting commits. A small token of appreciation that keeps the engine running.
