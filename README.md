@@ -168,9 +168,6 @@ Direct instant bank transfer via Google Pay, PhonePe, Paytm, or BHIM:
   <img src="public/upi-qr.png" width="180" alt="UPI QR Code" />
 </p>
 
-#### 3. GitHub Sponsors
-- **Profile**: [github.com/sponsors/artificia1](https://github.com/sponsors/artificia1)
-
 ### Sponsor Tiers
 - **$3 / month — Coffee Tier**: Fuels late-night typesetting commits. A small token of appreciation that keeps the engine running.
 - **$10 / month — Indie Publisher Tier**: Costs less than two coffees (and 80% less than Adobe). Backer badge and your name listed in the project documentation.
