@@ -20,6 +20,7 @@ export interface ExportOptions {
   spreadRange?: 'all' | 'current' | number[];
   compress?: boolean;
   overprintBlack?: boolean;
+  onWarning?: (warning: string) => void;
 }
 
 export async function exportDocumentToPdf(
@@ -71,6 +72,9 @@ export async function exportDocumentToPdf(
   });
 
   const accessibleItems: { tag: string; altText?: string }[] = [];
+  const storyOverflowMap = new Map<string, string[]>();
+  const preflightWarnings: string[] = [];
+  (doc as any).preflightWarnings = preflightWarnings;
 
   let isFirstPage = true;
 
@@ -299,10 +303,27 @@ export async function exportDocumentToPdf(
         const lineSpacingMm = (text.fontSizePt * lineHeight * 25.4) / 72;
         const maxLinesPerCol = Math.max(1, Math.floor((availableHeight - (text.fontSizePt * 0.3527)) / lineSpacingMm) + 1);
 
-        const evalText = stateManager.evaluateTokens(text.text || '', page.pageNumber);
-        const allWrappedLines: string[] = doc.splitTextToSize(evalText, colWidth);
+        let linesToRender: string[];
+        if (text.prevFrameId && storyOverflowMap.has(text.id)) {
+          linesToRender = storyOverflowMap.get(text.id)!;
+        } else {
+          const evalText = stateManager.evaluateTokens(text.text || '', page.pageNumber);
+          linesToRender = doc.splitTextToSize(evalText, colWidth);
+        }
+
         const totalCapacity = colCount * maxLinesPerCol;
-        const visibleLines = allWrappedLines.slice(0, totalCapacity);
+        const visibleLines = linesToRender.slice(0, totalCapacity);
+        const overflowLines = linesToRender.slice(totalCapacity);
+
+        if (overflowLines.length > 0) {
+          if (text.nextFrameId) {
+            storyOverflowMap.set(text.nextFrameId, overflowLines);
+          } else {
+            const warningMsg = `Page ${page.pageNumber}: Text frame "${text.id}" overset by ${overflowLines.length} lines.`;
+            preflightWarnings.push(warningMsg);
+            if (options.onWarning) options.onWarning(warningMsg);
+          }
+        }
 
         for (let c = 0; c < colCount; c++) {
           const colLines = visibleLines.slice(c * maxLinesPerCol, (c + 1) * maxLinesPerCol);
@@ -550,11 +571,22 @@ export function applySpotColor(doc: any, spotName: string, isStroke: boolean = f
   }
 }
 
-function applyFont(doc: any, fontFamily: string) {
-  const fam = fontFamily ? fontFamily.toLowerCase() : '';
-  if (fam.includes('sans') || fam.includes('inter') || fam.includes('grotesk')) {
+// shortcut: custom font embedding requires TTF base64, falls back to PostScript standard 14 when unavailable
+function applyFont(doc: any, fontFamily?: string) {
+  if (!fontFamily) {
+    doc.setFont('times', 'normal');
+    return;
+  }
+  const cleanName = fontFamily.split(',')[0].trim().replace(/['"]/g, '');
+  const fontList = typeof (doc as any).getFontList === 'function' ? (doc as any).getFontList() : {};
+  if (fontList && (fontList[cleanName] || fontList[cleanName.toLowerCase()])) {
+    doc.setFont(cleanName, 'normal');
+    return;
+  }
+  const fam = cleanName.toLowerCase();
+  if (fam.includes('sans') || fam.includes('inter') || fam.includes('grotesk') || fam.includes('arial')) {
     doc.setFont('helvetica', 'normal');
-  } else if (fam.includes('mono')) {
+  } else if (fam.includes('mono') || fam.includes('courier')) {
     doc.setFont('courier', 'normal');
   } else {
     doc.setFont('times', 'normal');

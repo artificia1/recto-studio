@@ -3199,8 +3199,92 @@ assert.strictEqual(chunks.join(''), longUnbrokenWord, 'Reassembled chunks must e
 
 console.log('✓ Text Frame Boundary Enforcement & Unbroken Word Wrapping verified.');
 
+// --- Suite 53: PDF Export Preflight Overset Detection & Threaded Story Reflow ---
+console.log('\n--- Suite 53: PDF Export Preflight Overset Detection & Threaded Story Reflow ---');
+
+const oversetTestState = {
+  ...stateManager.getState(),
+  spreads: [
+    {
+      ...stateManager.getActiveSpread(),
+      elements: [
+        {
+          id: 'unthreaded-overflow-frame',
+          type: 'text' as const,
+          x: 20,
+          y: 20,
+          width: 80,
+          height: 20,
+          pageId: stateManager.getActiveSpread().pages[0].id,
+          zIndex: 1,
+          opacity: 1,
+          fontSizePt: 12,
+          lineHeight: 1.3,
+          text: 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10',
+        },
+      ],
+    },
+  ],
+};
+
+let capturedWarning = '';
+const oversetPdf = await exportDocumentToPdf(oversetTestState as any, {
+  onWarning: (w) => { capturedWarning = w; },
+});
+
+assert(capturedWarning.includes('overset by'), 'Must invoke onWarning callback for overset text');
+assert((oversetPdf as any).preflightWarnings.length > 0, 'doc.preflightWarnings must contain overset report');
+
+// Threaded frame reflow in PDF
+const threadedSpread = stateManager.getActiveSpread();
+const threadedState = {
+  ...stateManager.getState(),
+  spreads: [
+    {
+      ...threadedSpread,
+      elements: [
+        {
+          id: 'thread-frame-1',
+          type: 'text' as const,
+          x: 20,
+          y: 20,
+          width: 80,
+          height: 15,
+          pageId: threadedSpread.pages[0].id,
+          zIndex: 1,
+          opacity: 1,
+          fontSizePt: 12,
+          lineHeight: 1.3,
+          text: 'First line of story.\nSecond line of story.\nThird line of story.\nFourth line of story.\nFifth line of story.',
+          nextFrameId: 'thread-frame-2',
+        },
+        {
+          id: 'thread-frame-2',
+          type: 'text' as const,
+          x: 110,
+          y: 20,
+          width: 80,
+          height: 50,
+          pageId: threadedSpread.pages[0].id,
+          zIndex: 2,
+          opacity: 1,
+          fontSizePt: 12,
+          lineHeight: 1.3,
+          text: '',
+          prevFrameId: 'thread-frame-1',
+        },
+      ],
+    },
+  ],
+};
+
+const threadedPdf = await exportDocumentToPdf(threadedState as any);
+assert.strictEqual((threadedPdf as any).preflightWarnings.length, 0, 'Threaded frame should consume overflow without warnings');
+
+console.log('✓ PDF Export Preflight Overset Detection & Threaded Story Reflow verified.');
+
 console.log('\n=============================================');
-console.log('ALL 52 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
+console.log('ALL 53 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
 console.log('=============================================\n');
 
 

@@ -56,6 +56,28 @@ Recto Studio was conceived, designed, and architected from first principles by *
 
 ---
 
+## Feature Status Matrix & Implementation Roadmap
+
+To provide full technical transparency to publishers and contributors, Recto Studio tracks feature maturity across three tiers:
+
+| Subsystem / Feature | Status | Specification / Notes |
+|:---|:---:|:---|
+| **Mathematical Spine Calculator** | Production-Ready | Caliper bulking formulas across 5 paper stocks with wrap-cover imposition |
+| **Prepress Booklet Imposition Engine** | Production-Ready | Saddle-stitch and perfect-bound signatures with creep compensation |
+| **OpenSpot / FreeTone Separation Plates** | Production-Ready | 22-color Lab lookup tables and PostScript Level 2 `/Separation` color spaces |
+| **Master Pages & Detach Overrides** | Production-Ready | Multi-page templates, token replacement, detached element overrides |
+| **Automated Data Merge Repeaters** | Production-Ready | JSON/CSV multi-card N-Up repeater spreads and headless `recto build` CLI |
+| **Editorial Frame Locks** | Production-Ready | Text editing permitted; geometry, handles, and drag transformations protected |
+| **Native PSD Layer Ingestion** | Production-Ready | Multi-layer Adobe Photoshop (.psd) parsing with real-time layer toggles |
+| **PostScript Overprint Black** | Production-Ready | Pure DeviceCMYK 100% K overprint (`/OP true`, `/GSOverprint gs`) |
+| **Knuth-Plass Global Paragraph Composer** | Beta | Dynamic programming TeX DAG composer active on multi-line text blocks |
+| **HarfBuzz WASM Complex Script Shaper** | Beta | OpenType shaping engine for bidirectional and Indic scripts |
+| **Adobe InDesign (.idml) Package Importer** | Beta | Extracts stories, spreads, graphic attributes, and styles from IDML archives |
+| **VeraPDF Automated Conformance Suite** | Roadmap | End-to-end PDF/A-1b and PDF/X-1a automated compliance CI test harness |
+| **Real-Time Multi-User WebRTC Mesh** | Roadmap | Zero-dependency peer-to-peer awareness and CRDT state synchronizer |
+
+---
+
 ## Keyboard Shortcuts & Accelerators
 
 | Shortcut | Command / Action | Category |
