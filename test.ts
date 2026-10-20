@@ -25,6 +25,8 @@ import { execFileSync } from 'child_process';
 import { tableEngine } from './src/engine/tableEngine';
 import { bookEngine } from './src/engine/bookEngine';
 import { jsPDF } from 'jspdf';
+import { calculateImpositionPlan } from './src/export/impositionEngine';
+import { calculateCoverSpineMetrics, createWrapCoverSpreadInProject, PAPER_STOCK_PRESETS } from './src/engine/spineCalculator';
 
 console.log('Running Recto Core Engine TypeScript Verification Tests...\n');
 
@@ -2906,8 +2908,141 @@ assert.strictEqual(blankState.selectedElementIds.length, 0, 'No elements selecte
 assert.strictEqual(blankState.spreads[0].pages[0].pageNumber, 1, 'First page is page 1');
 console.log('✓ Blank Book Generation and Pristine Canvas Initialization verified.');
 
+// --- Suite 50: Prepress Booklet Imposition Engine & Mathematical Wrap Spine Calculator ---
+console.log('\n--- Suite 50: Prepress Booklet Imposition Engine & Mathematical Wrap Spine Calculator ---');
+
+// 1. Booklet Imposition Saddle-Stitch Math
+const stateWith8Pages: ProjectState = {
+  ...stateManager.getState(),
+  spreads: [
+    {
+      id: 'sp-test-8p',
+      spreadIndex: 0,
+      pages: [
+        { id: 'p1', pageNumber: 1, side: 'single' },
+        { id: 'p2', pageNumber: 2, side: 'single' },
+        { id: 'p3', pageNumber: 3, side: 'single' },
+        { id: 'p4', pageNumber: 4, side: 'single' },
+        { id: 'p5', pageNumber: 5, side: 'single' },
+        { id: 'p6', pageNumber: 6, side: 'single' },
+        { id: 'p7', pageNumber: 7, side: 'single' },
+        { id: 'p8', pageNumber: 8, side: 'single' },
+      ],
+      elements: [],
+    },
+  ],
+};
+
+const saddlePlan = calculateImpositionPlan(stateWith8Pages, {
+  bindingMode: 'saddle-stitch',
+  creepMmPerSheet: 0.08,
+});
+
+assert(saddlePlan.sheetsCount === 2, '8 pages saddle stitch must produce exactly 2 physical sheets');
+assert.strictEqual(saddlePlan.sheetSides.length, 4, '2 sheets must produce 4 printable sides');
+assert.strictEqual(saddlePlan.totalPagesPadded, 8, '8 pages requires 0 padding');
+assert.strictEqual(saddlePlan.blankPagesAdded, 0, 'No blank pages added for 8 pages');
+
+// Verify printer spread pairing on Sheet 1 (Outer)
+const sheet1Front = saddlePlan.sheetSides[0];
+const sheet1Back = saddlePlan.sheetSides[1];
+assert.strictEqual(sheet1Front.leftPageNumber, 8, 'Sheet 1 front left must be Page 8');
+assert.strictEqual(sheet1Front.rightPageNumber, 1, 'Sheet 1 front right must be Page 1');
+assert.strictEqual(sheet1Back.leftPageNumber, 2, 'Sheet 1 back left must be Page 2');
+assert.strictEqual(sheet1Back.rightPageNumber, 7, 'Sheet 1 back right must be Page 7');
+assert.strictEqual(Math.abs(sheet1Front.leftCreepMm), 0, 'Outer sheet creep is zero');
+
+// Verify printer spread pairing on Sheet 2 (Inner)
+const sheet2Front = saddlePlan.sheetSides[2];
+const sheet2Back = saddlePlan.sheetSides[3];
+assert.strictEqual(sheet2Front.leftPageNumber, 6, 'Sheet 2 front left must be Page 6');
+assert.strictEqual(sheet2Front.rightPageNumber, 3, 'Sheet 2 front right must be Page 3');
+assert.strictEqual(sheet2Back.leftPageNumber, 4, 'Sheet 2 back left must be Page 4');
+assert.strictEqual(sheet2Back.rightPageNumber, 5, 'Sheet 2 back right must be Page 5');
+assert.strictEqual(sheet2Front.leftCreepMm, -0.08, 'Sheet 2 creep shifts outward by creep amount');
+
+// Verify Blank Padding Calculation (e.g. 6 pages padded to 8)
+const stateWith6Pages: ProjectState = {
+  ...stateWith8Pages,
+  spreads: [
+    {
+      ...stateWith8Pages.spreads[0],
+      pages: stateWith8Pages.spreads[0].pages.slice(0, 6),
+    },
+  ],
+};
+const paddedPlan = calculateImpositionPlan(stateWith6Pages, { bindingMode: 'saddle-stitch' });
+assert.strictEqual(paddedPlan.totalPagesOriginal, 6, 'Original is 6 pages');
+assert.strictEqual(paddedPlan.totalPagesPadded, 8, 'Padded to 8 pages');
+assert.strictEqual(paddedPlan.blankPagesAdded, 2, '2 blank pages added');
+assert.strictEqual(paddedPlan.sheetSides[0].leftPageNumber, null, 'Page 8 is blank padding (null)');
+assert.strictEqual(paddedPlan.sheetSides[1].rightPageNumber, null, 'Page 7 is blank padding (null)');
+
+// 2. Consecutive 2-Up Proofing Plan
+const twoUpPlan = calculateImpositionPlan(stateWith8Pages, {
+  bindingMode: 'consecutive-2up',
+});
+assert.strictEqual(twoUpPlan.sheetSides[0].leftPageNumber, 1, '2-up side 0 left is 1');
+assert.strictEqual(twoUpPlan.sheetSides[0].rightPageNumber, 2, '2-up side 0 right is 2');
+assert.strictEqual(twoUpPlan.sheetSides[1].leftPageNumber, 3, '2-up side 1 left is 3');
+assert.strictEqual(twoUpPlan.sheetSides[1].rightPageNumber, 4, '2-up side 1 right is 4');
+
+// 3. Mathematical Wrap Cover & Spine Calculator
+const spineMetricsPaperback = calculateCoverSpineMetrics({
+  pageCount: 200,
+  stockPreset: 'cream-60lb', // 400 PPI -> 0.0635mm/sheet
+  trimWidthMm: 152.4, // 6x9 in
+  trimHeightMm: 228.6,
+  bindingType: 'paperback-perfect',
+  frenchFlapWidthMm: 0,
+});
+
+// 200 pages / 2 leaves * 0.0635 = 6.35 mm spine width
+assert(Math.abs(spineMetricsPaperback.spineWidthMm - 6.35) < 0.01, 'Spine width must be exactly 6.35mm for 200pp on 400 PPI stock');
+assert(spineMetricsPaperback.spineWidthInches > 0.24 && spineMetricsPaperback.spineWidthInches < 0.26, 'Spine width inches ~ 0.25in');
+assert.strictEqual(spineMetricsPaperback.bleedMm, 3.175, 'Standard softcover bleed is 1/8 in (3.175mm)');
+const expectedTotalWidth = (152.4 * 2) + 6.35 + (3.175 * 2) + (spineMetricsPaperback.hingeScoreMm * 2);
+assert(Math.abs(spineMetricsPaperback.totalWrapWidthMm - expectedTotalWidth) < 0.01, 'Total wrap width matches trim + spine + bleeds + hinge scores');
+
+// 4. Hardcover Case Wrap Specs
+const spineMetricsHardcover = calculateCoverSpineMetrics({
+  pageCount: 200,
+  stockPreset: 'cream-60lb',
+  trimWidthMm: 152.4,
+  trimHeightMm: 228.6,
+  bindingType: 'hardcover-case',
+  frenchFlapWidthMm: 0,
+});
+assert.strictEqual(spineMetricsHardcover.spineWidthMm, 6.35, 'Hardcover core book block spine width is 6.35mm');
+assert.strictEqual(spineMetricsHardcover.boardOverhangMm, 3.0, 'Hardcover board overhang is 3.0mm');
+assert.strictEqual(spineMetricsHardcover.hingeScoreMm, 10.0, 'Hardcover hinge score gutter is 10.0mm');
+assert.strictEqual(spineMetricsHardcover.bleedMm, 15.0, 'Hardcover case wrap turn-in bleed must be 15mm');
+
+// 5. Wrap Cover Project Spread Injection
+const spreadBeforeCount = stateManager.getState().spreads.length;
+const coverSpread = createWrapCoverSpreadInProject(stateManager.getState(), {
+  pageCount: 200,
+  stockPreset: 'cream-60lb',
+  trimWidthMm: 152.4,
+  trimHeightMm: 228.6,
+  bindingType: 'paperback-perfect',
+  frenchFlapWidthMm: 0,
+  bookTitle: 'The Prepress Architect',
+  authorName: 'Abhinav Sidhu',
+  includeBarcode: true,
+});
+stateManager.getState().spreads.unshift(coverSpread);
+stateManager.renumberPages();
+const stateWithCover = stateManager.getState();
+assert.strictEqual(stateWithCover.spreads.length, spreadBeforeCount + 1, 'Spread count must increment by 1');
+const firstSpread = stateWithCover.spreads[0];
+assert(firstSpread.elements.some((e) => e.name === 'Spine Background'), 'Cover spread must have spine background');
+assert(firstSpread.elements.some((e) => e.name === 'Spine Title'), 'Cover spread must have spine title');
+assert(firstSpread.elements.some((e) => e.name === 'ISBN Barcode Box'), 'Cover spread must have barcode exclusion box');
+console.log('✓ Prepress Booklet Imposition Engine and Wrap Spine Calculator verified.');
+
 console.log('\n=============================================');
-console.log('ALL 49 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
+console.log('ALL 50 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
 console.log('=============================================\n');
 
 

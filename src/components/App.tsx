@@ -7,6 +7,8 @@ import { InspectorPanel } from './Inspector/InspectorPanel';
 import { StatusBar } from './StatusBar';
 import { FindChangeModal } from './FindChangeModal';
 import { QuickApply } from './QuickApply';
+import { BookletImpositionModal } from './BookletImpositionModal';
+import { CoverSpineModal } from './CoverSpineModal';
 import { SpreadCanvas } from '../canvas';
 import { stateManager } from '../state';
 import { ingestManuscript } from '../contentImport';
@@ -15,6 +17,8 @@ export function App() {
   const state = useProjectState();
   const [showFindChange, setShowFindChange] = useState(false);
   const [showQuickApply, setShowQuickApply] = useState(false);
+  const [showImposition, setShowImposition] = useState(false);
+  const [showCoverSpine, setShowCoverSpine] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rulerTopRef = useRef<HTMLCanvasElement>(null);
@@ -24,7 +28,13 @@ export function App() {
   useEffect(() => {
     const handleGlobalShortcuts = (e: KeyboardEvent) => {
       const isMod = e.ctrlKey || e.metaKey;
-      if (isMod && (e.key === 'f' || e.key === 'F')) {
+      if (isMod && e.shiftKey && (e.key === 'i' || e.key === 'I')) {
+        e.preventDefault();
+        setShowImposition((prev) => !prev);
+      } else if (isMod && e.shiftKey && (e.key === 'b' || e.key === 'B')) {
+        e.preventDefault();
+        setShowCoverSpine((prev) => !prev);
+      } else if (isMod && (e.key === 'f' || e.key === 'F')) {
         e.preventDefault();
         setShowFindChange((prev) => !prev);
       } else if (isMod && (e.key === '/' || e.key === 'Enter')) {
@@ -198,6 +208,8 @@ export function App() {
         state={state}
         onOpenFindChange={() => setShowFindChange(true)}
         onOpenQuickApply={() => setShowQuickApply(true)}
+        onOpenImposition={() => setShowImposition(true)}
+        onOpenCoverSpine={() => setShowCoverSpine(true)}
       />
       <ControlBar state={state} />
 
@@ -235,7 +247,29 @@ export function App() {
           setShowQuickApply(false);
           setShowFindChange(true);
         }}
+        onOpenImposition={() => {
+          setShowQuickApply(false);
+          setShowImposition(true);
+        }}
+        onOpenCoverSpine={() => {
+          setShowQuickApply(false);
+          setShowCoverSpine(true);
+        }}
       />
+
+      {showImposition && (
+        <BookletImpositionModal
+          state={state}
+          onClose={() => setShowImposition(false)}
+        />
+      )}
+
+      {showCoverSpine && (
+        <CoverSpineModal
+          state={state}
+          onClose={() => setShowCoverSpine(false)}
+        />
+      )}
     </div>
   );
 }

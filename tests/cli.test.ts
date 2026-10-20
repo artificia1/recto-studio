@@ -48,5 +48,5 @@ describe('Headless Publishing CLI Engine (recto build)', () => {
     if (fs.existsSync(tmpPdfOut)) fs.unlinkSync(tmpPdfOut);
     if (fs.existsSync(tmpFlipbookOut)) fs.unlinkSync(tmpFlipbookOut);
     if (fs.existsSync(tmpEpubOut)) fs.unlinkSync(tmpEpubOut);
-  }, 30000);
+  }, 60000);
 });

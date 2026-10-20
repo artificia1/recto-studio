@@ -151,6 +151,7 @@ export const DEFAULT_LAYERS: Layer[] = [
 
 export interface BaseElement {
   id: string;
+  name?: string;
   type: ElementType;
   pageId: string;
   x: number; // mm

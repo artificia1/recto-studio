@@ -13,6 +13,8 @@ interface QuickApplyProps {
   onClose: () => void;
   state: ProjectState;
   onOpenFindChange?: () => void;
+  onOpenImposition?: () => void;
+  onOpenCoverSpine?: () => void;
 }
 
 interface QuickApplyItem {
@@ -24,7 +26,14 @@ interface QuickApplyItem {
   action: () => void;
 }
 
-export function QuickApply({ isOpen, onClose, state, onOpenFindChange }: QuickApplyProps) {
+export function QuickApply({
+  isOpen,
+  onClose,
+  state,
+  onOpenFindChange,
+  onOpenImposition,
+  onOpenCoverSpine,
+}: QuickApplyProps) {
   if (!isOpen) return null;
 
   const [query, setQuery] = useState('');
@@ -269,6 +278,26 @@ export function QuickApply({ isOpen, onClose, state, onOpenFindChange }: QuickAp
       title: 'Zoom to 200% (Detail View)',
       subtitle: 'High precision typography inspection',
       action: () => stateManager.setZoom(2.0),
+    },
+    {
+      id: 'cmd-booklet-imposition',
+      kind: 'cmd',
+      title: 'Booklet Imposition Studio',
+      subtitle: 'Saddle-stitch, signatures, creep shingling & 2-up proofing',
+      shortcut: 'Ctrl+Shift+I',
+      action: () => {
+        if (onOpenImposition) onOpenImposition();
+      },
+    },
+    {
+      id: 'cmd-cover-spine-calculator',
+      kind: 'cmd',
+      title: 'Book Cover & Spine Width Calculator',
+      subtitle: 'Caliper/PPI spine thickness, wrap jacket & 3D preview',
+      shortcut: 'Ctrl+Shift+B',
+      action: () => {
+        if (onOpenCoverSpine) onOpenCoverSpine();
+      },
     }
   );
 

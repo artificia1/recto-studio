@@ -15,14 +15,30 @@ import { exportDocumentToIdml } from '../export/idmlExport';
 import { ingestManuscript } from '../contentImport';
 import { parseCsv } from '../dataMerge';
 import { collabSession } from '../collab';
+import { BookletImpositionModal } from './BookletImpositionModal';
+import { CoverSpineModal } from './CoverSpineModal';
 
 interface TopBarProps {
   state: ProjectState;
   onOpenFindChange?: () => void;
   onOpenQuickApply?: () => void;
+  onOpenImposition?: () => void;
+  onOpenCoverSpine?: () => void;
 }
 
-export function TopBar({ state, onOpenFindChange, onOpenQuickApply }: TopBarProps) {
+export function TopBar({
+  state,
+  onOpenFindChange,
+  onOpenQuickApply,
+  onOpenImposition,
+  onOpenCoverSpine,
+}: TopBarProps) {
+  const [showImpositionModal, setShowImpositionModal] = useState(false);
+  const [showCoverSpineModal, setShowCoverSpineModal] = useState(false);
+
+  const handleOpenImposition = onOpenImposition || (() => setShowImpositionModal(true));
+  const handleOpenCoverSpine = onOpenCoverSpine || (() => setShowCoverSpineModal(true));
+
   const [title, setTitle] = useState(state.settings.title);
   const [showDataMergeModal, setShowDataMergeModal] = useState(false);
   const [showVersionModal, setShowVersionModal] = useState(false);
@@ -716,6 +732,33 @@ export function TopBar({ state, onOpenFindChange, onOpenQuickApply }: TopBarProp
                   </div>
                 </button>
               )}
+              <div className="dropdown-menu-divider" />
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowFileMenu(false);
+                  handleOpenCoverSpine();
+                }}
+                title="Calculate spine thickness and design full wrap cover spread"
+              >
+                <div>
+                  <div className="dropdown-item-title">Book Cover & Spine Width Calculator...</div>
+                  <div className="dropdown-item-sub">Mathematical spine caliper, 3D jacket wrap & barcode zone</div>
+                </div>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowFileMenu(false);
+                  handleOpenImposition();
+                }}
+                title="Duplex booklet imposition for saddle-stitch and multi-signature print"
+              >
+                <div>
+                  <div className="dropdown-item-title">Booklet Imposition Studio...</div>
+                  <div className="dropdown-item-sub">Saddle-stitch, multi-signature, creep shingling & printer spreads</div>
+                </div>
+              </button>
             </div>
           )}
         </div>
@@ -879,6 +922,33 @@ export function TopBar({ state, onOpenFindChange, onOpenQuickApply }: TopBarProp
                 <div>
                   <div className="dropdown-item-title">Adobe InDesign Package (.idml)</div>
                   <div className="dropdown-item-sub">Two-way exchange package for agency handoff</div>
+                </div>
+              </button>
+              <div className="dropdown-divider" />
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowExportMenu(false);
+                  handleOpenImposition();
+                }}
+                title="Export imposed duplex printer spreads"
+              >
+                <div>
+                  <div className="dropdown-item-title">Export Imposed Booklet PDF...</div>
+                  <div className="dropdown-item-sub">Duplex signature printer spreads with crop marks and creep compensation</div>
+                </div>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowExportMenu(false);
+                  handleOpenCoverSpine();
+                }}
+                title="Export print-ready wrap jacket cover"
+              >
+                <div>
+                  <div className="dropdown-item-title">Export Full Wrap Cover PDF...</div>
+                  <div className="dropdown-item-sub">Complete jacket with calculated spine, fold guides, and bleed</div>
                 </div>
               </button>
             </div>
@@ -1509,6 +1579,20 @@ export function TopBar({ state, onOpenFindChange, onOpenQuickApply }: TopBarProp
             </div>
           </div>
         </div>
+      )}
+
+      {!onOpenImposition && showImpositionModal && (
+        <BookletImpositionModal
+          state={state}
+          onClose={() => setShowImpositionModal(false)}
+        />
+      )}
+
+      {!onOpenCoverSpine && showCoverSpineModal && (
+        <CoverSpineModal
+          state={state}
+          onClose={() => setShowCoverSpineModal(false)}
+        />
       )}
     </header>
   );
