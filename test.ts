@@ -8,7 +8,7 @@ import { readZip, createZipArchive } from './src/zip';
 import { parseMarkdownContent } from './src/contentImport';
 import { parseIdmlPackage } from './src/idmlImport';
 import { parseCsv } from './src/dataMerge';
-import { formatOpenTypeText, getLeadingHangOffset, getTrailingHangOffset, calculateImageFitting } from './src/canvas';
+import { formatOpenTypeText, getLeadingHangOffset, getTrailingHangOffset, calculateImageFitting, splitWordIntoFitChunks } from './src/canvas';
 import { generateEpubPackage, exportDocumentToEpub } from './src/epubExport';
 import { generateFlipbookHtml, exportDocumentToFlipbook } from './src/flipbookExport';
 import { collabSession } from './src/collab';
@@ -3181,8 +3181,26 @@ assert(spotPdfOutput.includes('/FreeTone_185_C'), 'Exported PDF must reference F
 
 console.log('✓ OpenSpot / FreeTone Separation, Automated Data Ingestion & Editorial Locks verified.');
 
+// --- Suite 52: Text Frame Boundary Enforcement & Unbroken Word Wrapping ---
+console.log('\n--- Suite 52: Text Frame Boundary Enforcement & Unbroken Word Wrapping ---');
+const mockCanvasCtx = {
+  measureText: (str: string) => ({ width: str.length * 8 }),
+} as unknown as CanvasRenderingContext2D;
+
+const longUnbrokenWord = 'yooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooookoso.......................watashino';
+const chunks = splitWordIntoFitChunks(longUnbrokenWord, 200, mockCanvasCtx);
+
+assert(chunks.length > 1, 'Long unbroken string must be split into multiple chunks');
+for (const chunk of chunks) {
+  const chunkW = chunk.length * 8;
+  assert(chunkW <= 200, `Chunk "${chunk}" width (${chunkW}px) must not exceed frame width limit (200px)`);
+}
+assert.strictEqual(chunks.join(''), longUnbrokenWord, 'Reassembled chunks must exactly match original string');
+
+console.log('✓ Text Frame Boundary Enforcement & Unbroken Word Wrapping verified.');
+
 console.log('\n=============================================');
-console.log('ALL 51 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
+console.log('ALL 52 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
 console.log('=============================================\n');
 
 

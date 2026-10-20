@@ -72,6 +72,33 @@ export function getTrailingHangOffset(lineText: string, ctx: CanvasRenderingCont
   return 0;
 }
 
+export function splitWordIntoFitChunks(word: string, maxW: number, ctx: CanvasRenderingContext2D): string[] {
+  if (maxW <= 10 || !word || (ctx.measureText && ctx.measureText(word).width <= maxW)) {
+    return [word];
+  }
+  const chunks: string[] = [];
+  let remaining = word;
+  while (remaining.length > 0) {
+    let low = 1;
+    let high = remaining.length;
+    let best = 1;
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      const sub = remaining.slice(0, mid);
+      const subW = ctx.measureText ? ctx.measureText(sub).width : sub.length * 8;
+      if (subW <= maxW) {
+        best = mid;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+    chunks.push(remaining.slice(0, best));
+    remaining = remaining.slice(best);
+  }
+  return chunks;
+}
+
 export interface ImageFitTransform {
   drawX: number;
   drawY: number;
@@ -2535,6 +2562,12 @@ export class SpreadCanvas {
           ctx.strokeRect(elScreenX, elScreenY, elScreenW, elScreenH);
         }
 
+        ctx.save();
+        ctx.beginPath();
+        const clipBleed = 4 * state.zoom;
+        ctx.rect(elScreenX - clipBleed, elScreenY, elScreenW + (clipBleed * 2), elScreenH);
+        ctx.clip();
+
         const paddingPx = (text.paddingMm || 2) * pxPerMm;
         const availWidthPx = elScreenW - (paddingPx * 2);
         const colCount = Math.max(1, text.columns || 1);
@@ -2703,7 +2736,13 @@ export class SpreadCanvas {
                   lineWords.push(wordList.shift()!);
                 } else {
                   if (lineWords.length === 0) {
-                    lineWords.push(wordList.shift()!);
+                    const chunks = splitWordIntoFitChunks(nextWord, lineAvailW, ctx);
+                    if (chunks.length > 1) {
+                      lineWords.push(chunks[0]);
+                      wordList[0] = chunks.slice(1).join('');
+                    } else {
+                      lineWords.push(wordList.shift()!);
+                    }
                   }
                   break;
                 }
@@ -2834,17 +2873,38 @@ export class SpreadCanvas {
                 const metrics = ctx.measureText(testLine);
                 const trailingHang = getTrailingHangOffset(testLine, ctx, Boolean(text.opticalMarginAlignment));
 
-                if (metrics.width - trailingHang > lineMaxW && currentLineWords.length > 0) {
-                  allLines.push({
-                    text: currentLineWords.join(' '),
-                    isLastInPara: false,
-                    indentX: lineIndent,
-                    availWidth: lineMaxW,
-                  });
-                  if (isDropLine) {
-                    dropCapLinesRemaining--;
+                if (metrics.width - trailingHang > lineMaxW) {
+                  if (currentLineWords.length > 0) {
+                    allLines.push({
+                      text: currentLineWords.join(' '),
+                      isLastInPara: false,
+                      indentX: lineIndent,
+                      availWidth: lineMaxW,
+                    });
+                    if (isDropLine) {
+                      dropCapLinesRemaining--;
+                    }
+                    currentLineWords = [];
                   }
-                  currentLineWords = [word];
+
+                  const wordTrailingHang = getTrailingHangOffset(word, ctx, Boolean(text.opticalMarginAlignment));
+                  if (ctx.measureText(word).width - wordTrailingHang > lineMaxW) {
+                    const subChunks = splitWordIntoFitChunks(word, lineMaxW, ctx);
+                    for (let cIdx = 0; cIdx < subChunks.length - 1; cIdx++) {
+                      allLines.push({
+                        text: subChunks[cIdx],
+                        isLastInPara: false,
+                        indentX: lineIndent,
+                        availWidth: lineMaxW,
+                      });
+                      if (isDropLine) {
+                        dropCapLinesRemaining--;
+                      }
+                    }
+                    currentLineWords = [subChunks[subChunks.length - 1]];
+                  } else {
+                    currentLineWords = [word];
+                  }
                 } else {
                   currentLineWords.push(word);
                 }
@@ -3007,6 +3067,8 @@ export class SpreadCanvas {
           });
           ctx.restore();
         }
+
+        ctx.restore();
 
         if (isOverflowing && state.showGuides) {
           const badgeSize = 10 * state.zoom;
