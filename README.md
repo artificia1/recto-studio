@@ -142,6 +142,25 @@ Generates optimized, minified production assets into the `dist/` folder.
 
 ---
 
+## Supporting Recto Studio
+
+Creative tools should not be locked behind a $60/month subscription tollbooth. Recto Studio is built to prove that professional-grade typography (Knuth-Plass line breaking, HarfBuzz WASM shaping, PostScript CMYK overprint, and commercial booklet imposition) can exist with:
+- 100% Free and Open Source (MIT)
+- 0 KB Telemetry and Tracking
+- Runs Completely Local-First and Offline
+
+Your sponsorship directly supports ongoing development, new prepress engines, and keeping the core suite accessible for bedroom zine makers, independent book publishers, and designers worldwide.
+
+- **GitHub Sponsors**: [github.com/sponsors/artificia1](https://github.com/sponsors/artificia1)
+
+### Sponsor Tiers
+- **$3 / month — Coffee Tier**: Fuels late-night typesetting commits. A small token of appreciation that keeps the engine running.
+- **$10 / month — Indie Publisher Tier**: Costs less than two coffees (and 80% less than Adobe). Backer badge and your name listed in the project documentation.
+- **$25 / month — Production Supporter Tier**: For designers, authors, and small presses actively printing books with Recto. Priority bug reports and issue triage.
+- **$100 / month — Studio / Agency Sponsor**: For creative agencies and companies saving thousands on enterprise licenses. Your studio's logo with a backlink prominently placed in the README and project documentation.
+
+---
+
 ## License & Legal Notices
 
 Released under the **MIT License**. Copyright (c) 2022-2026 ABHINAV SIDHU. All rights reserved.
