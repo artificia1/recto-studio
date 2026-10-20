@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Background Canvas Gradients -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#141417" />
+      <stop offset="100%" stop-color="#09090b" />
+    </linearGradient>
+
+    <!-- Verso (Left Page) Subtle Shadow -->
+    <linearGradient id="versoGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#1c1c20" />
+      <stop offset="85%" stop-color="#242429" />
+      <stop offset="100%" stop-color="#18181b" />
+    </linearGradient>
+
+    <!-- Recto (Right Page) Crisp Illumination -->
+    <linearGradient id="rectoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="100%" stop-color="#f4f4f5" />
+    </linearGradient>
+
+    <!-- Drop Shadows for Physical Paper Elevation -->
+    <filter id="pageShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="16" stdDeviation="20" flood-color="#000000" flood-opacity="0.6" />
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000000" flood-opacity="0.3" />
+    </filter>
+
+    <filter id="rectoElevation" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="4" dy="12" stdDeviation="16" flood-color="#000000" flood-opacity="0.5" />
+    </filter>
+  </defs>
+
+  <!-- App Icon Squircle Background -->
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad)" />
+  <rect width="510" height="510" x="1" y="1" rx="111" fill="none" stroke="#27272a" stroke-width="2" stroke-opacity="0.4" />
+
+  <!-- The Open Spread Icon Assembly -->
+  <g transform="translate(106, 92)" filter="url(#pageShadow)">
+    
+    <!-- VERSO PAGE (Left) - Outlined & Ghosted Prepress Layout Grid -->
+    <rect x="0" y="8" width="140" height="204" rx="6" fill="url(#versoGrad)" stroke="#3f3f46" stroke-width="2" />
+    
+    <!-- Verso Grid / Column Margin Guides -->
+    <rect x="18" y="24" width="104" height="172" rx="2" fill="none" stroke="#3f3f46" stroke-width="1.5" stroke-dasharray="3,3" stroke-opacity="0.6" />
+    <line x1="68" y1="24" x2="68" y2="196" stroke="#3f3f46" stroke-width="1.2" stroke-dasharray="3,3" stroke-opacity="0.4" />
+    
+    <!-- Subtle Verso Editorial Guidelines -->
+    <line x1="26" y1="42" x2="60" y2="42" stroke="#52525b" stroke-width="2" stroke-linecap="round" stroke-opacity="0.5" />
+    <line x1="26" y1="54" x2="56" y2="54" stroke="#52525b" stroke-width="1.5" stroke-linecap="round" stroke-opacity="0.3" />
+    <line x1="26" y1="64" x2="62" y2="64" stroke="#52525b" stroke-width="1.5" stroke-linecap="round" stroke-opacity="0.3" />
+
+    <!-- CENTRAL BINDING GUTTER / SPINE ACCENT -->
+    <rect x="139" y="8" width="22" height="204" fill="#0c0c0e" opacity="0.9" />
+    <line x1="150" y1="4" x2="150" y2="216" stroke="#18181b" stroke-width="3" />
+
+    <!-- RECTO PAGE (Right) - Crisp High-Contrast White Editorial Page -->
+    <g filter="url(#rectoElevation)">
+      <rect x="160" y="4" width="140" height="208" rx="6" fill="url(#rectoGrad)" stroke="#ffffff" stroke-width="1" />
+      
+      <!-- Typographic Hierarchy on Recto Page -->
+      <!-- Editorial Headline Bar -->
+      <rect x="180" y="26" width="76" height="10" rx="2" fill="#09090b" />
+      
+      <!-- Signature Cyan Prepress Registration Tick -->
+      <circle cx="282" cy="26" r="3" fill="#0284c7" />
+
+      <!-- Body Copy Rhythm Lines -->
+      <line x1="180" y1="52" x2="278" y2="52" stroke="#27272a" stroke-width="3" stroke-linecap="round" />
+      <line x1="180" y1="66" x2="278" y2="66" stroke="#27272a" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.85" />
+      <line x1="180" y1="78" x2="278" y2="78" stroke="#27272a" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.85" />
+      <line x1="180" y1="90" x2="260" y2="90" stroke="#27272a" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.85" />
+      
+      <!-- Feature Column Break / Image Block -->
+      <rect x="180" y="106" width="98" height="48" rx="3" fill="#e4e4e7" stroke="#d4d4d8" stroke-width="1" />
+      <line x1="180" y1="106" x2="278" y2="154" stroke="#d4d4d8" stroke-width="1" />
+      <line x1="278" y1="106" x2="180" y2="154" stroke="#d4d4d8" stroke-width="1" />
+
+      <!-- Paragraph Continued -->
+      <line x1="180" y1="168" x2="278" y2="168" stroke="#27272a" stroke-width="2" stroke-linecap="round" stroke-opacity="0.7" />
+      <line x1="180" y1="178" x2="278" y2="178" stroke="#27272a" stroke-width="2" stroke-linecap="round" stroke-opacity="0.7" />
+      <line x1="180" y1="188" x2="236" y2="188" stroke="#27272a" stroke-width="2" stroke-linecap="round" stroke-opacity="0.7" />
+      
+      <!-- Page Number Folio -->
+      <text x="274" y="200" font-family="-apple-system, BlinkMacSystemFont, 'Inter', 'Helvetica Neue', sans-serif" font-size="7" font-weight="700" fill="#71717a" text-anchor="end">01</text>
+    </g>
+
+  </g>
+
+  <!-- Typography Wordmark -->
+  <g transform="translate(256, 386)">
+    <!-- Main Brand RECTO -->
+    <text x="0" y="0" 
+          font-family="-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', 'Helvetica Neue', sans-serif" 
+          font-size="42" 
+          font-weight="800" 
+          letter-spacing="9" 
+          fill="#f4f4f5" 
+          text-anchor="middle">RECTO</text>
+    
+    <!-- STUDIO Technical Badge -->
+    <g transform="translate(0, 32)">
+      <rect x="-48" y="-14" width="96" height="20" rx="4" fill="#27272a" fill-opacity="0.8" stroke="#3f3f46" stroke-width="1" />
+      <text x="0" y="0" 
+            font-family="-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', 'Helvetica Neue', sans-serif" 
+            font-size="11" 
+            font-weight="700" 
+            letter-spacing="4" 
+            fill="#a1a1aa" 
+            text-anchor="middle">STUDIO</text>
+    </g>
+  </g>
+</svg>
