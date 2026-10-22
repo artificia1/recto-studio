@@ -109,8 +109,12 @@ export function TopBar({
         const params = new URLSearchParams(window.location.search);
         const roomParam = params.get('room');
         const pwdParam = params.get('pwd');
-        if (roomParam) setCollabRoom(roomParam);
-        if (pwdParam) setCollabPassword(pwdParam);
+        if (roomParam) {
+          setCollabRoom(roomParam);
+          if (pwdParam) setCollabPassword(pwdParam);
+          collabSession.connect(roomParam, undefined, pwdParam || undefined);
+          setIsConnected(true);
+        }
       }
     } catch {}
 
@@ -1527,9 +1531,9 @@ export function TopBar({
               }}
             >
               <div>
-                <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>Real-Time Collaboration</h3>
+                <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>Real-Time P2P WebRTC Collaboration</h3>
                 <span style={{ fontSize: '11px', color: '#888' }}>
-                  Peer-to-peer live co-editing and presence synchronization
+                  Peer-to-peer live co-editing across different machines and networks
                 </span>
               </div>
               <button
@@ -1680,7 +1684,7 @@ export function TopBar({
                 />
                 <span style={{ fontSize: '12px', fontWeight: 600 }}>
                   {isConnected
-                    ? `Connected to '${collabSession.getSessionId()}' ${collabSession.isPasswordProtected() ? '(Protected)' : '(Public)'}`
+                    ? `Connected to '${collabSession.getSessionId()}' ${collabSession.isPasswordProtected() ? '(Protected)' : '(Public)'} · WebRTC P2P`
                     : 'Disconnected'}
                 </span>
               </div>

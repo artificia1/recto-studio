@@ -41,7 +41,8 @@
     "ag-psd": "^31.0.3",
     "harfbuzzjs": "^1.6.3",
     "jspdf": "^2.5.2",
-    "preact": "^10.19.6"
+    "preact": "^10.19.6",
+    "trystero": "^0.26.0"
   },
   "devDependencies": {
     "@preact/preset-vite": "^2.8.2",

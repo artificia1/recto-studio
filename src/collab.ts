@@ -1,5 +1,5 @@
 // Recto Real-Time Co-Editing & Peer Presence Synchronization Engine
-// Uses native BroadcastChannel with operational vector synchronization (zero third-party dependencies)
+// Dual transport: native BroadcastChannel (local tabs) + zero-server WebRTC P2P mesh across the internet
 
 import { CanvasElement, PeerPresence, CollabMessage, ProjectState } from './types';
 import { stateManager, StateManager } from './state';
@@ -23,6 +23,8 @@ export function hashCollabPassword(password: string): string {
 
 export class CollabSession {
   private channel: BroadcastChannel | null = null;
+  private p2pRoom: any = null;
+  private p2pAction: any = null;
   private sessionId: string | null = null;
   private password: string = '';
   private passwordHash: string = '';
@@ -59,7 +61,7 @@ export class CollabSession {
   }
 
   public connect(sessionId: string = 'recto-live', userName?: string, password?: string): void {
-    if (this.channel) {
+    if (this.channel || this.p2pRoom) {
       this.disconnect();
     }
 
@@ -68,13 +70,16 @@ export class CollabSession {
     this.password = password ? password.trim() : '';
     this.passwordHash = hashCollabPassword(this.password);
 
+    const chanKey = this.passwordHash ? `${sessionId}__p_${this.passwordHash}` : sessionId;
+
     if (typeof BroadcastChannel !== 'undefined') {
-      const chanKey = this.passwordHash ? `${sessionId}__p_${this.passwordHash}` : sessionId;
       this.channel = new BroadcastChannel(`recto_collab_${chanKey}`);
       this.channel.onmessage = (event: MessageEvent<CollabMessage>) => {
         this.handleMessage(event.data);
       };
     }
+
+    this.initP2PMesh(chanKey);
 
     this.broadcastPresence(this.lastX, this.lastY);
     this.sendMessage({ type: 'sync_request', peerId: this.peerId });
@@ -88,6 +93,49 @@ export class CollabSession {
     this.notifyPeers();
   }
 
+  private async initP2PMesh(chanKey: string): Promise<void> {
+    if (typeof window === 'undefined' || typeof (window as any).RTCPeerConnection === 'undefined') {
+      return;
+    }
+
+    try {
+      const { joinRoom } = await import('trystero/nostr');
+      if (!this.sessionId) return;
+
+      const room = joinRoom(
+        {
+          appId: 'recto-studio',
+          password: this.password ? this.password : undefined,
+        },
+        chanKey
+      );
+
+      this.p2pRoom = room;
+      const action = room.makeAction('collab_stream');
+      this.p2pAction = action;
+
+      action.onMessage = (data: any) => {
+        this.handleMessage(data as CollabMessage);
+      };
+
+      room.onPeerJoin = () => {
+        this.broadcastPresence(this.lastX, this.lastY);
+        this.sendMessage({ type: 'sync_request', peerId: this.peerId });
+      };
+
+      room.onPeerLeave = (remotePeerId: string) => {
+        if (this.peers.has(remotePeerId)) {
+          this.peers.delete(remotePeerId);
+          this.notifyPeers();
+        }
+      };
+
+      this.notifyPeers();
+    } catch (err) {
+      console.warn('P2P WebRTC mesh fallback to local channel:', err);
+    }
+  }
+
   public disconnect(): void {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
@@ -97,6 +145,13 @@ export class CollabSession {
       this.channel.close();
       this.channel = null;
     }
+    if (this.p2pRoom) {
+      try {
+        this.p2pRoom.leave();
+      } catch {}
+      this.p2pRoom = null;
+      this.p2pAction = null;
+    }
     this.sessionId = null;
     this.password = '';
     this.passwordHash = '';
@@ -105,7 +160,11 @@ export class CollabSession {
   }
 
   public isConnected(): boolean {
-    return this.channel !== null && this.sessionId !== null;
+    return this.sessionId !== null && (this.channel !== null || this.p2pRoom !== null);
+  }
+
+  public isP2PActive(): boolean {
+    return this.p2pRoom !== null;
   }
 
   public isPasswordProtected(): boolean {
@@ -168,12 +227,19 @@ export class CollabSession {
   }
 
   private sendMessage(msg: CollabMessage): void {
+    const payload = this.passwordHash ? { ...msg, authHash: this.passwordHash } : msg;
     if (this.channel) {
       try {
-        const payload = this.passwordHash ? { ...msg, authHash: this.passwordHash } : msg;
         this.channel.postMessage(payload);
       } catch (e) {
-        console.warn('Failed to broadcast collab message', e);
+        console.warn('Failed to broadcast local collab message', e);
+      }
+    }
+    if (this.p2pAction && typeof this.p2pAction.send === 'function') {
+      try {
+        this.p2pAction.send(payload).catch(() => {});
+      } catch (e) {
+        console.warn('Failed to broadcast WebRTC P2P message', e);
       }
     }
   }
