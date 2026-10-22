@@ -28,7 +28,15 @@ import {
   FootnoteSettings,
   CopyfitResult,
   GrepStyleRule,
+  CommentPin,
+  ObjectStyle,
+  CrossReference,
+  IndexEntry,
+  ConditionTag,
+  AnchoredObjectSettings,
 } from '../types/index';
+import { generateEan13DataUrl } from '../engine/barcodeEngine';
+import { generateQrDataUrl } from '../engine/qrEngine';
 import { RectoDB } from './persistence';
 import { parseIdmlPackage } from '../idmlImport';
 import { parseCsv, generateMergedSpreads, substituteElementTokens } from '../dataMerge';
@@ -336,6 +344,60 @@ export const DEFAULT_MASTER_SPREADS: MasterSpread[] = [
       } as TextElement,
     ],
   },
+];
+
+export const DEFAULT_OBJECT_STYLES: ObjectStyle[] = [
+  {
+    id: 'obj-none',
+    name: '[None]',
+    backgroundColor: 'transparent',
+    borderColor: 'transparent',
+    borderWidthMm: 0,
+    paddingMm: 0,
+  },
+  {
+    id: 'obj-callout',
+    name: 'Callout Box',
+    backgroundColor: '#f4f4f5',
+    borderColor: '#e4e4e7',
+    borderWidthMm: 0.5,
+    paddingMm: 4,
+    shadow: {
+      color: 'rgba(0,0,0,0.08)',
+      blurMm: 2,
+      offsetX: 1,
+      offsetY: 1,
+    },
+    textWrap: {
+      mode: 'boundingBox',
+      standoffMm: 3,
+    },
+  },
+  {
+    id: 'obj-sidebar',
+    name: 'Sidebar Frame',
+    backgroundColor: '#fafafa',
+    borderColor: '#0d99ff',
+    borderWidthMm: 1,
+    paddingMm: 5,
+    textWrap: {
+      mode: 'boundingBox',
+      standoffMm: 4,
+    },
+  },
+  {
+    id: 'obj-pullquote',
+    name: 'Pull Quote Frame',
+    backgroundColor: 'transparent',
+    borderColor: '#111827',
+    borderWidthMm: 1.5,
+    paddingMm: 3,
+  },
+];
+
+export const DEFAULT_CONDITIONS: ConditionTag[] = [
+  { id: 'cond-student', name: 'Student Edition', visible: true, colorHex: '#0d99ff' },
+  { id: 'cond-teacher', name: 'Teacher Edition', visible: false, colorHex: '#e63946' },
 ];
 
 export const INITIAL_STATE: ProjectState = {
@@ -704,6 +766,10 @@ Recto was engineered from a simple conviction: creative freedom must never depen
   layers: DEFAULT_LAYERS,
   activeLayerId: 'layer-1',
   previewMode: false,
+  objectStyles: DEFAULT_OBJECT_STYLES,
+  crossReferences: [],
+  indexEntries: [],
+  conditions: DEFAULT_CONDITIONS,
 };
 
 export type StateListener = (state: ProjectState) => void;
@@ -790,6 +856,18 @@ export class StateManager {
     if (!this.state.settings.iccProfile) {
       this.state.settings.iccProfile = 'FOGRA39';
     }
+    if (!Array.isArray(this.state.objectStyles) || this.state.objectStyles.length === 0) {
+      this.state.objectStyles = JSON.parse(JSON.stringify(DEFAULT_OBJECT_STYLES));
+    }
+    if (!Array.isArray(this.state.crossReferences)) {
+      this.state.crossReferences = [];
+    }
+    if (!Array.isArray(this.state.indexEntries)) {
+      this.state.indexEntries = [];
+    }
+    if (!Array.isArray(this.state.conditions) || this.state.conditions.length === 0) {
+      this.state.conditions = JSON.parse(JSON.stringify(DEFAULT_CONDITIONS));
+    }
 
     // Heal older placeholder image frames if loaded from previous unmigrated local storage cache
     for (const spread of this.state.spreads) {
@@ -814,6 +892,18 @@ export class StateManager {
     }
     if (!this.state.settings.iccProfile) {
       this.state.settings.iccProfile = 'FOGRA39';
+    }
+    if (!Array.isArray(this.state.objectStyles) || this.state.objectStyles.length === 0) {
+      this.state.objectStyles = JSON.parse(JSON.stringify(DEFAULT_OBJECT_STYLES));
+    }
+    if (!Array.isArray(this.state.crossReferences)) {
+      this.state.crossReferences = [];
+    }
+    if (!Array.isArray(this.state.indexEntries)) {
+      this.state.indexEntries = [];
+    }
+    if (!Array.isArray(this.state.conditions) || this.state.conditions.length === 0) {
+      this.state.conditions = JSON.parse(JSON.stringify(DEFAULT_CONDITIONS));
     }
     return this.state;
   }
@@ -956,6 +1046,136 @@ export class StateManager {
   public toggleBaselineGrid() {
     this.state.showBaselineGrid = !this.state.showBaselineGrid;
     this.notify();
+  }
+
+  public toggleSnapToGuides() {
+    this.state.snapToGuides = !this.state.snapToGuides;
+    this.notify();
+  }
+
+  public toggleReadingOrder() {
+    this.state.showReadingOrder = !this.state.showReadingOrder;
+    this.notify();
+  }
+
+  public toggleSlugBanner() {
+    this.state.showSlugBanner = !this.state.showSlugBanner;
+    this.notify();
+  }
+
+  public setMeasureData(measure: ProjectState['activeMeasure']) {
+    this.state.activeMeasure = measure;
+    this.notify();
+  }
+
+  public addComment(spreadIndex: number, x: number, y: number, text: string, author: string = 'Art Director'): CommentPin {
+    if (!this.state.comments) this.state.comments = [];
+    const pin: CommentPin = {
+      id: `comment-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      spreadIndex,
+      x,
+      y,
+      text,
+      author,
+      timestamp: Date.now(),
+      resolved: false,
+    };
+    this.state.comments.push(pin);
+    this.pushHistory();
+    this.notify();
+    return pin;
+  }
+
+  public resolveComment(commentId: string) {
+    if (!this.state.comments) return;
+    const pin = this.state.comments.find(c => c.id === commentId);
+    if (pin) {
+      pin.resolved = !pin.resolved;
+      this.pushHistory();
+      this.notify();
+    }
+  }
+
+  public deleteComment(commentId: string) {
+    if (!this.state.comments) return;
+    this.state.comments = this.state.comments.filter(c => c.id !== commentId);
+    this.pushHistory();
+    this.notify();
+  }
+
+  public addFinishingLayer(type: 'dieline' | 'crease' | 'spot_uv' | 'foil'): Layer {
+    const config = {
+      dieline: { name: 'Dieline (Cut Contour)', colorHex: '#e6007e' },
+      crease: { name: 'Crease (Score Line)', colorHex: '#00b050' },
+      spot_uv: { name: 'Spot UV (Varnish)', colorHex: '#00e5ff' },
+      foil: { name: 'Hot Foil Stamp (Gold)', colorHex: '#d4af37' },
+    }[type] || { name: 'Specialty Finish', colorHex: '#ff00aa' };
+
+    return this.createLayer(config.name, config.colorHex);
+  }
+
+  public insertBarcode(rawDigits: string, options: { widthMm?: number; heightMm?: number } = {}) {
+    const spread = this.getActiveSpread();
+    const page = spread.pages[0];
+    const dataUrl = generateEan13DataUrl(rawDigits);
+    const w = options.widthMm || 38;
+    const h = options.heightMm || 26;
+    const barcodeEl: ImageElement = {
+      id: `barcode-${Date.now()}`,
+      name: `Barcode (${rawDigits})`,
+      type: 'image',
+      pageId: page.id,
+      x: 20,
+      y: 20,
+      width: w,
+      height: h,
+      rotation: 0,
+      opacity: 1,
+      zIndex: spread.elements.length + 1,
+      locked: false,
+      src: dataUrl,
+      fitMode: 'fit',
+      borderColor: 'transparent',
+      borderWidthMm: 0,
+      altText: `EAN-13 / ISBN Barcode for ${rawDigits}`,
+    };
+    this.addElement(barcodeEl);
+    return barcodeEl;
+  }
+
+  public fitFrameToContent(elementId?: string): boolean {
+    const targetId = elementId || this.state.selectedElementId;
+    if (!targetId) return false;
+    const el = this.getElementById(targetId);
+    if (!el) return false;
+
+    if (el.type === 'text') {
+      const textEl = el as TextElement;
+      const textContent = textEl.text || '';
+      const padding = textEl.paddingMm ?? 2;
+      const cols = Math.max(1, textEl.columns || 1);
+      const gutter = textEl.columnGutterMm ?? 4;
+      const fontPt = textEl.fontSizePt || 10;
+      const lineH = textEl.lineHeight || 1.3;
+      const lineSpacingMm = (fontPt * lineH * 25.4) / 72;
+      const availW = Math.max(10, (textEl.width - (padding * 2) - ((cols - 1) * gutter)) / cols);
+      const avgCharWidthMm = (fontPt * 0.45 * 25.4) / 72;
+      const charsPerLine = Math.max(10, Math.floor(availW / avgCharWidthMm));
+
+      const explicitLines = textContent.split('\n');
+      let approxRenderedLines = 0;
+      for (const line of explicitLines) {
+        approxRenderedLines += Math.max(1, Math.ceil(line.length / charsPerLine));
+      }
+      const requiredTotalLines = Math.max(approxRenderedLines, Math.ceil(textContent.length / (charsPerLine * 1.15)));
+      const requiredLinesPerCol = Math.ceil(requiredTotalLines / cols);
+      const requiredHeightMm = Math.ceil((requiredLinesPerCol * lineSpacingMm + (padding * 2) + 2) * 10) / 10;
+      textEl.height = Math.max(15, requiredHeightMm);
+      this.pushHistory();
+      this.notify();
+      return true;
+    }
+    return false;
   }
 
   public setDisplayQuality(quality: ProjectState['displayQuality']) {
@@ -1118,6 +1338,7 @@ export class StateManager {
         if (textEl.nextFrameId || textEl.prevFrameId) {
           this.reflowStory(id);
         }
+        this.updateAnchoredPositions(id);
       }
       this.pushHistory();
       this.notify();
@@ -3778,6 +3999,427 @@ export class StateManager {
     }
 
     return { replacementsCount, elementsAffected };
+  }
+
+  // --- Object Styles Engine ---
+  public createObjectStyle(style: Omit<ObjectStyle, 'id'> & { id?: string }): ObjectStyle {
+    const newStyle: ObjectStyle = {
+      ...style,
+      id: style.id || `obj-style-${Date.now()}`,
+    };
+    if (!this.state.objectStyles) this.state.objectStyles = [...DEFAULT_OBJECT_STYLES];
+    this.state.objectStyles.push(newStyle);
+    this.pushHistory();
+    this.notify();
+    return newStyle;
+  }
+
+  public applyObjectStyle(elementId: string, styleId: string): void {
+    const el = this.getElementById(elementId);
+    if (!el) return;
+    const styles = this.state.objectStyles || DEFAULT_OBJECT_STYLES;
+    const style = styles.find(s => s.id === styleId);
+    if (!style) return;
+
+    const updates: Partial<CanvasElement> = {
+      objectStyleId: styleId,
+    };
+    if (style.backgroundColor !== undefined && 'backgroundColor' in el) {
+      (updates as any).backgroundColor = style.backgroundColor;
+    }
+    if (style.borderColor !== undefined && 'borderColor' in el) {
+      (updates as any).borderColor = style.borderColor;
+    }
+    if (style.borderWidthMm !== undefined && 'borderWidthMm' in el) {
+      (updates as any).borderWidthMm = style.borderWidthMm;
+    }
+    if (style.paddingMm !== undefined && 'paddingMm' in el) {
+      (updates as any).paddingMm = style.paddingMm;
+    }
+    if (style.shadow !== undefined) {
+      updates.shadow = { ...style.shadow };
+    }
+    if (style.textWrap !== undefined) {
+      updates.textWrap = { ...style.textWrap };
+    }
+    this.updateElement(elementId, updates);
+  }
+
+  public updateObjectStyle(styleId: string, updates: Partial<ObjectStyle>): void {
+    if (!this.state.objectStyles) this.state.objectStyles = [...DEFAULT_OBJECT_STYLES];
+    const idx = this.state.objectStyles.findIndex(s => s.id === styleId);
+    if (idx === -1) return;
+    this.state.objectStyles[idx] = { ...this.state.objectStyles[idx], ...updates };
+
+    // Cascade updates to all elements with this styleId
+    for (const spread of this.state.spreads) {
+      for (const el of spread.elements) {
+        if (el.objectStyleId === styleId) {
+          if (updates.backgroundColor !== undefined && 'backgroundColor' in el) {
+            (el as any).backgroundColor = updates.backgroundColor;
+          }
+          if (updates.borderColor !== undefined && 'borderColor' in el) {
+            (el as any).borderColor = updates.borderColor;
+          }
+          if (updates.borderWidthMm !== undefined && 'borderWidthMm' in el) {
+            (el as any).borderWidthMm = updates.borderWidthMm;
+          }
+          if (updates.paddingMm !== undefined && 'paddingMm' in el) {
+            (el as any).paddingMm = updates.paddingMm;
+          }
+          if (updates.shadow !== undefined) {
+            el.shadow = { ...updates.shadow };
+          }
+          if (updates.textWrap !== undefined) {
+            el.textWrap = { ...updates.textWrap };
+          }
+        }
+      }
+    }
+    this.pushHistory();
+    this.notify();
+  }
+
+  public deleteObjectStyle(styleId: string): void {
+    if (!this.state.objectStyles) return;
+    this.state.objectStyles = this.state.objectStyles.filter(s => s.id !== styleId);
+    for (const spread of this.state.spreads) {
+      for (const el of spread.elements) {
+        if (el.objectStyleId === styleId) {
+          delete el.objectStyleId;
+        }
+      }
+    }
+    this.pushHistory();
+    this.notify();
+  }
+
+  // --- Dynamic Cross-References (Xrefs) ---
+  public addCrossReference(targetElementId: string, label?: string): CrossReference {
+    if (!this.state.crossReferences) this.state.crossReferences = [];
+    const xref: CrossReference = {
+      id: `xref-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      targetElementId,
+      label,
+    };
+    this.state.crossReferences.push(xref);
+    this.pushHistory();
+    this.notify();
+    return xref;
+  }
+
+  public findTargetPageForElement(elementId: string): number | null {
+    let pageCounter = 1;
+    for (const spread of this.state.spreads) {
+      for (const page of spread.pages) {
+        const match = spread.elements.find(el => el.id === elementId && el.pageId === page.id);
+        if (match) return pageCounter;
+        pageCounter++;
+      }
+    }
+    // Fallback spread search
+    let fallbackCounter = 1;
+    for (const spread of this.state.spreads) {
+      if (spread.elements.some(el => el.id === elementId)) {
+        return fallbackCounter;
+      }
+      fallbackCounter += spread.pages.length || 1;
+    }
+    return null;
+  }
+
+  public resolveCrossReferences(text: string): string {
+    if (!text || !text.includes('{xref:')) return text;
+    return text.replace(/\{xref:([^}]+)\}/g, (_, targetId) => {
+      const pageNum = this.findTargetPageForElement(targetId.trim());
+      return pageNum !== null ? `${pageNum}` : `[#?]`;
+    });
+  }
+
+  // --- Multi-Level Book Index Generator ---
+  public addIndexEntry(topic: string, subtopic?: string, pageNumber?: number, elementId?: string): IndexEntry {
+    if (!this.state.indexEntries) this.state.indexEntries = [];
+    const entry: IndexEntry = {
+      id: `idx-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      topic,
+      subtopic,
+      pageNumber: pageNumber || 1,
+      elementId,
+    };
+    this.state.indexEntries.push(entry);
+    this.pushHistory();
+    this.notify();
+    return entry;
+  }
+
+  public scanDocumentForIndexEntries(): IndexEntry[] {
+    const entries: IndexEntry[] = [];
+    let pageCounter = 1;
+    const regex = /\{index:([^}]+)\}/g;
+
+    for (const spread of this.state.spreads) {
+      for (const page of spread.pages) {
+        const pageElements = spread.elements.filter(el => el.pageId === page.id && el.type === 'text') as TextElement[];
+        for (const el of pageElements) {
+          const text = el.text || '';
+          let match: RegExpExecArray | null;
+          regex.lastIndex = 0;
+          while ((match = regex.exec(text)) !== null) {
+            const raw = match[1].trim();
+            const parts = raw.split(':').map(p => p.trim());
+            const topic = parts[0];
+            const subtopic = parts[1] || undefined;
+            entries.push({
+              id: `idx-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+              topic,
+              subtopic,
+              pageNumber: pageCounter,
+              elementId: el.id,
+            });
+          }
+        }
+        pageCounter++;
+      }
+    }
+    if (this.state.indexEntries && this.state.indexEntries.length > 0) {
+      entries.push(...this.state.indexEntries);
+    }
+    return entries;
+  }
+
+  public generateBookIndex(): { letter: string; entries: { topic: string; subtopics: { subtopic: string; pages: number[] }[]; pages: number[] }[] }[] {
+    const scanned = this.scanDocumentForIndexEntries();
+    const topicMap = new Map<string, { topic: string; pages: Set<number>; subtopics: Map<string, Set<number>> }>();
+
+    for (const entry of scanned) {
+      if (!topicMap.has(entry.topic)) {
+        topicMap.set(entry.topic, {
+          topic: entry.topic,
+          pages: new Set(),
+          subtopics: new Map(),
+        });
+      }
+      const item = topicMap.get(entry.topic)!;
+      if (entry.subtopic) {
+        if (!item.subtopics.has(entry.subtopic)) {
+          item.subtopics.set(entry.subtopic, new Set());
+        }
+        item.subtopics.get(entry.subtopic)!.add(entry.pageNumber);
+      } else {
+        item.pages.add(entry.pageNumber);
+      }
+    }
+
+    const letterMap = new Map<string, any[]>();
+    const sortedTopics = Array.from(topicMap.keys()).sort((a, b) => a.localeCompare(b));
+
+    for (const topic of sortedTopics) {
+      const data = topicMap.get(topic)!;
+      const initial = (topic[0] || '#').toUpperCase();
+      if (!letterMap.has(initial)) {
+        letterMap.set(initial, []);
+      }
+      const subtopics = Array.from(data.subtopics.entries())
+        .map(([sub, pageSet]) => ({
+          subtopic: sub,
+          pages: Array.from(pageSet).sort((a, b) => a - b),
+        }))
+        .sort((a, b) => a.subtopic.localeCompare(b.subtopic));
+
+      letterMap.get(initial)!.push({
+        topic,
+        pages: Array.from(data.pages).sort((a, b) => a - b),
+        subtopics,
+      });
+    }
+
+    const sortedLetters = Array.from(letterMap.keys()).sort();
+    return sortedLetters.map(letter => ({
+      letter,
+      entries: letterMap.get(letter)!,
+    }));
+  }
+
+  public insertIndexStory(targetSpreadIndex?: number): TextElement {
+    const indexData = this.generateBookIndex();
+    const lines: string[] = ['INDEX\n'];
+
+    for (const group of indexData) {
+      lines.push(`\n[ ${group.letter} ]`);
+      for (const ent of group.entries) {
+        const pageStr = ent.pages.length > 0 ? `, ${ent.pages.join(', ')}` : '';
+        lines.push(`${ent.topic}${pageStr}`);
+        for (const sub of ent.subtopics) {
+          lines.push(`   ${sub.subtopic}, ${sub.pages.join(', ')}`);
+        }
+      }
+    }
+
+    const targetSpread = targetSpreadIndex !== undefined && this.state.spreads[targetSpreadIndex]
+      ? this.state.spreads[targetSpreadIndex]
+      : this.getActiveSpread();
+
+    const page = targetSpread.pages[0];
+    const newIndexEl: TextElement = {
+      id: `index-story-${Date.now()}`,
+      name: 'Book Index Frame',
+      type: 'text',
+      pageId: page.id,
+      x: this.state.settings.margins.insideMm || 20,
+      y: this.state.settings.margins.topMm || 20,
+      width: (this.state.settings.widthMm || 210) - ((this.state.settings.margins.insideMm || 20) + (this.state.settings.margins.outsideMm || 20)),
+      height: (this.state.settings.heightMm || 297) - ((this.state.settings.margins.topMm || 20) + (this.state.settings.margins.bottomMm || 20)),
+      rotation: 0,
+      opacity: 1,
+      zIndex: 10,
+      locked: false,
+      text: lines.join('\n'),
+      fontFamily: 'serif',
+      fontSizePt: 9,
+      lineHeight: 1.35,
+      letterSpacingPt: 0,
+      color: '#111827',
+      alignment: 'left',
+      columns: 2,
+      columnGutterMm: 6,
+      backgroundColor: 'transparent',
+      borderColor: 'transparent',
+      borderWidthMm: 0,
+      paddingMm: 2,
+    };
+
+    this.addElement(newIndexEl);
+    return newIndexEl;
+  }
+
+  // --- Span Columns & Interactive PDF AcroForm Fields ---
+  public setSpanColumns(elementId: string, spanColumns: boolean): void {
+    this.updateElement(elementId, { spanColumns });
+  }
+
+  public setInteractiveField(elementId: string, interactiveField: CanvasElement['interactiveField']): void {
+    this.updateElement(elementId, { interactiveField });
+  }
+
+  // --- Native Vector QR Code Generator ---
+  public insertQrCode(text: string, options?: { sizeMm?: number; pageId?: string }): ImageElement {
+    const size = options?.sizeMm || 30;
+    const spread = this.getActiveSpread();
+    const page = options?.pageId
+      ? spread.pages.find((p) => p.id === options.pageId) || spread.pages[0]
+      : spread.pages[0];
+
+    const dataUrl = generateQrDataUrl(text, size);
+    const qrEl: ImageElement = {
+      id: `qr-${Date.now()}`,
+      name: `QR Code (${text.slice(0, 15)})`,
+      type: 'image',
+      pageId: page.id,
+      x: 20,
+      y: 20,
+      width: size,
+      height: size,
+      rotation: 0,
+      opacity: 1,
+      zIndex: 10,
+      locked: false,
+      src: dataUrl,
+      fitMode: 'fit',
+      borderColor: 'transparent',
+      borderWidthMm: 0,
+    };
+
+    this.addElement(qrEl);
+    return qrEl;
+  }
+
+  // --- Anchored Objects (Inline & Flowing Graphics) ---
+  public anchorElementToText(childElementId: string, parentTextId: string, options?: { mode?: 'inline' | 'aboveLine'; offsetYMm?: number }): void {
+    const child = this.getElementById(childElementId);
+    const parent = this.getElementById(parentTextId);
+    if (!child || !parent || parent.type !== 'text') return;
+
+    const anchor: AnchoredObjectSettings = {
+      parentTextId,
+      mode: options?.mode || 'inline',
+      offsetYMm: options?.offsetYMm || 2,
+    };
+
+    this.updateElement(childElementId, {
+      anchor,
+      x: parent.x,
+      y: parent.y + parent.height + (options?.offsetYMm || 2),
+    });
+  }
+
+  public unanchorElement(childElementId: string): void {
+    const child = this.getElementById(childElementId);
+    if (!child || !child.anchor) return;
+    delete child.anchor;
+    this.pushHistory();
+    this.notify();
+  }
+
+  public updateAnchoredPositions(parentTextId: string): void {
+    const parent = this.getElementById(parentTextId);
+    if (!parent) return;
+
+    for (const spread of this.state.spreads) {
+      let offsetAccumulator = 0;
+      for (const el of spread.elements) {
+        if (el.anchor?.parentTextId === parentTextId) {
+          offsetAccumulator += (el.anchor.offsetYMm || 2);
+          el.x = parent.x;
+          el.y = parent.y + parent.height + offsetAccumulator;
+          offsetAccumulator += el.height;
+        }
+      }
+    }
+  }
+
+  // --- Split Columns & Nested / Line Styles ---
+  public setSplitColumns(elementId: string, splitColumns: number): void {
+    this.updateElement(elementId, { splitColumns: Math.max(1, splitColumns) });
+  }
+
+  // --- Conditional Text Engine ---
+  public addCondition(name: string, colorHex?: string): ConditionTag {
+    if (!this.state.conditions) this.state.conditions = [...DEFAULT_CONDITIONS];
+    const cond: ConditionTag = {
+      id: `cond-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      name,
+      visible: true,
+      colorHex: colorHex || '#10b981',
+    };
+    this.state.conditions.push(cond);
+    this.pushHistory();
+    this.notify();
+    return cond;
+  }
+
+  public toggleCondition(conditionId: string): void {
+    if (!this.state.conditions) return;
+    const cond = this.state.conditions.find(c => c.id === conditionId);
+    if (!cond) return;
+    cond.visible = !cond.visible;
+    this.pushHistory();
+    this.notify();
+  }
+
+  public evaluateConditions(text: string): string {
+    if (!text || !text.includes('{cond:')) return text;
+    const conditions = this.state.conditions || DEFAULT_CONDITIONS;
+    const hiddenSet = new Set(
+      conditions.filter(c => !c.visible).map(c => c.name.toLowerCase())
+    );
+
+    return text.replace(/\{cond:([^}]+)\}([\s\S]*?)\{\/cond\}/g, (_, tag, content) => {
+      const cleanTag = tag.trim().toLowerCase();
+      if (hiddenSet.has(cleanTag)) {
+        return '';
+      }
+      return content;
+    });
   }
 
   private saveSnapshotsToStorage() {

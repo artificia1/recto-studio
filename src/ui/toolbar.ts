@@ -16,6 +16,7 @@ export const TOOL_ITEMS: ToolItem[] = [
   { id: 'shape-rect', name: 'Rectangle Tool', shortcut: 'M', icon: '▭' },
   { id: 'shape-ellipse', name: 'Ellipse Tool', shortcut: 'O', icon: '○' },
   { id: 'shape-line', name: 'Line Tool', shortcut: 'L', icon: '╱' },
+  { id: 'measure', name: 'Measure Tool', shortcut: 'K', icon: '↔' },
   { id: 'pen', name: 'Pen Tool', shortcut: 'P', icon: '✒' },
   { id: 'table', name: 'Table Tool', shortcut: 'Shift+T', icon: '⊞' },
   { id: 'hand', name: 'Hand Tool', shortcut: 'H', icon: '◫' },

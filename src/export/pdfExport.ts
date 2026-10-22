@@ -292,7 +292,9 @@ export async function exportDocumentToPdf(
         const totalFnHtMm = footnotes.length > 0 ? (footnotes.length * fnLineHeightMm) + 3 : 0;
         const availableHeight = Math.max(0, text.height - (padding * 2) - totalFnHtMm);
 
-        const colCount = Math.max(1, text.columns || 1);
+        const colCount = text.spanColumns
+          ? 1
+          : (text.splitColumns && text.splitColumns > 1 ? text.splitColumns : Math.max(1, text.columns || 1));
         const colGutter = text.columnGutterMm || 4;
         const colWidth = Math.max(2, (availableWidth - (colGutter * (colCount - 1))) / colCount);
 
@@ -307,7 +309,16 @@ export async function exportDocumentToPdf(
         if (text.prevFrameId && storyOverflowMap.has(text.id)) {
           linesToRender = storyOverflowMap.get(text.id)!;
         } else {
-          const evalText = stateManager.evaluateTokens(text.text || '', page.pageNumber);
+          let evalText = stateManager.evaluateTokens(text.text || '', page.pageNumber);
+          if (evalText.includes('{cond:')) {
+            evalText = stateManager.evaluateConditions(evalText);
+          }
+          if (evalText.includes('{xref:')) {
+            evalText = stateManager.resolveCrossReferences(evalText);
+          }
+          if (evalText.includes('{index:')) {
+            evalText = evalText.replace(/\{index:[^}]+\}/g, '');
+          }
           linesToRender = doc.splitTextToSize(evalText, colWidth);
         }
 
@@ -386,6 +397,39 @@ export async function exportDocumentToPdf(
       } else if (el.type === 'table') {
         const table = el as TableElement;
         tableEngine.exportPdfTable(doc, table, elX, elY, table.width, table.height, [table], overprintBlack);
+      }
+
+      // 4b. AcroForm Interactive PDF Form Field
+      if (el.interactiveField && typeof (doc as any).addField === 'function') {
+        const field = el.interactiveField;
+        const fieldX = elX;
+        const fieldY = elY;
+        const fieldW = el.width;
+        const fieldH = el.height;
+
+        if (field.type === 'text') {
+          const tf = new (doc as any).AcroFormTextField();
+          tf.fieldName = field.fieldName;
+          tf.value = field.defaultValue || '';
+          tf.Rect = [fieldX, fieldY, fieldW, fieldH];
+          if (field.multiline) tf.multiline = true;
+          if (field.required) tf.required = true;
+          (doc as any).addField(tf);
+        } else if (field.type === 'checkbox') {
+          const cb = new (doc as any).AcroFormCheckBox();
+          cb.fieldName = field.fieldName;
+          cb.Rect = [fieldX, fieldY, fieldW, fieldH];
+          if (field.defaultValue === 'true' || field.defaultValue === 'yes' || field.defaultValue === 'checked') {
+            cb.appearanceState = 'Yes';
+          }
+          (doc as any).addField(cb);
+        } else if (field.type === 'button') {
+          const btn = new (doc as any).AcroFormButton();
+          btn.fieldName = field.fieldName;
+          btn.caption = field.defaultValue || field.fieldName;
+          btn.Rect = [fieldX, fieldY, fieldW, fieldH];
+          (doc as any).addField(btn);
+        }
       }
     }
 

@@ -123,6 +123,78 @@ export interface ParagraphStyle {
   pdfTag?: SemanticPdfTag;
   grepStyles?: GrepStyleRule[];
   balanceLines?: boolean;
+  shadingColor?: string;
+  shadingPaddingMm?: number;
+  shadingBorderColor?: string;
+  shadingBorderWidthMm?: number;
+  spanColumns?: boolean;
+  splitColumns?: number;
+  nestedStyles?: {
+    bold?: boolean;
+    italic?: boolean;
+    color?: string;
+    through: 'words' | 'sentences' | 'characters' | 'delimiter';
+    count: number;
+    delimiter?: string;
+  }[];
+  lineStyles?: {
+    bold?: boolean;
+    italic?: boolean;
+    color?: string;
+    lineCount: number;
+  };
+}
+
+export interface AnchoredObjectSettings {
+  parentTextId: string;
+  mode?: 'inline' | 'aboveLine';
+  offsetYMm?: number;
+  alignment?: 'left' | 'center' | 'right';
+}
+
+export interface ConditionTag {
+  id: string;
+  name: string;
+  visible: boolean;
+  colorHex: string;
+}
+
+export interface ObjectStyle {
+  id: string;
+  name: string;
+  backgroundColor?: string;
+  borderColor?: string;
+  borderWidthMm?: number;
+  paddingMm?: number;
+  shadow?: {
+    color: string;
+    blurMm: number;
+    offsetX: number;
+    offsetY: number;
+  };
+  textWrap?: TextWrapSettings;
+}
+
+export interface CrossReference {
+  id: string;
+  targetElementId: string;
+  label?: string;
+}
+
+export interface IndexEntry {
+  id: string;
+  topic: string;
+  subtopic?: string;
+  pageNumber: number;
+  elementId?: string;
+}
+
+export interface InteractiveFormField {
+  type: 'text' | 'checkbox' | 'button';
+  fieldName: string;
+  defaultValue?: string;
+  multiline?: boolean;
+  required?: boolean;
 }
 
 export type ElementType = 'text' | 'image' | 'shape' | 'table' | 'path';
@@ -168,6 +240,15 @@ export interface BaseElement {
   textWrap?: TextWrapSettings;
   masterSourceId?: string;
   isOverridden?: boolean;
+  objectStyleId?: string;
+  interactiveField?: InteractiveFormField;
+  anchor?: AnchoredObjectSettings;
+  shadow?: {
+    color: string;
+    blurMm: number;
+    offsetX: number;
+    offsetY: number;
+  };
 }
 
 export interface TextElement extends BaseElement {
@@ -185,6 +266,8 @@ export interface TextElement extends BaseElement {
   borderColor: string;
   borderWidthMm: number;
   paddingMm: number;
+  spanColumns?: boolean;
+  splitColumns?: number;
   paragraphStyleId?: string;
   snapToBaseline?: boolean;
   dropCapLines?: number;
@@ -195,6 +278,13 @@ export interface TextElement extends BaseElement {
   prevFrameId?: string;
   storyId?: string;
   rawStoryText?: string;
+  verticalAlign?: 'top' | 'middle' | 'bottom';
+  columnRule?: {
+    enabled: boolean;
+    widthPt?: number;
+    color?: string;
+    insetMm?: number;
+  };
 }
 
 export interface CopyfitResult {
@@ -340,7 +430,18 @@ export interface Spread {
   detachedMasterElementIds?: string[];
 }
 
-export type ToolType = 'select' | 'text' | 'frame' | 'table' | 'pen' | 'shape-rect' | 'shape-ellipse' | 'shape-line' | 'hand' | 'zoom';
+export type ToolType = 'select' | 'text' | 'frame' | 'table' | 'pen' | 'shape-rect' | 'shape-ellipse' | 'shape-line' | 'measure' | 'hand' | 'zoom';
+
+export interface CommentPin {
+  id: string;
+  spreadIndex: number;
+  x: number; // mm
+  y: number; // mm
+  author: string;
+  text: string;
+  timestamp: number;
+  resolved: boolean;
+}
 
 export type DisplayQuality = 'fast' | 'typical' | 'high';
 
@@ -366,6 +467,21 @@ export interface ProjectState {
   activeLayerId: string;
   previewMode?: boolean;
   plateSolo?: 'all' | 'cyan' | 'magenta' | 'yellow' | 'black';
+  showReadingOrder?: boolean;
+  showSlugBanner?: boolean;
+  comments?: CommentPin[];
+  objectStyles?: ObjectStyle[];
+  crossReferences?: CrossReference[];
+  indexEntries?: IndexEntry[];
+  conditions?: ConditionTag[];
+  activeMeasure?: {
+    startX: number;
+    startY: number;
+    currentX: number;
+    currentY: number;
+    distanceMm: number;
+    angleDeg: number;
+  } | null;
 }
 
 export interface VersionSnapshot {

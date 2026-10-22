@@ -641,6 +641,62 @@ html, body {
   margin: 6px 0;
 }
 
+/* InDesign-style Fill/Stroke Swatch Chip */
+.toolbar-swatches {
+  margin: 4px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.swatch-container {
+  position: relative;
+  width: 28px;
+  height: 28px;
+}
+
+.swatch-stroke {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 17px;
+  height: 17px;
+  border: 1.5px solid #52525b;
+  border-radius: 2px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  z-index: 1;
+}
+
+.swatch-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 17px;
+  height: 17px;
+  border: 1.5px solid #3f3f46;
+  border-radius: 2px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  z-index: 2;
+}
+
+.swatch-swap-btn {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  background: transparent;
+  border: none;
+  color: #a1a1aa;
+  font-size: 10px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  z-index: 3;
+}
+
+.swatch-swap-btn:hover {
+  color: #ffffff;
+}
+
 /* CENTER CANVAS VIEWPORT */
 .canvas-viewport {
   flex: 1;

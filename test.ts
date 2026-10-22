@@ -8,7 +8,7 @@ import { readZip, createZipArchive } from './src/zip';
 import { parseMarkdownContent } from './src/contentImport';
 import { parseIdmlPackage } from './src/idmlImport';
 import { parseCsv } from './src/dataMerge';
-import { formatOpenTypeText, getLeadingHangOffset, getTrailingHangOffset, calculateImageFitting, splitWordIntoFitChunks } from './src/canvas';
+import { formatOpenTypeText, getLeadingHangOffset, getTrailingHangOffset, calculateImageFitting, splitWordIntoFitChunks, isTextFrameOverset } from './src/canvas';
 import { generateEpubPackage, exportDocumentToEpub } from './src/epubExport';
 import { generateFlipbookHtml, exportDocumentToFlipbook } from './src/flipbookExport';
 import { collabSession } from './src/collab';
@@ -29,6 +29,10 @@ import { calculateImpositionPlan } from './src/export/impositionEngine';
 import { calculateCoverSpineMetrics, createWrapCoverSpreadInProject, PAPER_STOCK_PRESETS } from './src/engine/spineCalculator';
 import { parseDataset, generateRepeaterSpreads } from './src/dataMerge';
 import { getFreeToneColor, getAllFreeToneColors, generatePdfSeparationDict } from './src/engine/spotColors';
+import { calculateEan13CheckDigit, generateEan13Svg } from './src/engine/barcodeEngine';
+import { isInddBuffer, extractInddXmp, parseInddMetadata, buildInddElements, parseInddBinaryHeader, carveUtf16Stories, analyzeInddBinaryStructure } from './src/engine/inddParser';
+import { ingestManuscript } from './src/contentImport';
+import { generateQrMatrix, generateQrSvg, generateQrDataUrl } from './src/engine/qrEngine';
 
 console.log('Running Recto Core Engine TypeScript Verification Tests...\n');
 
@@ -3283,8 +3287,535 @@ assert.strictEqual((threadedPdf as any).preflightWarnings.length, 0, 'Threaded f
 
 console.log('✓ PDF Export Preflight Overset Detection & Threaded Story Reflow verified.');
 
+// --- Suite 54: InDesign Canvas Red Outport Overset Indicator & Keyboard Shortcuts ---
+console.log('\n--- Suite 54: InDesign Canvas Red Outport Overset Indicator & Keyboard Shortcuts ---');
+
+const oversetSampleFrame: TextElement = {
+  id: 'test-canvas-overset-el',
+  type: 'text',
+  pageId: 'page-1',
+  x: 20,
+  y: 20,
+  width: 60,
+  height: 15,
+  rotation: 0,
+  opacity: 1,
+  zIndex: 1,
+  locked: false,
+  fontSizePt: 12,
+  lineHeight: 1.3,
+  text: 'Line 1: Headline\nLine 2: Subheadline\nLine 3: Long paragraph text that will definitely exceed the capacity of a 15mm frame height.\nLine 4: More text\nLine 5: Still more overflow text.',
+};
+
+assert.strictEqual(isTextFrameOverset(oversetSampleFrame), true, 'Frame with text exceeding frame height must be identified as overset');
+
+const fittedSampleFrame: TextElement = {
+  ...oversetSampleFrame,
+  id: 'test-canvas-fitted-el',
+  height: 80,
+  text: 'Short line of text.',
+};
+assert.strictEqual(isTextFrameOverset(fittedSampleFrame), false, 'Frame with generous height and short text must not be flagged as overset');
+
+const threadedSampleFrame: TextElement = {
+  ...oversetSampleFrame,
+  id: 'test-canvas-threaded-el',
+  nextFrameId: 'test-canvas-next-frame',
+};
+assert.strictEqual(isTextFrameOverset(threadedSampleFrame), false, 'Threaded text frame must delegate overflow to nextFrameId without overset flag');
+
+console.log('✓ InDesign Canvas Red Outport Overset Indicator & Detection verified.');
+
+// Verify Architectural Monograph Template
+const archTemplate = TEMPLATES.find(t => t.id === 'architecture-monograph');
+assert(archTemplate, 'Architectural Monograph template must be registered');
+const archSpread = archTemplate.createSpread(0, 1);
+assert.strictEqual(archSpread.elements.length, 7, 'Architectural Monograph must have 7 configured layout elements');
+assert(archSpread.elements.some(e => e.type === 'text' && (e as TextElement).dropCapLines === 3), 'Must include 3-line drop cap element');
+console.log('✓ Architectural Monograph Editorial Showcase template verified.');
+
+console.log('\n--- Suite 55: Prepress Superpowers (Barcode, Imposition Zine, Finishing Layers, Fit Frame, Comments & Measure) ---');
+
+// 1. Vector EAN-13 / ISBN Barcode Engine
+const checkDigit = calculateEan13CheckDigit('978013235088');
+assert.strictEqual(checkDigit, 4, 'EAN-13 check digit for 978013235088 must be 4');
+const barcodeSvg = generateEan13Svg('9780132350884');
+assert(barcodeSvg.includes('<svg'), 'Barcode output must be valid SVG XML');
+assert(barcodeSvg.includes('<rect'), 'Barcode SVG must contain bar rects');
+assert(barcodeSvg.includes('ISBN 978-0-1323-5088-4'), 'Barcode SVG must include formatted human-readable ISBN text');
+
+// 2. 8-Page Mini-Zine / French Fold Imposition
+const testState = stateManager.getState();
+const miniZinePlan = calculateImpositionPlan(testState, { bindingMode: 'mini-zine-8page' });
+assert.strictEqual(miniZinePlan.bindingMode, 'mini-zine-8page');
+assert.strictEqual(miniZinePlan.signatureSizePages, 8);
+assert(miniZinePlan.sheetSides.length >= 2, 'Mini-Zine plan must have front and back sheet sides');
+
+// 3. Specialty Finish Layers (Dieline, Crease, Spot UV, Foil)
+const dielineLayer = stateManager.addFinishingLayer('dieline');
+assert.strictEqual(dielineLayer.name, 'Dieline (Cut Contour)');
+assert.strictEqual(dielineLayer.colorHex, '#e6007e');
+
+const foilLayer = stateManager.addFinishingLayer('foil');
+assert.strictEqual(foilLayer.name, 'Hot Foil Stamp (Gold)');
+assert.strictEqual(foilLayer.colorHex, '#d4af37');
+
+// 4. Auto-Fit Frame to Content
+const fitTestEl: TextElement = {
+  id: 'test-fit-frame-el',
+  type: 'text',
+  pageId: testState.spreads[0].pages[0].id,
+  x: 10,
+  y: 10,
+  width: 50,
+  height: 15,
+  rotation: 0,
+  opacity: 1,
+  zIndex: 1,
+  locked: false,
+  text: 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8',
+  fontFamily: 'serif',
+  fontSizePt: 12,
+  lineHeight: 1.4,
+  letterSpacingPt: 0,
+  color: '#000000',
+  alignment: 'left',
+  columns: 1,
+  columnGutterMm: 4,
+  backgroundColor: 'transparent',
+  borderColor: 'transparent',
+  borderWidthMm: 0,
+  paddingMm: 2,
+};
+stateManager.addElement(fitTestEl);
+const initialHeight = fitTestEl.height;
+stateManager.fitFrameToContent(fitTestEl.id);
+const fittedEl = stateManager.getElementById(fitTestEl.id) as TextElement;
+assert(fittedEl.height > initialHeight, 'Frame height must expand to accommodate text lines');
+
+// 5. Canvas Annotation Comment Pins
+const comment = stateManager.addComment(0, 45, 60, 'Tighten tracking on headline', 'Art Director');
+assert.strictEqual(comment.text, 'Tighten tracking on headline');
+assert.strictEqual(comment.resolved, false);
+stateManager.resolveComment(comment.id);
+const resolvedComment = stateManager.getState().comments?.find(c => c.id === comment.id);
+assert.strictEqual(resolvedComment?.resolved, true, 'Comment pin must toggle to resolved');
+
+// 6. Toggles & Measure Data
+const currentReading = Boolean(stateManager.getState().showReadingOrder);
+stateManager.toggleReadingOrder();
+assert.strictEqual(stateManager.getState().showReadingOrder, !currentReading);
+
+stateManager.setMeasureData({
+  startX: 10,
+  startY: 10,
+  currentX: 40,
+  currentY: 50,
+  distanceMm: 50,
+  angleDeg: 53.13,
+});
+assert.strictEqual(stateManager.getState().activeMeasure?.distanceMm, 50);
+
+console.log('✓ Prepress Superpowers (Barcode, Imposition Zine, Finishing Layers, Fit Frame, Comments & Measure) verified.');
+
+console.log('\n--- Suite 56: Advanced Publishing Superpowers (Object Styles, Dynamic Xrefs, Span Columns, Multi-Level Index & Smart .indd Ingestion) ---');
+
+// 1. Object Styles Engine
+const objStyles = stateManager.getState().objectStyles || [];
+assert(objStyles.length >= 3, 'Must contain default object styles (None, Callout, Sidebar, Pull Quote)');
+const calloutStyle = objStyles.find(s => s.id === 'obj-callout');
+assert(calloutStyle, 'Callout box object style must exist');
+assert.strictEqual(calloutStyle?.backgroundColor, '#f4f4f5');
+
+const customStyle = stateManager.createObjectStyle({
+  name: 'Editorial Spotlight',
+  backgroundColor: '#fef08a',
+  borderColor: '#ca8a04',
+  borderWidthMm: 1,
+  paddingMm: 5,
+  shadow: {
+    color: 'rgba(0,0,0,0.2)',
+    blurMm: 4,
+    offsetX: 2,
+    offsetY: 2,
+  },
+});
+assert.strictEqual(customStyle.name, 'Editorial Spotlight');
+
+const suite56Spread = stateManager.getActiveSpread();
+const suite56Page = suite56Spread.pages[0];
+const targetEl: TextElement = {
+  id: 'test-obj-style-el',
+  type: 'text',
+  pageId: suite56Page.id,
+  x: 20,
+  y: 30,
+  width: 60,
+  height: 40,
+  rotation: 0,
+  opacity: 1,
+  zIndex: 1,
+  locked: false,
+  text: 'Sample Content for Object Style',
+  fontFamily: 'serif',
+  fontSizePt: 11,
+  lineHeight: 1.4,
+  letterSpacingPt: 0,
+  color: '#000000',
+  alignment: 'left',
+  columns: 1,
+  columnGutterMm: 4,
+  backgroundColor: 'transparent',
+  borderColor: 'transparent',
+  borderWidthMm: 0,
+  paddingMm: 2,
+};
+stateManager.addElement(targetEl);
+stateManager.applyObjectStyle(targetEl.id, customStyle.id);
+const styledObjEl = stateManager.getElementById(targetEl.id) as TextElement;
+assert.strictEqual(styledObjEl.objectStyleId, customStyle.id);
+assert.strictEqual(styledObjEl.backgroundColor, '#fef08a');
+assert.strictEqual(styledObjEl.borderWidthMm, 1);
+assert.strictEqual(styledObjEl.shadow?.blurMm, 4);
+
+// Cascading updates
+stateManager.updateObjectStyle(customStyle.id, { backgroundColor: '#fde047', borderWidthMm: 2 });
+const cascadedEl = stateManager.getElementById(targetEl.id) as TextElement;
+assert.strictEqual(cascadedEl.backgroundColor, '#fde047');
+assert.strictEqual(cascadedEl.borderWidthMm, 2);
+
+stateManager.deleteObjectStyle(customStyle.id);
+const unlinkedEl = stateManager.getElementById(targetEl.id) as TextElement;
+assert.strictEqual(unlinkedEl.objectStyleId, undefined);
+
+// 2. Dynamic Cross-References (Xrefs)
+const xrefTargetEl: TextElement = {
+  id: 'xref-target-figure-1',
+  type: 'text',
+  pageId: suite56Page.id,
+  x: 10,
+  y: 100,
+  width: 50,
+  height: 20,
+  rotation: 0,
+  opacity: 1,
+  zIndex: 1,
+  locked: false,
+  text: 'Figure 1: High-Precision Layout Engine Architecture',
+  fontFamily: 'sans-serif',
+  fontSizePt: 10,
+  lineHeight: 1.2,
+  letterSpacingPt: 0,
+  color: '#111827',
+  alignment: 'left',
+  columns: 1,
+  columnGutterMm: 4,
+  backgroundColor: 'transparent',
+  borderColor: 'transparent',
+  borderWidthMm: 0,
+  paddingMm: 0,
+};
+stateManager.addElement(xrefTargetEl);
+
+const targetPage = stateManager.findTargetPageForElement(xrefTargetEl.id);
+assert(targetPage !== null && targetPage >= 1, 'Target element page must be resolved');
+
+const unresolvedText = 'Refer to Figure 1 on page {xref:xref-target-figure-1} for schematics.';
+const resolvedText = stateManager.resolveCrossReferences(unresolvedText);
+assert.strictEqual(resolvedText, `Refer to Figure 1 on page ${targetPage} for schematics.`);
+
+// 3. Multi-Level Book Index Generator
+const indexParaEl: TextElement = {
+  id: 'test-index-content-el',
+  type: 'text',
+  pageId: suite56Page.id,
+  x: 10,
+  y: 150,
+  width: 100,
+  height: 30,
+  rotation: 0,
+  opacity: 1,
+  zIndex: 1,
+  locked: false,
+  text: 'Modern publishing requires careful {index:Typography:Optical Alignment} and precise {index:Typography:Kerning} paired with sturdy {index:Prepress:Bleed Setup}.',
+  fontFamily: 'serif',
+  fontSizePt: 10,
+  lineHeight: 1.4,
+  letterSpacingPt: 0,
+  color: '#000000',
+  alignment: 'left',
+  columns: 1,
+  columnGutterMm: 4,
+  backgroundColor: 'transparent',
+  borderColor: 'transparent',
+  borderWidthMm: 0,
+  paddingMm: 0,
+};
+stateManager.addElement(indexParaEl);
+
+const scannedIndex = stateManager.scanDocumentForIndexEntries();
+assert(scannedIndex.some(e => e.topic === 'Typography' && e.subtopic === 'Optical Alignment'));
+assert(scannedIndex.some(e => e.topic === 'Typography' && e.subtopic === 'Kerning'));
+assert(scannedIndex.some(e => e.topic === 'Prepress' && e.subtopic === 'Bleed Setup'));
+
+const bookIndex = stateManager.generateBookIndex();
+const pGroup = bookIndex.find(g => g.letter === 'P');
+const tGroup = bookIndex.find(g => g.letter === 'T');
+assert(pGroup, 'Index must contain letter section P');
+assert(tGroup, 'Index must contain letter section T');
+const typoTopic = tGroup?.entries.find(e => e.topic === 'Typography');
+assert(typoTopic && typoTopic.subtopics.length >= 2, 'Typography topic must contain multiple subtopics');
+
+const indexStoryEl = stateManager.insertIndexStory();
+assert(indexStoryEl && indexStoryEl.text.includes('INDEX'), 'Generated index story must include header');
+assert(indexStoryEl.text.includes('[ T ]'), 'Index story must include letter sections');
+assert(indexStoryEl.text.includes('Optical Alignment'), 'Index story must include subtopics');
+
+// 4. Span Columns & Interactive AcroForm Fields
+stateManager.setSpanColumns(targetEl.id, true);
+const spanEl = stateManager.getElementById(targetEl.id) as TextElement;
+assert.strictEqual(spanEl.spanColumns, true);
+
+stateManager.setInteractiveField(targetEl.id, {
+  type: 'text',
+  fieldName: 'SubscriberName',
+  defaultValue: 'Alex Morgan',
+  multiline: false,
+  required: true,
+});
+const interactiveEl = stateManager.getElementById(targetEl.id);
+assert.strictEqual(interactiveEl?.interactiveField?.fieldName, 'SubscriberName');
+assert.strictEqual(interactiveEl?.interactiveField?.type, 'text');
+
+// 5. Smart Adobe InDesign (.indd) Binary Ingestion & XMP/Thumbnail Extractor
+const syntheticInddHeader = new Uint8Array(40);
+// 16-byte Master GUID
+syntheticInddHeader.set([0x06, 0x06, 0xed, 0xf5, 0xd8, 0x1d, 0x46, 0xe5, 0xbd, 0x31, 0xef, 0xe7, 0xfe, 0x74, 0xb7, 0x1d], 0);
+// Subtype 'DOCUMENT'
+syntheticInddHeader.set(new TextEncoder().encode('DOCUMENT'), 16);
+// Endianness (0x01 = Little-endian)
+syntheticInddHeader[24] = 0x01;
+// Version 19 = InDesign CC 2024
+syntheticInddHeader[28] = 19;
+syntheticInddHeader[29] = 0x00;
+syntheticInddHeader[30] = 0x00;
+syntheticInddHeader[31] = 0x00;
+// Sector size 4096 (0x1000)
+syntheticInddHeader[32] = 0x00;
+syntheticInddHeader[33] = 0x10;
+syntheticInddHeader[34] = 0x00;
+syntheticInddHeader[35] = 0x00;
+
+// Synthetic Story Sector with UTF-16LE text stream
+const storyText = 'Chapter One: The Architecture of Grid Typography and Book Layout';
+const storyBytes = new Uint8Array(storyText.length * 2);
+for (let i = 0; i < storyText.length; i++) {
+  storyBytes[i * 2] = storyText.charCodeAt(i);
+  storyBytes[i * 2 + 1] = 0;
+}
+
+const syntheticXmp = `<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:dc="http://purl.org/dc/elements/1.1/"
+    xmlns:xmp="http://ns.adobe.com/xap/1.0/"
+    xmlns:xmpTPg="http://ns.adobe.com/xap/1.0/t/pg/"
+    xmlns:stFnt="http://ns.adobe.com/xap/1.0/sType/Font#"
+    xmlns:xmpG="http://ns.adobe.com/xap/1.0/g/"
+    xmlns:xmpGImg="http://ns.adobe.com/xap/1.0/g/img/">
+   <dc:format>application/x-indesign</dc:format>
+   <dc:title><rdf:Alt><rdf:li xml:lang="x-default">The Paris Monograph</rdf:li></rdf:Alt></dc:title>
+   <dc:creator><rdf:Seq><rdf:li>Abhinav Studio</rdf:li></rdf:Seq></dc:creator>
+   <xmp:CreatorTool>Adobe InDesign 2026 (Macintosh)</xmp:CreatorTool>
+   <xmp:CreateDate>2026-10-20T10:15:30Z</xmp:CreateDate>
+   <xmpTPg:NPages>48</xmpTPg:NPages>
+   <xmpTPg:Fonts>
+    <rdf:Bag>
+     <rdf:li rdf:parseType="Resource">
+      <stFnt:fontName>MinionPro-Regular</stFnt:fontName>
+      <stFnt:fontFamily>Minion Pro</stFnt:fontFamily>
+     </rdf:li>
+     <rdf:li rdf:parseType="Resource">
+      <stFnt:fontName>HelveticaNeue-Bold</stFnt:fontName>
+      <stFnt:fontFamily>Helvetica Neue</stFnt:fontFamily>
+     </rdf:li>
+    </rdf:Bag>
+   </xmpTPg:Fonts>
+   <xmpTPg:Colorants>
+    <rdf:Seq>
+     <rdf:li rdf:parseType="Resource">
+      <xmpG:swatchName>PANTONE 185 C</xmpG:swatchName>
+      <xmpG:mode>SPOT</xmpG:mode>
+     </rdf:li>
+    </rdf:Seq>
+   </xmpTPg:Colorants>
+   <xmpGImg:image>/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=</xmpGImg:image>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="w"?>`;
+
+const xmpBytes = new TextEncoder().encode(syntheticXmp);
+const inddBuffer = new Uint8Array(syntheticInddHeader.length + xmpBytes.length + storyBytes.length);
+inddBuffer.set(syntheticInddHeader, 0);
+inddBuffer.set(xmpBytes, syntheticInddHeader.length);
+inddBuffer.set(storyBytes, syntheticInddHeader.length + xmpBytes.length);
+
+assert(isInddBuffer(inddBuffer), 'Buffer must be detected as Adobe InDesign document');
+
+// Binary header reverse engineering
+const binHeader = parseInddBinaryHeader(inddBuffer);
+assert(binHeader !== null, 'Binary header must be successfully parsed');
+assert.strictEqual(binHeader?.fileType, 'DOCUMENT');
+assert.strictEqual(binHeader?.endianness, 'little-endian');
+assert.strictEqual(binHeader?.versionNumber, 19);
+assert.strictEqual(binHeader?.versionName, 'InDesign CC 2024 (19.0)');
+assert.strictEqual(binHeader?.sectorSize, 4096);
+
+// Heuristic UTF-16LE text carving
+const carved = carveUtf16Stories(inddBuffer);
+assert(carved.some(s => s.includes('The Architecture of Grid Typography')), 'Must carve UTF-16LE story text from sectors');
+
+// Full architectural analysis report
+const report = analyzeInddBinaryStructure(inddBuffer);
+assert.strictEqual(report.header?.versionNumber, 19);
+assert.strictEqual(report.metadata.title, 'The Paris Monograph');
+assert(report.carvedStories.length >= 1);
+assert(report.sectorCount >= 1);
+
+const extractedXmp = extractInddXmp(inddBuffer);
+assert(extractedXmp && extractedXmp.includes('The Paris Monograph'), 'XMP packet must be extracted from binary stream');
+
+const inddMeta = parseInddMetadata(inddBuffer);
+assert.strictEqual(inddMeta.isIndd, true);
+assert.strictEqual(inddMeta.title, 'The Paris Monograph');
+assert.strictEqual(inddMeta.creator, 'Abhinav Studio');
+assert.strictEqual(inddMeta.pageCount, 48);
+assert(inddMeta.fonts.some(f => f.name === 'MinionPro-Regular'));
+assert(inddMeta.swatches.some(s => s.name === 'PANTONE 185 C'));
+assert(inddMeta.thumbnailDataUrl?.startsWith('data:image/jpeg;base64,'), 'Embedded JPEG thumbnail must be decoded as data URL');
+
+const inddElements = buildInddElements(inddMeta, suite56Page.id);
+assert(inddElements.length >= 2, 'Must build visual thumbnail image and metadata element');
+assert.strictEqual(inddElements[0].type, 'image');
+assert.strictEqual(inddElements[1].type, 'text');
+
+const ingestedIndd = await ingestManuscript('magazine.indd', inddBuffer);
+assert(ingestedIndd.formattedText.includes('The Paris Monograph'));
+assert.strictEqual(ingestedIndd.inddMetadata?.pageCount, 48);
+
+console.log('✓ Advanced Publishing Superpowers (Object Styles, Dynamic Xrefs, Span Columns, Multi-Level Index & Smart .indd Ingestion) verified.');
+
+// --- Suite 57: InDesign Parity Suite (Native Vector QR Codes, Anchored Objects, Split Columns, Scripting Engine & Conditional Text) ---
+console.log('\n--- Suite 57: InDesign Parity Suite (Native Vector QR Codes, Anchored Objects, Split Columns, Scripting Engine & Conditional Text) ---');
+
+// 1. Native Vector QR Code Engine (ISO/IEC 18004 Model 2)
+const qrMatrix = generateQrMatrix('https://recto.studio/manual');
+assert(qrMatrix.length >= 21, 'QR matrix dimension must be at least 21x21');
+assert.strictEqual(qrMatrix.length, qrMatrix[0].length, 'QR matrix must be square');
+assert.strictEqual(qrMatrix[0][0], true, 'QR Finder top-left must be filled');
+assert.strictEqual(qrMatrix[0][6], true, 'QR Finder top-left edge must be filled');
+
+const qrSvg = generateQrSvg('https://recto.studio/manual', 32);
+assert(qrSvg.includes('<svg xmlns="http://www.w3.org/2000/svg" width="32mm" height="32mm"'), 'Generated QR SVG must have exact mm dimensions');
+assert(qrSvg.includes('<path d="M'), 'Generated QR SVG must contain vector path data');
+
+const qrDataUrl = generateQrDataUrl('https://recto.studio/manual', 32);
+assert(qrDataUrl.startsWith('data:image/svg+xml;utf8,'), 'Generated QR data URL must be valid SVG data URI');
+
+const insertedQr = stateManager.insertQrCode('https://recto.studio/manual', { sizeMm: 35 });
+assert.strictEqual(insertedQr.type, 'image');
+assert.strictEqual(insertedQr.width, 35);
+assert.strictEqual(insertedQr.height, 35);
+assert(insertedQr.src.startsWith('data:image/svg+xml'), 'Inserted QR element must use vector data URL');
+
+// 2. Anchored Objects (Inline & Flowing Graphics)
+const parentTextId = 'suite57-parent-text';
+const suite57Spread = stateManager.getActiveSpread();
+const suite57Page = suite57Spread.pages[0];
+
+const textHost: TextElement = {
+  id: parentTextId,
+  type: 'text',
+  pageId: suite57Page.id,
+  x: 25,
+  y: 40,
+  width: 90,
+  height: 35,
+  rotation: 0,
+  opacity: 1,
+  zIndex: 2,
+  locked: false,
+  text: 'Desktop publishing demands tight integration between body copy and inline graphics.',
+  fontFamily: 'Inter',
+  fontSizePt: 11,
+  lineHeight: 1.4,
+  letterSpacingPt: 0,
+  color: '#111827',
+  alignment: 'left',
+  columns: 1,
+  columnGutterMm: 4,
+  backgroundColor: 'transparent',
+  borderColor: 'transparent',
+  borderWidthMm: 0,
+  paddingMm: 0,
+};
+stateManager.addElement(textHost);
+
+// Anchor the QR code to the text frame
+stateManager.anchorElementToText(insertedQr.id, parentTextId, { mode: 'inline', offsetYMm: 6 });
+const anchoredQr = stateManager.getElementById(insertedQr.id) as ImageElement;
+assert(anchoredQr.anchor !== undefined, 'Element must have anchor configuration');
+assert.strictEqual(anchoredQr.anchor?.parentTextId, parentTextId);
+assert.strictEqual(anchoredQr.anchor?.mode, 'inline');
+assert.strictEqual(anchoredQr.anchor?.offsetYMm, 6);
+assert.strictEqual(anchoredQr.x, textHost.x, 'Anchored child X must align with parent X');
+assert.strictEqual(anchoredQr.y, textHost.y + textHost.height + 6, 'Anchored child Y must track parent bottom + offset');
+
+// Move & resize parent text frame -> child position must update automatically
+stateManager.updateElement(parentTextId, { y: 70, height: 45 });
+const movedQr = stateManager.getElementById(insertedQr.id) as ImageElement;
+assert.strictEqual(movedQr.y, 70 + 45 + 6, 'Anchored child must update position when parent text frame moves or resizes');
+
+// Unanchor element
+stateManager.unanchorElement(insertedQr.id);
+const unanchoredQr = stateManager.getElementById(insertedQr.id) as ImageElement;
+assert.strictEqual(unanchoredQr.anchor, undefined, 'Unanchored element must clear anchor configuration');
+
+// 3. Split Columns
+stateManager.setSplitColumns(parentTextId, 2);
+const splitTextEl = stateManager.getElementById(parentTextId) as TextElement;
+assert.strictEqual(splitTextEl.splitColumns, 2, 'Split columns property must be set on text frame');
+
+// 4. Conditional Text Engine
+const testCondition = stateManager.addCondition('CatalogDiscount', '#f59e0b');
+assert(testCondition.id.startsWith('cond-'), 'Condition ID must be generated');
+assert.strictEqual(testCondition.name, 'CatalogDiscount');
+assert.strictEqual(testCondition.visible, true);
+
+const rawConditionalText = 'Retail price: $120. {cond:CatalogDiscount}VIP Discount: $79 special offer!{/cond} Available worldwide.';
+const evaluatedVisible = stateManager.evaluateConditions(rawConditionalText);
+assert(evaluatedVisible.includes('VIP Discount: $79 special offer!'), 'Visible condition must include conditioned segment');
+
+// Toggle condition off (hidden)
+stateManager.toggleCondition(testCondition.id);
+const hiddenCond = stateManager.getState().conditions?.find(c => c.id === testCondition.id);
+assert.strictEqual(hiddenCond?.visible, false);
+
+const evaluatedHidden = stateManager.evaluateConditions(rawConditionalText);
+assert(!evaluatedHidden.includes('VIP Discount: $79 special offer!'), 'Hidden condition must strip conditioned segment');
+assert(evaluatedHidden.includes('Retail price: $120.'), 'Surrounding text must be preserved');
+assert(evaluatedHidden.includes('Available worldwide.'), 'Trailing text must be preserved');
+
+// Clean up test elements
+stateManager.deleteElement(parentTextId);
+stateManager.deleteElement(insertedQr.id);
+
+console.log('✓ InDesign Parity Suite (Native Vector QR Codes, Anchored Objects, Split Columns, Scripting Engine & Conditional Text) verified.');
+
 console.log('\n=============================================');
-console.log('ALL 53 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
+console.log('ALL 57 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
 console.log('=============================================\n');
 
 

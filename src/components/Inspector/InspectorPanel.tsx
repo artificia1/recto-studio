@@ -33,6 +33,7 @@ export function InspectorPanel({ state }: InspectorPanelProps) {
             key={tab.id}
             className={`inspector-tab ${activeTab === tab.id ? 'active' : ''}`}
             onClick={() => setActiveTab(tab.id)}
+            title={tab.label}
           >
             {tab.label}
           </button>

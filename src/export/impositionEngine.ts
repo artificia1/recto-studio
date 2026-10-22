@@ -8,7 +8,7 @@ import { jsPDF } from 'jspdf';
 import { ProjectState, Spread, Page } from '../types/index';
 import { exportDocumentToPdf } from './pdfExport';
 
-export type ImpositionBindingMode = 'saddle-stitch' | 'perfect-bound' | 'consecutive-2up';
+export type ImpositionBindingMode = 'saddle-stitch' | 'perfect-bound' | 'consecutive-2up' | 'mini-zine-8page';
 
 export interface ImpositionSheetSide {
   sheetIndex: number;
@@ -66,17 +66,19 @@ export function calculateImpositionPlan(
 
   // Signatures must be in multiples of 4 pages (each physical sheet has 2 pages front + 2 pages back = 4 pages)
   let signatureSize = options.signatureSize || 16;
-  if (bindingMode === 'saddle-stitch') {
+  if (bindingMode === 'mini-zine-8page') {
+    signatureSize = 8;
+  } else if (bindingMode === 'saddle-stitch') {
     signatureSize = Math.max(4, Math.ceil(totalPagesOriginal / 4) * 4);
   } else if (signatureSize % 4 !== 0) {
     signatureSize = Math.max(4, Math.ceil(signatureSize / 4) * 4);
   }
 
   // Calculate total pages padded to multiple of signature size or 4
-  const paddingUnit = bindingMode === 'saddle-stitch' ? 4 : signatureSize;
-  const totalPagesPadded = Math.max(4, Math.ceil(totalPagesOriginal / paddingUnit) * paddingUnit);
+  const paddingUnit = bindingMode === 'mini-zine-8page' ? 8 : (bindingMode === 'saddle-stitch' ? 4 : signatureSize);
+  const totalPagesPadded = Math.max(bindingMode === 'mini-zine-8page' ? 8 : 4, Math.ceil(totalPagesOriginal / paddingUnit) * paddingUnit);
   const blankPagesAdded = totalPagesPadded - totalPagesOriginal;
-  const sheetsCount = totalPagesPadded / 4;
+  const sheetsCount = bindingMode === 'mini-zine-8page' ? totalPagesPadded / 8 : totalPagesPadded / 4;
   const signaturesCount = Math.max(1, totalPagesPadded / signatureSize);
 
   // Creep estimation: ~0.08mm per 80gsm sheet unless specified
@@ -88,7 +90,32 @@ export function calculateImpositionPlan(
   const sheetSides: ImpositionSheetSide[] = [];
   let globalSideIndex = 1;
 
-  if (bindingMode === 'consecutive-2up') {
+  if (bindingMode === 'mini-zine-8page') {
+    // 8-Page French-Fold Mini-Zine: Imposes 8 pages onto 1 folding sheet
+    for (let z = 0; z < signaturesCount; z++) {
+      const zBase = z * 8;
+      sheetSides.push({
+        sheetIndex: z,
+        side: 'front',
+        sideNumber: globalSideIndex++,
+        leftPageNumber: zBase + 8 <= totalPagesOriginal ? zBase + 8 : null,
+        rightPageNumber: zBase + 1 <= totalPagesOriginal ? zBase + 1 : null,
+        leftCreepMm: 0,
+        rightCreepMm: 0,
+        signatureIndex: z,
+      });
+      sheetSides.push({
+        sheetIndex: z,
+        side: 'back',
+        sideNumber: globalSideIndex++,
+        leftPageNumber: zBase + 2 <= totalPagesOriginal ? zBase + 2 : null,
+        rightPageNumber: zBase + 7 <= totalPagesOriginal ? zBase + 7 : null,
+        leftCreepMm: 0,
+        rightCreepMm: 0,
+        signatureIndex: z,
+      });
+    }
+  } else if (bindingMode === 'consecutive-2up') {
     // Simple 2-up reader spread proofing
     for (let i = 0; i < totalPagesPadded; i += 2) {
       const pLeft = i + 1 <= totalPagesOriginal ? i + 1 : null;

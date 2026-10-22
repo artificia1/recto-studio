@@ -61,7 +61,7 @@ export function StatusBar({ state }: StatusBarProps) {
             title="Print Preflight: All print criteria passed. Click to view audit."
             style={{ flexShrink: 0 }}
           >
-            Preflight: OK
+            <span style={{ fontSize: '9px', color: '#2ec4b6', marginRight: '4px' }}>●</span> Preflight: No errors
           </span>
         ) : (
           <button
@@ -74,7 +74,7 @@ export function StatusBar({ state }: StatusBarProps) {
             title="Click to view and resolve print preflight issues"
             style={{ flexShrink: 0 }}
           >
-            Preflight: {issues.length} {issues.length === 1 ? 'Issue' : 'Issues'}
+            <span style={{ fontSize: '9px', color: '#ffffff', marginRight: '4px' }}>●</span> Preflight: {issues.length} {issues.length === 1 ? 'error' : 'errors'}
           </button>
         )}
 

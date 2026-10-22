@@ -19,6 +19,28 @@ export function TemplatesTab({ state }: TemplatesTabProps) {
     stateManager.setActiveSpread(state.spreads.length - 1);
   };
 
+  const handleApplyToActive = (tmpl: TemplateDefinition) => {
+    const curSpread = stateManager.getActiveSpread();
+    const startPageNum = curSpread.pages[0]?.pageNumber || 1;
+    const generated = tmpl.createSpread(state.activeSpreadIndex, startPageNum);
+    if (curSpread.pages.length >= 2 && generated.pages.length >= 2) {
+      const pageIdMap = new Map([
+        [generated.pages[0].id, curSpread.pages[0].id],
+        [generated.pages[1].id, curSpread.pages[1].id],
+      ]);
+      curSpread.elements = generated.elements.map((el) => ({
+        ...el,
+        pageId: pageIdMap.get(el.pageId) || curSpread.pages[0].id,
+      }));
+    } else {
+      curSpread.elements = generated.elements.map((el) => ({
+        ...el,
+        pageId: curSpread.pages[0]?.id || el.pageId,
+      }));
+    }
+    stateManager.setActiveSpread(state.activeSpreadIndex);
+  };
+
   return (
     <div className="templates-view">
       <div className="section-header">PROFESSIONAL SPREAD TEMPLATES</div>
@@ -32,12 +54,24 @@ export function TemplatesTab({ state }: TemplatesTabProps) {
             <div className="tmpl-badge">{tmpl.category}</div>
             <div className="tmpl-title">{tmpl.name}</div>
             <div className="tmpl-desc">{tmpl.description}</div>
-            <button
-              className="action-btn-primary btn-apply-tmpl"
-              onClick={() => handleApply(tmpl)}
-            >
-              Append to Project
-            </button>
+            <div style={{ display: 'flex', gap: '6px', marginTop: '10px' }}>
+              <button
+                className="action-btn-primary btn-apply-tmpl"
+                style={{ flex: 1, padding: '6px 8px', fontSize: '11px' }}
+                onClick={() => handleApplyToActive(tmpl)}
+                title="Populate active spread canvas with this layout"
+              >
+                Load to Spread
+              </button>
+              <button
+                className="action-btn btn-apply-tmpl"
+                style={{ flex: 1, padding: '6px 8px', fontSize: '11px' }}
+                onClick={() => handleApply(tmpl)}
+                title="Append as a new spread at the end of publication"
+              >
+                + New Spread
+              </button>
+            </div>
           </div>
         ))}
       </div>

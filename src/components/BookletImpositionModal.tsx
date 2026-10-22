@@ -90,6 +90,7 @@ export function BookletImpositionModal({ state, onClose }: BookletImpositionModa
               >
                 <option value="saddle-stitch">Saddle-Stitch (Folded & Stapled Booklet)</option>
                 <option value="perfect-bound">Multi-Signature Perfect Bound (Glued Spine)</option>
+                <option value="mini-zine-8page">8-Page Mini-Zine (1-Sheet French Fold & Slit)</option>
                 <option value="consecutive-2up">Consecutive 2-Up Proofing (Reader Spreads)</option>
               </select>
             </div>

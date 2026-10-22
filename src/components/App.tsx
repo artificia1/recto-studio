@@ -9,6 +9,11 @@ import { FindChangeModal } from './FindChangeModal';
 import { QuickApply } from './QuickApply';
 import { BookletImpositionModal } from './BookletImpositionModal';
 import { CoverSpineModal } from './CoverSpineModal';
+import { ShortcutsModal } from './ShortcutsModal';
+import { StoryEditorModal } from './StoryEditorModal';
+import { BarcodeModal } from './BarcodeModal';
+import { QrCodeModal } from './QrCodeModal';
+import { ScriptsModal } from './ScriptsModal';
 import { SpreadCanvas } from '../canvas';
 import { stateManager } from '../state';
 import { ingestManuscript } from '../contentImport';
@@ -19,6 +24,11 @@ export function App() {
   const [showQuickApply, setShowQuickApply] = useState(false);
   const [showImposition, setShowImposition] = useState(false);
   const [showCoverSpine, setShowCoverSpine] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showStoryEditor, setShowStoryEditor] = useState(false);
+  const [showBarcodeModal, setShowBarcodeModal] = useState(false);
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [showScriptsModal, setShowScriptsModal] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rulerTopRef = useRef<HTMLCanvasElement>(null);
@@ -28,6 +38,9 @@ export function App() {
   useEffect(() => {
     const handleGlobalShortcuts = (e: KeyboardEvent) => {
       const isMod = e.ctrlKey || e.metaKey;
+      const target = e.target as HTMLElement;
+      const isEditing = Boolean(target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable));
+
       if (isMod && e.shiftKey && (e.key === 'i' || e.key === 'I')) {
         e.preventDefault();
         setShowImposition((prev) => !prev);
@@ -46,6 +59,34 @@ export function App() {
       } else if (isMod && (e.key === '/' || e.key === 'Enter')) {
         e.preventDefault();
         setShowQuickApply((prev) => !prev);
+      } else if (isMod && (e.key === 'y' || e.key === 'Y')) {
+        e.preventDefault();
+        setShowStoryEditor((prev) => !prev);
+      } else if (isMod && e.altKey && (e.key === 'c' || e.key === 'C')) {
+        e.preventDefault();
+        stateManager.fitFrameToContent();
+      } else if (isMod && e.altKey && (e.key === 'a' || e.key === 'A')) {
+        e.preventDefault();
+        stateManager.toggleReadingOrder();
+      } else if (isMod && e.altKey && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        stateManager.toggleSlugBanner();
+      } else if (!isEditing && !isMod && !e.altKey && !e.shiftKey && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        stateManager.setTool('measure');
+      } else if (isMod && (e.key === ';' || e.key === ':')) {
+        e.preventDefault();
+        stateManager.toggleGuides();
+      } else if (isMod && e.altKey && (e.key === "'" || e.key === '"')) {
+        e.preventDefault();
+        stateManager.toggleBaselineGrid();
+      } else if (!isEditing && !isMod && !e.altKey && !e.shiftKey && (e.key === 'w' || e.key === 'W')) {
+        e.preventDefault();
+        stateManager.togglePreviewMode();
+      } else if (e.key === '?' || (e.shiftKey && e.key === '/') || e.key === 'F1') {
+        if (isEditing) return;
+        e.preventDefault();
+        setShowShortcuts((prev) => !prev);
       }
     };
     window.addEventListener('keydown', handleGlobalShortcuts);
@@ -216,6 +257,11 @@ export function App() {
         onOpenQuickApply={() => setShowQuickApply(true)}
         onOpenImposition={() => setShowImposition(true)}
         onOpenCoverSpine={() => setShowCoverSpine(true)}
+        onOpenShortcuts={() => setShowShortcuts(true)}
+        onOpenStoryEditor={() => setShowStoryEditor(true)}
+        onOpenBarcode={() => setShowBarcodeModal(true)}
+        onOpenQr={() => setShowQrModal(true)}
+        onOpenScripts={() => setShowScriptsModal(true)}
       />
       <ControlBar state={state} />
 
@@ -276,6 +322,32 @@ export function App() {
           onClose={() => setShowCoverSpine(false)}
         />
       )}
+
+      <ShortcutsModal
+        isOpen={showShortcuts}
+        onClose={() => setShowShortcuts(false)}
+      />
+
+      <StoryEditorModal
+        isOpen={showStoryEditor}
+        onClose={() => setShowStoryEditor(false)}
+        state={state}
+      />
+
+      <BarcodeModal
+        isOpen={showBarcodeModal}
+        onClose={() => setShowBarcodeModal(false)}
+      />
+
+      <QrCodeModal
+        isOpen={showQrModal}
+        onClose={() => setShowQrModal(false)}
+      />
+
+      <ScriptsModal
+        isOpen={showScriptsModal}
+        onClose={() => setShowScriptsModal(false)}
+      />
     </div>
   );
 }

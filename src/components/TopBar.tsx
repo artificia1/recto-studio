@@ -24,6 +24,11 @@ interface TopBarProps {
   onOpenQuickApply?: () => void;
   onOpenImposition?: () => void;
   onOpenCoverSpine?: () => void;
+  onOpenShortcuts?: () => void;
+  onOpenStoryEditor?: () => void;
+  onOpenBarcode?: () => void;
+  onOpenQr?: () => void;
+  onOpenScripts?: () => void;
 }
 
 export function TopBar({
@@ -32,6 +37,11 @@ export function TopBar({
   onOpenQuickApply,
   onOpenImposition,
   onOpenCoverSpine,
+  onOpenShortcuts,
+  onOpenStoryEditor,
+  onOpenBarcode,
+  onOpenQr,
+  onOpenScripts,
 }: TopBarProps) {
   const [showImpositionModal, setShowImpositionModal] = useState(false);
   const [showCoverSpineModal, setShowCoverSpineModal] = useState(false);
@@ -239,6 +249,22 @@ export function TopBar({
     exportDocumentToFlipbook(state, { download: true });
   };
 
+  const handleExportSpreadPng = () => {
+    setShowExportMenu(false);
+    const canvas = (window as any).recto?.spreadCanvas;
+    if (canvas && typeof canvas.exportSpreadAsPng === 'function') {
+      const dataUrl = canvas.exportSpreadAsPng(2);
+      if (dataUrl) {
+        const link = document.createElement('a');
+        const spreadNum = state.activeSpreadIndex + 1;
+        const safeTitle = (state.settings.title || 'recto-spread').toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+        link.download = `${safeTitle}-spread-${spreadNum}.png`;
+        link.href = dataUrl;
+        link.click();
+      }
+    }
+  };
+
   const handlePackageDocument = () => {
     packageDocument(state, { download: true });
   };
@@ -392,6 +418,16 @@ export function TopBar({
           >
             ↻
           </button>
+          {onOpenShortcuts && (
+            <button
+              className="icon-btn"
+              onClick={onOpenShortcuts}
+              title="Keyboard Shortcuts Matrix (?)"
+              style={{ fontSize: '11px', fontWeight: 700 }}
+            >
+              ?
+            </button>
+          )}
         </div>
 
         <div className="control-group">
@@ -737,6 +773,98 @@ export function TopBar({
                 className="top-dropdown-item"
                 onClick={() => {
                   setShowFileMenu(false);
+                  onOpenBarcode?.();
+                }}
+                title="Generate vector ISBN-13 / EAN-13 barcode"
+              >
+                <div>
+                  <div className="dropdown-item-title">Insert ISBN / Barcode...</div>
+                  <div className="dropdown-item-sub">Pure vector EAN-13 bookland barcode</div>
+                </div>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowFileMenu(false);
+                  onOpenQr?.();
+                }}
+                title="Generate native vector ISO/IEC 18004 QR code"
+              >
+                <div>
+                  <div className="dropdown-item-title">Insert Vector QR Code...</div>
+                  <div className="dropdown-item-sub">URL, vCard, or custom data matrix</div>
+                </div>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowFileMenu(false);
+                  onOpenScripts?.();
+                }}
+                title="InDesign-style publishing automation & JavaScript scripts"
+              >
+                <div>
+                  <div className="dropdown-item-title">Scripts & Automation...</div>
+                  <div className="dropdown-item-sub">Batch typographic and layout scripts</div>
+                </div>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowFileMenu(false);
+                  stateManager.insertIndexStory();
+                }}
+                title="Generate multi-level alphabetical book index from markers"
+              >
+                <div>
+                  <div className="dropdown-item-title">Generate Book Index Spread</div>
+                  <div className="dropdown-item-sub">Compiles alphabetical A-Z index</div>
+                </div>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowFileMenu(false);
+                  onOpenStoryEditor?.();
+                }}
+                title="Open distraction-free Story Focus typewriter editor (Ctrl+Y)"
+              >
+                <div>
+                  <div className="dropdown-item-title">Story Focus Editor... (Ctrl+Y)</div>
+                  <div className="dropdown-item-sub">Distraction-free live manuscript typewriter</div>
+                </div>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowFileMenu(false);
+                  stateManager.toggleReadingOrder();
+                }}
+                title="Toggle visual reading order inspection badges (PDF/UA a11y)"
+              >
+                <div>
+                  <div className="dropdown-item-title">Toggle Reading Order Overlay</div>
+                  <div className="dropdown-item-sub">{state.showReadingOrder ? 'Hide [1][2][3] order badges' : 'Show [1][2][3] order badges'}</div>
+                </div>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowFileMenu(false);
+                  stateManager.toggleSlugBanner();
+                }}
+                title="Toggle prepress slug information area outside bleed"
+              >
+                <div>
+                  <div className="dropdown-item-title">Toggle Prepress Slug Area</div>
+                  <div className="dropdown-item-sub">{state.showSlugBanner ? 'Hide slug banner' : 'Show slug info & CMYK color bars'}</div>
+                </div>
+              </button>
+              <div className="dropdown-menu-divider" />
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowFileMenu(false);
                   handleOpenCoverSpine();
                 }}
                 title="Calculate spine thickness and design full wrap cover spread"
@@ -757,6 +885,20 @@ export function TopBar({
                 <div>
                   <div className="dropdown-item-title">Booklet Imposition Studio...</div>
                   <div className="dropdown-item-sub">Saddle-stitch, multi-signature, creep shingling & printer spreads</div>
+                </div>
+              </button>
+              <div className="dropdown-menu-divider" />
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowFileMenu(false);
+                  onOpenShortcuts?.();
+                }}
+                title="View complete keyboard shortcut matrix (or press ?)"
+              >
+                <div>
+                  <div className="dropdown-item-title">Keyboard Shortcuts Matrix...</div>
+                  <div className="dropdown-item-sub">Press ? or Ctrl+/ for complete cheat sheet</div>
                 </div>
               </button>
             </div>
@@ -897,6 +1039,16 @@ export function TopBar({
                 <div>
                   <div className="dropdown-item-title">Export Web Flipbook</div>
                   <div className="dropdown-item-sub">Single-file HTML5 with 3D page-flip animations</div>
+                </div>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={handleExportSpreadPng}
+                title="Export current spread as high-resolution PNG image"
+              >
+                <div>
+                  <div className="dropdown-item-title">Export Spread as Image (PNG)...</div>
+                  <div className="dropdown-item-sub">High-resolution raster preview for client review and sharing</div>
                 </div>
               </button>
               <div className="dropdown-divider" />

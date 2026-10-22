@@ -7,6 +7,12 @@ interface ToolbarProps {
 
 export function Toolbar({ state }: ToolbarProps) {
   const currentTool = state.activeTool;
+  const activeSpread = stateManager.getActiveSpread();
+  const selectedEl = state.selectedElementId
+    ? activeSpread.elements.find((e) => e.id === state.selectedElementId)
+    : null;
+  const fillColor = (selectedEl as any)?.backgroundColor || (selectedEl as any)?.fillColor || '#ffffff';
+  const strokeColor = (selectedEl as any)?.borderColor || (selectedEl as any)?.strokeColor || '#111111';
 
   return (
     <aside className="toolbar-left">
@@ -93,6 +99,14 @@ export function Toolbar({ state }: ToolbarProps) {
         </svg>
       </button>
 
+      <button
+        className={`tool-btn ${currentTool === 'measure' ? 'active' : ''}`}
+        onClick={() => stateManager.setTool('measure')}
+        title="Measure Tool (K) — Click and drag to measure distance, angle, and delta"
+      >
+        <span style={{ fontWeight: 800, fontSize: '13px', lineHeight: 1 }}>↔</span>
+      </button>
+
       <div className="tool-divider"></div>
 
       <button
@@ -105,10 +119,45 @@ export function Toolbar({ state }: ToolbarProps) {
         </svg>
       </button>
 
+      <div className="tool-divider"></div>
+
+      {/* InDesign-style Fill / Stroke Swatch Box */}
+      <div className="toolbar-swatches" title="Fill & Stroke (Shift+X to swap)">
+        <div className="swatch-container">
+          <div
+            className="swatch-stroke"
+            style={{ backgroundColor: strokeColor === 'transparent' ? '#27272a' : strokeColor }}
+            title={`Stroke: ${strokeColor}`}
+          />
+          <div
+            className="swatch-fill"
+            style={{ backgroundColor: fillColor === 'transparent' ? '#ffffff' : fillColor }}
+            title={`Fill: ${fillColor}`}
+          />
+          <button
+            className="swatch-swap-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (selectedEl) {
+                stateManager.updateElement(selectedEl.id, {
+                  backgroundColor: strokeColor,
+                  borderColor: fillColor,
+                } as any);
+              }
+            }}
+            title="Swap Fill and Stroke (Shift+X)"
+          >
+            ⇄
+          </button>
+        </div>
+      </div>
+
+      <div className="tool-divider"></div>
+
       <button
-        className={`tool-btn ${!state.showGuides ? 'active' : ''}`}
-        onClick={() => stateManager.toggleGuides()}
-        title="Toggle Preview / Guides Mode (W)"
+        className={`tool-btn ${state.previewMode ? 'active' : ''}`}
+        onClick={() => stateManager.togglePreviewMode()}
+        title="Toggle Preview Screen Mode (W)"
       >
         <span style={{ fontWeight: 800, fontSize: '11px', letterSpacing: '0.5px' }}>W</span>
       </button>

@@ -110,20 +110,47 @@ export function LayersTab({ state }: LayersTabProps) {
             Layers ({layers.length})
           </span>
         </div>
-        <button
-          className="btn-primary"
-          style={{
-            fontSize: '10px',
-            padding: '3px 8px',
-            cursor: 'pointer',
-            borderRadius: '4px',
-            fontWeight: 600,
-          }}
-          onClick={handleCreateLayer}
-          title="Create New Layer"
-        >
-          + New Layer
-        </button>
+        <div style={{ display: 'flex', gap: '4px' }}>
+          <select
+            style={{
+              fontSize: '10px',
+              padding: '2px 6px',
+              borderRadius: '4px',
+              border: '1px solid var(--border-color)',
+              background: 'var(--bg-app)',
+              color: 'var(--text-secondary)',
+              cursor: 'pointer',
+            }}
+            onChange={(e) => {
+              const val = (e.target as HTMLSelectElement).value;
+              if (val) {
+                stateManager.addFinishingLayer(val as any);
+                (e.target as HTMLSelectElement).value = '';
+              }
+            }}
+            title="Add Specialty Print Finish Layer (Dieline, Crease, Spot UV, Foil)"
+          >
+            <option value="">+ Finish...</option>
+            <option value="dieline">Dieline (Cut)</option>
+            <option value="crease">Crease (Score)</option>
+            <option value="spot_uv">Spot UV</option>
+            <option value="foil">Foil Stamp</option>
+          </select>
+          <button
+            className="btn-primary"
+            style={{
+              fontSize: '10px',
+              padding: '3px 8px',
+              cursor: 'pointer',
+              borderRadius: '4px',
+              fontWeight: 600,
+            }}
+            onClick={handleCreateLayer}
+            title="Create New Layer"
+          >
+            + Layer
+          </button>
+        </div>
       </div>
 
       {/* Selected Element Quick Layer Assignment */}

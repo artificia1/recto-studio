@@ -538,11 +538,11 @@ export function generateFlipbookHtml(state: ProjectState): string {
     <div class="nav-controls">
       <button class="btn" id="prevBtn" title="Previous Spread (Left Arrow)">⇦ Prev</button>
       <span class="page-indicator" id="pageIndicator">Spread 1 of ${flipSpreads.length}</span>
-      <button class="btn" id="nextBtn" title="Next Spread (Right Arrow / Space)">Next ⇨</button>
+      <button class="btn" id="nextBtn" title="Next Spread (Right Arrow / Space)">Next →</button>
     </div>
     <div style="display: flex; gap: 8px;">
-      <button class="btn" id="zoomFitBtn" title="Reset Fit">⊙ Fit</button>
-      <button class="btn" id="fullscreenBtn" title="Toggle Fullscreen (F)">⛶ Fullscreen</button>
+      <button class="btn" id="zoomFitBtn" title="Reset Fit">Fit View</button>
+      <button class="btn" id="fullscreenBtn" title="Toggle Fullscreen (F)">Fullscreen</button>
     </div>
   </header>
 

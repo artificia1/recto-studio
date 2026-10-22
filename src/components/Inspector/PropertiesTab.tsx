@@ -108,7 +108,7 @@ export function PropertiesTab({ state }: PropertiesTabProps) {
               onClick={() => stateManager.deleteSelectedElements()}
               title="Delete all unlocked elements in selection"
             >
-              ✕ Delete All
+              Delete All
             </button>
           </div>
         </div>
@@ -293,9 +293,171 @@ export function PropertiesTab({ state }: PropertiesTabProps) {
               onClick={() => stateManager.deleteElement(selectedEl.id)}
               title="Delete Element"
             >
-              ✕ Delete
+              Delete
             </button>
           </div>
+        </div>
+
+        <div style={{ marginTop: '8px', padding: '6px 8px', backgroundColor: 'var(--bg-app)', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
+          <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', fontSize: '11px', fontWeight: 600 }}>
+            <span>Drop Shadow</span>
+            <input
+              type="checkbox"
+              checked={Boolean(selectedEl.shadow)}
+              onChange={(e) =>
+                stateManager.updateElement(selectedEl.id, {
+                  shadow: (e.target as HTMLInputElement).checked
+                    ? { color: 'rgba(0, 0, 0, 0.4)', blurMm: 3, offsetX: 1.5, offsetY: 2 }
+                    : undefined,
+                })
+              }
+            />
+          </label>
+          {selectedEl.shadow && (
+            <div className="input-grid-2" style={{ marginTop: '6px' }}>
+              <label>
+                Blur:
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={selectedEl.shadow.blurMm || 3}
+                  onInput={(e) =>
+                    stateManager.updateElement(selectedEl.id, {
+                      shadow: { ...selectedEl.shadow!, blurMm: parseFloat((e.target as HTMLInputElement).value) || 3 },
+                    })
+                  }
+                />
+                mm
+              </label>
+              <label>
+                Offset:
+                <input
+                  type="number"
+                  min={-20}
+                  max={20}
+                  value={selectedEl.shadow.offsetY || 2}
+                  onInput={(e) => {
+                    const off = parseFloat((e.target as HTMLInputElement).value) || 2;
+                    stateManager.updateElement(selectedEl.id, {
+                      shadow: { ...selectedEl.shadow!, offsetX: off * 0.75, offsetY: off },
+                    });
+                  }}
+                />
+                mm
+              </label>
+            </div>
+          )}
+        </div>
+
+        {/* Anchored Object Status */}
+        <div style={{ marginTop: '8px', padding: '6px 8px', backgroundColor: 'var(--bg-app)', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 600 }}>
+            <span>Anchored Object</span>
+            {selectedEl.anchor ? (
+              <button
+                type="button"
+                className="sm-btn danger-btn"
+                style={{ fontSize: '10px', padding: '1px 6px' }}
+                onClick={() => stateManager.unanchorElement(selectedEl.id)}
+              >
+                Release Anchor
+              </button>
+            ) : (
+              <span style={{ fontSize: '10px', color: '#888' }}>Unanchored</span>
+            )}
+          </div>
+          {selectedEl.anchor && (
+            <div style={{ fontSize: '10px', color: '#0d99ff', marginTop: '4px' }}>
+              Anchored to Frame: {selectedEl.anchor.parentTextId}
+            </div>
+          )}
+        </div>
+
+        {/* Object Style Selector */}
+        <div style={{ marginTop: '8px' }}>
+          <label className="full-label" style={{ marginBottom: '4px', fontSize: '11px', fontWeight: 600 }}>
+            Object Style:
+            <select
+              value={selectedEl.objectStyleId || ''}
+              onChange={(e) => {
+                const val = (e.target as HTMLSelectElement).value;
+                if (val) {
+                  stateManager.applyObjectStyle(selectedEl.id, val);
+                } else {
+                  stateManager.updateElement(selectedEl.id, { objectStyleId: undefined });
+                }
+              }}
+              style={{ width: '100%', marginTop: '2px', fontSize: '11px' }}
+            >
+              <option value="">[None] / Custom</option>
+              {(state.objectStyles || []).map((os) => (
+                <option key={os.id} value={os.id}>
+                  {os.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {/* Interactive PDF Form Field */}
+        <div style={{ marginTop: '8px', padding: '6px 8px', backgroundColor: 'var(--bg-app)', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
+          <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', fontSize: '11px', fontWeight: 600 }}>
+            <span>AcroForm Interactive Field</span>
+            <input
+              type="checkbox"
+              checked={Boolean(selectedEl.interactiveField)}
+              onChange={(e) => {
+                const checked = (e.target as HTMLInputElement).checked;
+                stateManager.updateElement(selectedEl.id, {
+                  interactiveField: checked
+                    ? { type: 'text', fieldName: `field_${selectedEl.id.replace(/[^a-zA-Z0-9]/g, '_')}` }
+                    : undefined,
+                });
+              }}
+            />
+          </label>
+          {selectedEl.interactiveField && (
+            <div style={{ marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '10px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                <label>
+                  Type:
+                  <select
+                    value={selectedEl.interactiveField.type}
+                    onChange={(e) => {
+                      stateManager.updateElement(selectedEl.id, {
+                        interactiveField: {
+                          ...selectedEl.interactiveField!,
+                          type: (e.target as HTMLSelectElement).value as any,
+                        },
+                      });
+                    }}
+                    style={{ fontSize: '10px', padding: '2px' }}
+                  >
+                    <option value="text">Text Field</option>
+                    <option value="checkbox">Checkbox</option>
+                    <option value="button">Button</option>
+                  </select>
+                </label>
+                <label>
+                  Field Name:
+                  <input
+                    type="text"
+                    value={selectedEl.interactiveField.fieldName}
+                    onChange={(e) => {
+                      stateManager.updateElement(selectedEl.id, {
+                        interactiveField: {
+                          ...selectedEl.interactiveField!,
+                          fieldName: (e.target as HTMLInputElement).value,
+                        },
+                      });
+                    }}
+                    style={{ fontSize: '10px', padding: '2px' }}
+                  />
+                </label>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -620,7 +782,7 @@ function TextInspector({
         ))}
       </div>
 
-      <div className="input-grid-2" style={{ marginTop: '10px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '6px', marginTop: '10px' }}>
         <label>
           Columns:
           <input
@@ -648,22 +810,115 @@ function TextInspector({
           />
           mm
         </label>
+        <label>
+          Inset:
+          <input
+            type="number"
+            value={element.paddingMm ?? 2}
+            min={0}
+            max={40}
+            step={0.5}
+            onInput={(e) =>
+              stateManager.updateElement(element.id, {
+                paddingMm: Math.max(0, parseFloat((e.target as HTMLInputElement).value) || 0),
+              })}
+          />
+          mm
+        </label>
       </div>
 
       {element.columns > 1 && (
-        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', cursor: 'pointer', marginTop: '6px' }}>
-          <input
-            type="checkbox"
-            checked={Boolean(element.balanceColumns)}
-            onChange={(e) =>
-              stateManager.updateElement(element.id, {
-                balanceColumns: (e.target as HTMLInputElement).checked,
-              })
-            }
-          />
-          Balance Columns (Equalize lines)
-        </label>
+        <div style={{ marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={Boolean(element.spanColumns)}
+              onChange={(e) =>
+                stateManager.updateElement(element.id, {
+                  spanColumns: (e.target as HTMLInputElement).checked,
+                })
+              }
+            />
+            Span Columns (Full Width Headline)
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={Boolean(element.splitColumns && element.splitColumns > 1)}
+              onChange={(e) =>
+                stateManager.updateElement(element.id, {
+                  splitColumns: (e.target as HTMLInputElement).checked ? 2 : 1,
+                })
+              }
+            />
+            Split Columns (Sub-columns)
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={Boolean(element.balanceColumns)}
+              onChange={(e) =>
+                stateManager.updateElement(element.id, {
+                  balanceColumns: (e.target as HTMLInputElement).checked,
+                })
+              }
+            />
+            Balance Columns (Equalize lines)
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={Boolean(element.columnRule?.enabled)}
+              onChange={(e) =>
+                stateManager.updateElement(element.id, {
+                  columnRule: {
+                    enabled: (e.target as HTMLInputElement).checked,
+                    widthPt: element.columnRule?.widthPt || 0.5,
+                    color: element.columnRule?.color || '#888888',
+                    insetMm: element.columnRule?.insetMm || 0,
+                  },
+                })
+              }
+            />
+            Column Rules (Vertical Dividers)
+          </label>
+        </div>
       )}
+
+      <div style={{ marginTop: '8px' }}>
+        <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Vertical Align:</span>
+        <div className="btn-group-joined" style={{ width: '100%' }}>
+          {(['top', 'middle', 'bottom'] as const).map((vAlign) => (
+            <button
+              key={vAlign}
+              className={`action-btn ${(element.verticalAlign || 'top') === vAlign ? 'active' : ''}`}
+              style={{ flex: 1, textTransform: 'capitalize', fontSize: '10px' }}
+              onClick={() => stateManager.updateElement(element.id, { verticalAlign: vAlign })}
+            >
+              {vAlign}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <button
+        className="sm-btn"
+        style={{
+          width: '100%',
+          padding: '6px 10px',
+          marginTop: '8px',
+          backgroundColor: 'rgba(46, 196, 182, 0.15)',
+          color: '#2ec4b6',
+          border: '1px solid rgba(46, 196, 182, 0.35)',
+          borderRadius: '4px',
+          fontWeight: 600,
+          cursor: 'pointer',
+        }}
+        onClick={() => stateManager.fitFrameToContent(element.id)}
+        title="Fit Frame Height to Content (Ctrl+Alt+C)"
+      >
+        Fit Frame to Content (Ctrl+Alt+C)
+      </button>
 
       <button
         className="sm-btn"
@@ -967,14 +1222,17 @@ function TextInspector({
       </div>
 
       <div style={{ marginTop: '10px' }}>
-        <label className="full-label">
-          Content Editor:
-          <textarea
-            rows={6}
-            value={localText}
-            onInput={handleTextChange}
-          ></textarea>
-        </label>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+          <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>Content Editor:</span>
+          <span style={{ fontSize: '10px', color: '#8e8e93' }}>
+            {localText ? localText.trim().split(/\s+/).filter(Boolean).length : 0} words · {localText.length} chars
+          </span>
+        </div>
+        <textarea
+          rows={6}
+          value={localText}
+          onInput={handleTextChange}
+        ></textarea>
       </div>
     </div>
   );

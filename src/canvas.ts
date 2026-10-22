@@ -99,6 +99,33 @@ export function splitWordIntoFitChunks(word: string, maxW: number, ctx: CanvasRe
   return chunks;
 }
 
+/**
+ * Fast mathematical preflight estimation of whether a text frame has overset text.
+ */
+export function isTextFrameOverset(textEl: TextElement): boolean {
+  const textContent = textEl.text || '';
+  if (textContent.length === 0 || textEl.nextFrameId) return false;
+  const padding = textEl.paddingMm ?? 2;
+  const cols = Math.max(1, textEl.columns || 1);
+  const gutter = textEl.columnGutterMm ?? 4;
+  const availW = Math.max(10, (textEl.width - (padding * 2) - ((cols - 1) * gutter)) / cols);
+  const availH = Math.max(10, textEl.height - (padding * 2));
+  const fontPt = textEl.fontSizePt || 10;
+  const lineH = textEl.lineHeight || 1.3;
+  const lineSpacingMm = (fontPt * lineH * 25.4) / 72;
+  const maxLinesPerCol = Math.max(1, Math.floor(availH / lineSpacingMm));
+  const avgCharWidthMm = (fontPt * 0.45 * 25.4) / 72;
+  const charsPerLine = Math.max(10, Math.floor(availW / avgCharWidthMm));
+  const totalCapacity = maxLinesPerCol * charsPerLine * cols;
+  const explicitLines = textContent.split('\n');
+  let approxRenderedLines = 0;
+  for (const line of explicitLines) {
+    approxRenderedLines += Math.max(1, Math.ceil(line.length / charsPerLine));
+  }
+  const totalLinesCapacity = maxLinesPerCol * cols;
+  return approxRenderedLines > totalLinesCapacity || textContent.length > totalCapacity * 1.15;
+}
+
 export interface ImageFitTransform {
   drawX: number;
   drawY: number;
@@ -200,6 +227,7 @@ export class SpreadCanvas {
   private isDrawingNew: boolean = false;
   private isMarquee: boolean = false;
   private activeHandle: string | null = null;
+  private overflownTextFrameIds: Set<string> = new Set();
 
   private activePenPathId: string | null = null;
   private activePenNodeIndex: number = -1;
@@ -546,6 +574,30 @@ export class SpreadCanvas {
 
     const { x: mmX, y: mmY } = this.screenToSpreadMm(screenX, screenY, state);
 
+    if (state.comments && state.comments.length > 0 && !state.previewMode) {
+      const activeComments = state.comments.filter(c => c.spreadIndex === state.activeSpreadIndex);
+      for (const c of activeComments) {
+        const dx = mmX - c.x;
+        const dy = mmY - c.y;
+        if (Math.sqrt(dx * dx + dy * dy) <= 4) {
+          stateManager.resolveComment(c.id);
+          return;
+        }
+      }
+    }
+
+    if (state.activeTool === 'measure') {
+      stateManager.setMeasureData({
+        startX: mmX,
+        startY: mmY,
+        currentX: mmX,
+        currentY: mmY,
+        distanceMm: 0,
+        angleDeg: 0,
+      });
+      return;
+    }
+
     if (state.activeTool !== 'select') {
       if (state.activeTool === 'pen') {
         this.handlePenMouseDown(mmX, mmY, screenX, screenY, e);
@@ -579,6 +631,29 @@ export class SpreadCanvas {
         stateManager.setLinkingFromFrame(null);
       }
       return;
+    }
+
+    if (!state.previewMode && (!state.selectedElementIds || state.selectedElementIds.length === 0)) {
+      const spread = stateManager.getActiveSpread();
+      const origin = this.getSpreadScreenOrigin(state);
+      const pxPerMm = (96 / 25.4) * state.zoom;
+      const pageWidthMm = state.settings.widthMm;
+      for (const el of spread.elements) {
+        if (el.type === 'text' && this.overflownTextFrameIds.has(el.id) && !(el as TextElement).nextFrameId) {
+          const pageIdx = Math.max(0, spread.pages.findIndex(p => p.id === el.pageId));
+          const elScreenX = origin.x + ((pageIdx * pageWidthMm + el.x) * pxPerMm);
+          const elScreenY = origin.y + (el.y * pxPerMm);
+          const elScreenW = el.width * pxPerMm;
+          const elScreenH = el.height * pxPerMm;
+          const outPortX = elScreenX + elScreenW - 14;
+          const outPortY = elScreenY + elScreenH - 14;
+          if (screenX >= outPortX - 3 && screenX <= outPortX + 17 && screenY >= outPortY - 3 && screenY <= outPortY + 17) {
+            stateManager.selectElement(el.id);
+            stateManager.setLinkingFromFrame(el.id);
+            return;
+          }
+        }
+      }
     }
 
     if (state.selectedElementIds && state.selectedElementIds.length === 1) {
@@ -835,6 +910,22 @@ export class SpreadCanvas {
 
     if (state.activeTool === 'pen' && this.activePenPathId) {
       this.render();
+      return;
+    }
+
+    if (state.activeTool === 'measure' && state.activeMeasure && (e.buttons & 1)) {
+      const dx = mmX - state.activeMeasure.startX;
+      const dy = mmY - state.activeMeasure.startY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+      stateManager.setMeasureData({
+        startX: state.activeMeasure.startX,
+        startY: state.activeMeasure.startY,
+        currentX: mmX,
+        currentY: mmY,
+        distanceMm: dist,
+        angleDeg: angle,
+      });
       return;
     }
 
@@ -2292,7 +2383,44 @@ export class SpreadCanvas {
     return proxy;
   }
 
+  /**
+   * Exports the currently active spread as a high-resolution PNG data URL.
+   */
+  public exportSpreadAsPng(scaleFactor: number = 2): string {
+    const state = stateManager.getState();
+    const { numPages, pageWidthMm, pageHeightMm } = this.getSpreadDimensions(state);
+    const origin = this.getSpreadScreenOrigin(state);
+    const pxPerMm = MM_TO_PX * state.zoom;
+    const spreadWidthPx = numPages * pageWidthMm * pxPerMm;
+    const spreadHeightPx = pageHeightMm * pxPerMm;
+
+    if (typeof document === 'undefined') return '';
+    const offCanvas = document.createElement('canvas');
+    offCanvas.width = Math.round(spreadWidthPx * scaleFactor);
+    offCanvas.height = Math.round(spreadHeightPx * scaleFactor);
+    const offCtx = offCanvas.getContext('2d');
+    if (!offCtx) return '';
+
+    offCtx.imageSmoothingEnabled = true;
+    offCtx.imageSmoothingQuality = 'high';
+
+    offCtx.drawImage(
+      this.canvas,
+      origin.x,
+      origin.y,
+      spreadWidthPx,
+      spreadHeightPx,
+      0,
+      0,
+      offCanvas.width,
+      offCanvas.height
+    );
+
+    return offCanvas.toDataURL('image/png');
+  }
+
   public render() {
+    this.overflownTextFrameIds.clear();
     const state = stateManager.getState();
     const rect = this.canvas.getBoundingClientRect();
     const ctx = this.ctx;
@@ -2428,6 +2556,13 @@ export class SpreadCanvas {
 
       ctx.save();
       ctx.globalAlpha = el.opacity;
+
+      if (el.shadow && el.shadow.color) {
+        ctx.shadowColor = el.shadow.color;
+        ctx.shadowBlur = (el.shadow.blurMm || 3) * pxPerMm;
+        ctx.shadowOffsetX = (el.shadow.offsetX || 2) * pxPerMm;
+        ctx.shadowOffsetY = (el.shadow.offsetY || 2) * pxPerMm;
+      }
 
       if (el.type === 'shape') {
         const shape = el as ShapeElement;
@@ -2570,9 +2705,41 @@ export class SpreadCanvas {
 
         const paddingPx = (text.paddingMm || 2) * pxPerMm;
         const availWidthPx = elScreenW - (paddingPx * 2);
-        const colCount = Math.max(1, text.columns || 1);
+        const colCount = text.spanColumns
+          ? 1
+          : (text.splitColumns && text.splitColumns > 1 ? text.splitColumns : Math.max(1, text.columns || 1));
         const colGutterPx = (text.columnGutterMm || 4) * pxPerMm;
         const singleColWidthPx = (availWidthPx - (colGutterPx * (colCount - 1))) / colCount;
+
+        if (colCount > 1 && text.columnRule?.enabled) {
+          const ruleWidth = (text.columnRule.widthPt || 0.5) * (96 / 72) * state.zoom;
+          const insetPx = (text.columnRule.insetMm || 0) * pxPerMm;
+          ctx.save();
+          ctx.strokeStyle = text.columnRule.color || '#888888';
+          ctx.lineWidth = Math.max(0.5, ruleWidth);
+          for (let c = 0; c < colCount - 1; c++) {
+            const dividerX = elScreenX + paddingPx + ((c + 1) * singleColWidthPx) + (c * colGutterPx) + (colGutterPx / 2);
+            ctx.beginPath();
+            ctx.moveTo(dividerX, elScreenY + paddingPx + insetPx);
+            ctx.lineTo(dividerX, elScreenY + elScreenH - paddingPx - insetPx);
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+
+        const pStyle = text.paragraphStyleId ? state.paragraphStyles.find(s => s.id === text.paragraphStyleId) : undefined;
+        if (pStyle?.shadingColor) {
+          const sPaddingPx = (pStyle.shadingPaddingMm || 1.5) * pxPerMm;
+          ctx.save();
+          ctx.fillStyle = pStyle.shadingColor;
+          ctx.fillRect(elScreenX + paddingPx - sPaddingPx, elScreenY + paddingPx - sPaddingPx, availWidthPx + (sPaddingPx * 2), elScreenH - (paddingPx * 2) + (sPaddingPx * 2));
+          if (pStyle.shadingBorderColor && pStyle.shadingBorderWidthMm) {
+            ctx.strokeStyle = pStyle.shadingBorderColor;
+            ctx.lineWidth = pStyle.shadingBorderWidthMm * pxPerMm;
+            ctx.strokeRect(elScreenX + paddingPx - sPaddingPx, elScreenY + paddingPx - sPaddingPx, availWidthPx + (sPaddingPx * 2), elScreenH - (paddingPx * 2) + (sPaddingPx * 2));
+          }
+          ctx.restore();
+        }
 
         const fontSizePx = (text.fontSizePt * (96 / 72)) * state.zoom;
         const lineSpacingPx = fontSizePx * (text.lineHeight || 1.3);
@@ -2625,7 +2792,17 @@ export class SpreadCanvas {
 
         let isOverflowing = false;
         const bottomLimit = elScreenY + elScreenH - paddingPx - totalFootnoteHeightPx;
-        const processedText = formatOpenTypeText(text.text, text.openTypeFeatures);
+        let rawCleanedText = text.text || '';
+        if (rawCleanedText.includes('{cond:')) {
+          rawCleanedText = stateManager.evaluateConditions(rawCleanedText);
+        }
+        if (rawCleanedText.includes('{xref:')) {
+          rawCleanedText = stateManager.resolveCrossReferences(rawCleanedText);
+        }
+        if (rawCleanedText.includes('{index:')) {
+          rawCleanedText = rawCleanedText.replace(/\{index:[^}]+\}/g, '');
+        }
+        const processedText = formatOpenTypeText(rawCleanedText, text.openTypeFeatures);
 
         if (obstacles.length > 0) {
           const paragraphs = processedText.split('\n');
@@ -3070,18 +3247,24 @@ export class SpreadCanvas {
 
         ctx.restore();
 
-        if (isOverflowing && state.showGuides) {
-          const badgeSize = 10 * state.zoom;
-          ctx.fillStyle = '#e63946';
-          ctx.fillRect(elScreenX + elScreenW - badgeSize, elScreenY + elScreenH - badgeSize, badgeSize, badgeSize);
-          ctx.strokeStyle = '#ffffff';
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(elScreenX + elScreenW - badgeSize / 2, elScreenY + elScreenH - badgeSize + 2);
-          ctx.lineTo(elScreenX + elScreenW - badgeSize / 2, elScreenY + elScreenH - 2);
-          ctx.moveTo(elScreenX + elScreenW - badgeSize + 2, elScreenY + elScreenH - badgeSize / 2);
-          ctx.lineTo(elScreenX + elScreenW - 2, elScreenY + elScreenH - badgeSize / 2);
-          ctx.stroke();
+        if (isOverflowing) {
+          this.overflownTextFrameIds.add(text.id);
+        }
+
+        if (isOverflowing && !state.previewMode && !text.nextFrameId && !isSelected) {
+          const outPortSize = 14;
+          const badgeX = elScreenX + elScreenW - outPortSize;
+          const badgeY = elScreenY + elScreenH - outPortSize;
+          ctx.fillStyle = '#d90429';
+          ctx.strokeStyle = '#9d0208';
+          ctx.lineWidth = 1.5;
+          ctx.fillRect(badgeX, badgeY, outPortSize, outPortSize);
+          ctx.strokeRect(badgeX, badgeY, outPortSize, outPortSize);
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 11px Inter, -apple-system, BlinkMacSystemFont, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('+', badgeX + 7, badgeY + 7);
         }
       }
 
@@ -3167,17 +3350,33 @@ export class SpreadCanvas {
           const outPortX = elScreenX + elScreenW - 14;
           const outPortY = elScreenY + elScreenH - 14;
           const isThreaded = Boolean(textEl.nextFrameId);
-          ctx.fillStyle = isThreaded ? layerColor : '#ffffff';
-          ctx.strokeStyle = layerColor;
-          ctx.lineWidth = 1.5;
-          ctx.fillRect(outPortX, outPortY, 14, 14);
-          ctx.strokeRect(outPortX, outPortY, 14, 14);
+          const isOverset = this.overflownTextFrameIds.has(textEl.id) && !isThreaded;
 
-          ctx.fillStyle = isThreaded ? '#ffffff' : layerColor;
-          ctx.font = '9px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(isThreaded ? '➔' : '+', outPortX + 7, outPortY + 7);
+          if (isOverset) {
+            ctx.fillStyle = '#d90429';
+            ctx.strokeStyle = '#9d0208';
+            ctx.lineWidth = 1.5;
+            ctx.fillRect(outPortX, outPortY, 14, 14);
+            ctx.strokeRect(outPortX, outPortY, 14, 14);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 11px Inter, -apple-system, BlinkMacSystemFont, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('+', outPortX + 7, outPortY + 7);
+          } else {
+            ctx.fillStyle = isThreaded ? layerColor : '#ffffff';
+            ctx.strokeStyle = layerColor;
+            ctx.lineWidth = 1.5;
+            ctx.fillRect(outPortX, outPortY, 14, 14);
+            ctx.strokeRect(outPortX, outPortY, 14, 14);
+
+            ctx.fillStyle = isThreaded ? '#ffffff' : layerColor;
+            ctx.font = '9px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(isThreaded ? '➔' : '+', outPortX + 7, outPortY + 7);
+          }
         }
       }
     }
@@ -3534,7 +3733,182 @@ export class SpreadCanvas {
       }
     }
 
+    this.drawSlugBanner(ctx, origin, pxPerMm, state);
+    this.drawReadingOrderOverlay(ctx, origin, pxPerMm, state);
+    this.drawCommentPins(ctx, origin, pxPerMm, state);
+    this.drawMeasureTool(ctx, origin, pxPerMm, state);
+
     this.drawRulers();
+  }
+
+  private drawSlugBanner(
+    ctx: CanvasRenderingContext2D,
+    origin: { x: number; y: number },
+    pxPerMm: number,
+    state: ProjectState
+  ) {
+    if (!state.showSlugBanner || state.previewMode) return;
+    const { numPages, pageWidthMm } = this.getSpreadDimensions(state);
+    const spreadWidthPx = numPages * pageWidthMm * pxPerMm;
+    const bannerY = origin.y - (state.settings.bleedMm + 14) * pxPerMm;
+
+    ctx.save();
+    ctx.fillStyle = '#0f0f12';
+    ctx.fillRect(origin.x, bannerY, spreadWidthPx, 18 * state.zoom);
+    ctx.strokeStyle = '#2d2d34';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(origin.x, bannerY, spreadWidthPx, 18 * state.zoom);
+
+    ctx.fillStyle = '#a0a0a5';
+    ctx.font = `${Math.max(9, 10 * state.zoom)}px monospace`;
+    ctx.textBaseline = 'middle';
+    const slugText = `RECTO PREPRESS SLUG | Doc: ${state.settings.title || 'Untitled'} | Spread ${state.activeSpreadIndex + 1}/${state.spreads.length} | Bleed: ${state.settings.bleedMm}mm | PDF/X-1a CMYK`;
+    ctx.fillText(slugText, origin.x + 8, bannerY + (9 * state.zoom));
+
+    // CMYK Color Control Bars (Cyan, Magenta, Yellow, Black)
+    const patchW = 10 * state.zoom;
+    const patchH = 10 * state.zoom;
+    const patchY = bannerY + (4 * state.zoom);
+    const colors = ['#00a0e9', '#e6007e', '#fff100', '#111111'];
+    let patchX = origin.x + spreadWidthPx - (colors.length * (patchW + 4)) - 8;
+    for (const c of colors) {
+      ctx.fillStyle = c;
+      ctx.fillRect(patchX, patchY, patchW, patchH);
+      ctx.strokeStyle = '#ffffff';
+      ctx.strokeRect(patchX, patchY, patchW, patchH);
+      patchX += patchW + 4;
+    }
+    ctx.restore();
+  }
+
+  private drawReadingOrderOverlay(
+    ctx: CanvasRenderingContext2D,
+    origin: { x: number; y: number },
+    pxPerMm: number,
+    state: ProjectState
+  ) {
+    if (!state.showReadingOrder || state.previewMode) return;
+    const spread = stateManager.getActiveSpread();
+    const sorted = [...spread.elements].sort((a, b) => (a.y === b.y ? a.x - b.x : a.y - b.y));
+    const pageWidthMm = state.settings.widthMm;
+
+    ctx.save();
+    for (let i = 0; i < sorted.length; i++) {
+      const el = sorted[i];
+      const pageIdx = spread.pages.findIndex(p => p.id === el.pageId);
+      if (pageIdx === -1) continue;
+      const elScreenX = origin.x + ((pageIdx * pageWidthMm + el.x) * pxPerMm);
+      const elScreenY = origin.y + (el.y * pxPerMm);
+
+      if (i < sorted.length - 1) {
+        const next = sorted[i + 1];
+        const nextIdx = spread.pages.findIndex(p => p.id === next.pageId);
+        if (nextIdx !== -1) {
+          const nextScreenX = origin.x + ((nextIdx * pageWidthMm + next.x) * pxPerMm);
+          const nextScreenY = origin.y + (next.y * pxPerMm);
+          ctx.strokeStyle = 'rgba(13, 153, 255, 0.45)';
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([4, 3]);
+          ctx.beginPath();
+          ctx.moveTo(elScreenX + 10, elScreenY + 10);
+          ctx.lineTo(nextScreenX + 10, nextScreenY + 10);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+
+      ctx.fillStyle = '#0d99ff';
+      ctx.beginPath();
+      ctx.arc(elScreenX + 10, elScreenY + 10, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 10px Inter, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`${i + 1}`, elScreenX + 10, elScreenY + 10);
+    }
+    ctx.restore();
+  }
+
+  private drawCommentPins(
+    ctx: CanvasRenderingContext2D,
+    origin: { x: number; y: number },
+    pxPerMm: number,
+    state: ProjectState
+  ) {
+    if (!state.comments || state.comments.length === 0 || state.previewMode) return;
+    const comments = state.comments.filter(c => c.spreadIndex === state.activeSpreadIndex);
+
+    ctx.save();
+    for (const c of comments) {
+      const px = origin.x + c.x * pxPerMm;
+      const py = origin.y + c.y * pxPerMm;
+
+      ctx.fillStyle = c.resolved ? '#2ec4b6' : '#f4a261';
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(px, py, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 9px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(c.resolved ? '✓' : '●', px, py);
+    }
+    ctx.restore();
+  }
+
+  private drawMeasureTool(
+    ctx: CanvasRenderingContext2D,
+    origin: { x: number; y: number },
+    pxPerMm: number,
+    state: ProjectState
+  ) {
+    if (!state.activeMeasure || state.previewMode) return;
+    const m = state.activeMeasure;
+    const p1x = origin.x + m.startX * pxPerMm;
+    const p1y = origin.y + m.startY * pxPerMm;
+    const p2x = origin.x + m.currentX * pxPerMm;
+    const p2y = origin.y + m.currentY * pxPerMm;
+
+    ctx.save();
+    ctx.strokeStyle = '#0d99ff';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([3, 2]);
+    ctx.beginPath();
+    ctx.moveTo(p1x, p1y);
+    ctx.lineTo(p2x, p2y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    const drawCross = (x: number, y: number) => {
+      ctx.beginPath();
+      ctx.moveTo(x - 4, y);
+      ctx.lineTo(x + 4, y);
+      ctx.moveTo(x, y - 4);
+      ctx.lineTo(x, y + 4);
+      ctx.stroke();
+    };
+    drawCross(p1x, p1y);
+    drawCross(p2x, p2y);
+
+    const midX = (p1x + p2x) / 2;
+    const midY = (p1y + p2y) / 2;
+    const label = `${m.distanceMm.toFixed(1)} mm (${m.angleDeg.toFixed(1)}°)`;
+    ctx.font = 'bold 11px Inter, sans-serif';
+    const textW = ctx.measureText(label).width;
+    ctx.fillStyle = '#18181c';
+    ctx.fillRect(midX - textW / 2 - 6, midY - 10, textW + 12, 20);
+    ctx.strokeStyle = '#0d99ff';
+    ctx.strokeRect(midX - textW / 2 - 6, midY - 10, textW + 12, 20);
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, midX, midY);
+    ctx.restore();
   }
 
   private drawDimensionHud(
