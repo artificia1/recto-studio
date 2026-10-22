@@ -395,6 +395,7 @@ export class SpreadCanvas {
     window.addEventListener('keydown', (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable) return;
+      const isMod = e.ctrlKey || e.metaKey;
 
       if (e.code === 'Space' && !this.isSpacePanning) {
         e.preventDefault();
@@ -427,31 +428,25 @@ export class SpreadCanvas {
         } else if (state.selectedElementId) {
           stateManager.deleteElement(state.selectedElementId);
         }
-      } else if (e.ctrlKey && (e.key === 'l' || e.key === 'L')) {
-        e.preventDefault();
-        stateManager.toggleLock();
-      } else if ((e.ctrlKey || e.metaKey) && e.altKey && e.shiftKey && (e.key === 'c' || e.key === 'C')) {
+      } else if (isMod && e.altKey && e.shiftKey && (e.key === 'c' || e.key === 'C')) {
         e.preventDefault();
         stateManager.applyImageFitMode('fill');
-      } else if ((e.ctrlKey || e.metaKey) && e.altKey && e.shiftKey && (e.key === 'e' || e.key === 'E')) {
+      } else if (isMod && e.altKey && e.shiftKey && (e.key === 'e' || e.key === 'E')) {
         e.preventDefault();
         stateManager.applyImageFitMode('fit');
-      } else if ((e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey && (e.key === 'c' || e.key === 'C')) {
-        e.preventDefault();
-        stateManager.applyImageFitMode('frameToContent');
-      } else if ((e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey && (e.key === 'e' || e.key === 'E')) {
+      } else if (isMod && e.altKey && !e.shiftKey && (e.key === 'e' || e.key === 'E')) {
         e.preventDefault();
         stateManager.applyImageFitMode('contentToFrame');
-      } else if ((e.ctrlKey || e.metaKey) && !e.altKey && e.shiftKey && (e.key === 'e' || e.key === 'E')) {
+      } else if (isMod && !e.altKey && e.shiftKey && (e.key === 'e' || e.key === 'E')) {
         e.preventDefault();
         stateManager.applyImageFitMode('center');
-      } else if (e.key === 'v' || e.key === 'V') {
+      } else if (!isMod && !e.altKey && (e.key === 'v' || e.key === 'V')) {
         stateManager.setTool('select');
-      } else if (e.key === 't' || e.key === 'T') {
+      } else if (!isMod && !e.altKey && (e.key === 't' || e.key === 'T')) {
         stateManager.setTool('text');
-      } else if (e.key === 'p' || e.key === 'P') {
+      } else if (!isMod && !e.altKey && (e.key === 'p' || e.key === 'P')) {
         stateManager.setTool('pen');
-      } else if (e.key === 'b' || e.key === 'B') {
+      } else if (!isMod && !e.altKey && (e.key === 'b' || e.key === 'B')) {
         stateManager.setTool('table');
       } else if (e.key === 'Escape' || e.key === 'Enter') {
         if (this.activePenPathId) {
@@ -461,20 +456,17 @@ export class SpreadCanvas {
           stateManager.setTool('select');
           this.render();
         }
-      } else if (e.key === 'f' || e.key === 'F') {
+      } else if (!isMod && !e.altKey && (e.key === 'f' || e.key === 'F')) {
         stateManager.setTool('frame');
-      } else if (e.key === 'm' || e.key === 'M') {
+      } else if (!isMod && !e.altKey && (e.key === 'm' || e.key === 'M')) {
         stateManager.setTool('shape-rect');
-      } else if (e.key === 'h' || e.key === 'H') {
+      } else if (!isMod && !e.altKey && (e.key === 'h' || e.key === 'H')) {
         stateManager.setTool('hand');
-      } else if (e.key === 'w' || e.key === 'W') {
-        e.preventDefault();
-        stateManager.togglePreviewMode();
-      } else if (e.ctrlKey && (e.key === 'z' || e.key === 'Z')) {
+      } else if (isMod && (e.key === 'z' || e.key === 'Z')) {
         e.preventDefault();
         if (e.shiftKey) stateManager.redo();
         else stateManager.undo();
-      } else if (e.ctrlKey && (e.key === 'y' || e.key === 'Y')) {
+      } else if (isMod && (e.key === 'y' || e.key === 'Y')) {
         e.preventDefault();
         stateManager.redo();
       }
