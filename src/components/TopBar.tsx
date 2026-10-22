@@ -664,12 +664,10 @@ export function TopBar({
                   setShowFileMenu(false);
                   handleCreateBlank(state.settings.preset || 'A4', state.settings.facingPages !== false);
                 }}
-                title="Create a brand new blank document"
+                title="Create a brand new blank document (Ctrl+N)"
               >
-                <div>
-                  <div className="dropdown-item-title">New Blank Document...</div>
-                  <div className="dropdown-item-sub">Zero elements, pristine layout</div>
-                </div>
+                <span>New Blank Document...</span>
+                <span className="dropdown-item-shortcut">Ctrl+N</span>
               </button>
               <button
                 className="top-dropdown-item"
@@ -677,12 +675,10 @@ export function TopBar({
                   setShowFileMenu(false);
                   handleOpenClick();
                 }}
-                title="Load .recto or .idml project file"
+                title="Load .recto, .idml, or .json project file (Ctrl+O)"
               >
-                <div>
-                  <div className="dropdown-item-title">Open Project...</div>
-                  <div className="dropdown-item-sub">Load .recto, .idml, or .json file</div>
-                </div>
+                <span>Open Project...</span>
+                <span className="dropdown-item-shortcut">Ctrl+O</span>
               </button>
               <button
                 className="top-dropdown-item"
@@ -690,12 +686,10 @@ export function TopBar({
                   setShowFileMenu(false);
                   handleSave();
                 }}
-                title="Save current project to .recto package"
+                title="Save current project to .recto package (Ctrl+S)"
               >
-                <div>
-                  <div className="dropdown-item-title">Save Project (.recto)</div>
-                  <div className="dropdown-item-sub">Download local publication bundle</div>
-                </div>
+                <span>Save Project (.recto)</span>
+                <span className="dropdown-item-shortcut">Ctrl+S</span>
               </button>
               <button
                 className="top-dropdown-item"
@@ -705,24 +699,21 @@ export function TopBar({
                 }}
                 title="Insert New Page Spread"
               >
-                <div>
-                  <div className="dropdown-item-title">+ Add Page Spread</div>
-                  <div className="dropdown-item-sub">Append blank facing spread to book</div>
-                </div>
+                <span>+ Add Page Spread</span>
               </button>
+
               <div className="dropdown-menu-divider" />
+
               <button
                 className="top-dropdown-item"
                 onClick={() => {
                   setShowFileMenu(false);
                   handlePlaceClick();
                 }}
-                title="Place markdown, text, or Word document into selected frame"
+                title="Place markdown, text, or Word document into selected frame (Ctrl+D)"
               >
-                <div>
-                  <div className="dropdown-item-title">Place Manuscript Text...</div>
-                  <div className="dropdown-item-sub">.md, .txt, .docx into text frame</div>
-                </div>
+                <span>Place Manuscript Text...</span>
+                <span className="dropdown-item-shortcut">Ctrl+D</span>
               </button>
               <button
                 className="top-dropdown-item"
@@ -732,10 +723,7 @@ export function TopBar({
                 }}
                 title="Open Adobe InDesign (.idml) package"
               >
-                <div>
-                  <div className="dropdown-item-title">Open InDesign Package...</div>
-                  <div className="dropdown-item-sub">Convert .idml publication spreads</div>
-                </div>
+                <span>Open InDesign Package (.idml)...</span>
               </button>
               <button
                 className="top-dropdown-item"
@@ -743,12 +731,9 @@ export function TopBar({
                   setShowFileMenu(false);
                   setShowDataMergeModal(true);
                 }}
-                title="Merge CSV dataset into publication spreads"
+                title="Batch populate records via CSV dataset"
               >
-                <div>
-                  <div className="dropdown-item-title">Data Merge...</div>
-                  <div className="dropdown-item-sub">Batch populate records via CSV</div>
-                </div>
+                <span>Data Merge (CSV)...</span>
               </button>
               {selectedElements.length === 1 && selectedElements[0].type === 'text' && (
                 <button
@@ -762,26 +747,12 @@ export function TopBar({
                   }}
                   title="Insert Footnote into selected text frame"
                 >
-                  <div>
-                    <div className="dropdown-item-title">Insert Footnote...</div>
-                    <div className="dropdown-item-sub">Anchored reference and footnote block</div>
-                  </div>
+                  <span>Insert Footnote...</span>
                 </button>
               )}
+
               <div className="dropdown-menu-divider" />
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowFileMenu(false);
-                  onOpenBarcode?.();
-                }}
-                title="Generate vector ISBN-13 / EAN-13 barcode"
-              >
-                <div>
-                  <div className="dropdown-item-title">Insert ISBN / Barcode...</div>
-                  <div className="dropdown-item-sub">Pure vector EAN-13 bookland barcode</div>
-                </div>
-              </button>
+
               <button
                 className="top-dropdown-item"
                 onClick={() => {
@@ -790,37 +761,21 @@ export function TopBar({
                 }}
                 title="Generate native vector ISO/IEC 18004 QR code"
               >
-                <div>
-                  <div className="dropdown-item-title">Insert Vector QR Code...</div>
-                  <div className="dropdown-item-sub">URL, vCard, or custom data matrix</div>
-                </div>
+                <span>Insert Vector QR Code...</span>
               </button>
               <button
                 className="top-dropdown-item"
                 onClick={() => {
                   setShowFileMenu(false);
-                  onOpenScripts?.();
+                  onOpenBarcode?.();
                 }}
-                title="InDesign-style publishing automation & JavaScript scripts"
+                title="Generate vector ISBN-13 / EAN-13 bookland barcode"
               >
-                <div>
-                  <div className="dropdown-item-title">Scripts & Automation...</div>
-                  <div className="dropdown-item-sub">Batch typographic and layout scripts</div>
-                </div>
+                <span>Insert ISBN / Barcode...</span>
               </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowFileMenu(false);
-                  stateManager.insertIndexStory();
-                }}
-                title="Generate multi-level alphabetical book index from markers"
-              >
-                <div>
-                  <div className="dropdown-item-title">Generate Book Index Spread</div>
-                  <div className="dropdown-item-sub">Compiles alphabetical A-Z index</div>
-                </div>
-              </button>
+
+              <div className="dropdown-menu-divider" />
+
               <button
                 className="top-dropdown-item"
                 onClick={() => {
@@ -829,50 +784,39 @@ export function TopBar({
                 }}
                 title="Open distraction-free Story Focus typewriter editor (Ctrl+Y)"
               >
-                <div>
-                  <div className="dropdown-item-title">Story Focus Editor... (Ctrl+Y)</div>
-                  <div className="dropdown-item-sub">Distraction-free live manuscript typewriter</div>
-                </div>
+                <span>Story Focus Editor...</span>
+                <span className="dropdown-item-shortcut">Ctrl+Y</span>
               </button>
               <button
                 className="top-dropdown-item"
                 onClick={() => {
                   setShowFileMenu(false);
-                  stateManager.toggleReadingOrder();
+                  onOpenScripts?.();
                 }}
-                title="Toggle visual reading order inspection badges (PDF/UA a11y)"
+                title="InDesign-style publishing automation & JavaScript scripts (Alt+F11)"
               >
-                <div>
-                  <div className="dropdown-item-title">Toggle Reading Order Overlay</div>
-                  <div className="dropdown-item-sub">{state.showReadingOrder ? 'Hide [1][2][3] order badges' : 'Show [1][2][3] order badges'}</div>
-                </div>
+                <span>Scripts & Automation...</span>
+                <span className="dropdown-item-shortcut">Alt+F11</span>
               </button>
               <button
                 className="top-dropdown-item"
                 onClick={() => {
                   setShowFileMenu(false);
-                  stateManager.toggleSlugBanner();
+                  stateManager.insertIndexStory();
                 }}
-                title="Toggle prepress slug information area outside bleed"
+                title="Compiles alphabetical multi-level A-Z index"
               >
-                <div>
-                  <div className="dropdown-item-title">Toggle Prepress Slug Area</div>
-                  <div className="dropdown-item-sub">{state.showSlugBanner ? 'Hide slug banner' : 'Show slug info & CMYK color bars'}</div>
-                </div>
+                <span>Generate Book Index Spread</span>
               </button>
-              <div className="dropdown-menu-divider" />
               <button
                 className="top-dropdown-item"
                 onClick={() => {
                   setShowFileMenu(false);
                   handleOpenCoverSpine();
                 }}
-                title="Calculate spine thickness and design full wrap cover spread"
+                title="Mathematical spine caliper, 3D jacket wrap & barcode zone"
               >
-                <div>
-                  <div className="dropdown-item-title">Book Cover & Spine Width Calculator...</div>
-                  <div className="dropdown-item-sub">Mathematical spine caliper, 3D jacket wrap & barcode zone</div>
-                </div>
+                <span>Book Cover & Spine Calculator...</span>
               </button>
               <button
                 className="top-dropdown-item"
@@ -882,24 +826,46 @@ export function TopBar({
                 }}
                 title="Duplex booklet imposition for saddle-stitch and multi-signature print"
               >
-                <div>
-                  <div className="dropdown-item-title">Booklet Imposition Studio...</div>
-                  <div className="dropdown-item-sub">Saddle-stitch, multi-signature, creep shingling & printer spreads</div>
-                </div>
+                <span>Booklet Imposition Studio...</span>
               </button>
+
               <div className="dropdown-menu-divider" />
+
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowFileMenu(false);
+                  stateManager.toggleReadingOrder();
+                }}
+                title="Toggle visual reading order inspection badges (PDF/UA a11y)"
+              >
+                <span>Reading Order Overlay (PDF/UA)</span>
+                <span className="dropdown-item-shortcut">{state.showReadingOrder ? 'Hide' : 'Show'}</span>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowFileMenu(false);
+                  stateManager.toggleSlugBanner();
+                }}
+                title="Toggle prepress slug information area & CMYK color bars"
+              >
+                <span>Prepress Slug Area & Bars</span>
+                <span className="dropdown-item-shortcut">{state.showSlugBanner ? 'Hide' : 'Show'}</span>
+              </button>
+
+              <div className="dropdown-menu-divider" />
+
               <button
                 className="top-dropdown-item"
                 onClick={() => {
                   setShowFileMenu(false);
                   onOpenShortcuts?.();
                 }}
-                title="View complete keyboard shortcut matrix (or press ?)"
+                title="View complete keyboard shortcut matrix (Press ? or Ctrl+/)"
               >
-                <div>
-                  <div className="dropdown-item-title">Keyboard Shortcuts Matrix...</div>
-                  <div className="dropdown-item-sub">Press ? or Ctrl+/ for complete cheat sheet</div>
-                </div>
+                <span>Keyboard Shortcuts Matrix...</span>
+                <span className="dropdown-item-shortcut">?</span>
               </button>
             </div>
           )}
