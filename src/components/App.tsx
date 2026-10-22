@@ -143,7 +143,7 @@ export function App() {
       return;
     }
 
-    if (name.endsWith('.md') || name.endsWith('.markdown') || name.endsWith('.txt') || name.endsWith('.docx')) {
+    if (name.endsWith('.md') || name.endsWith('.markdown') || name.endsWith('.txt') || name.endsWith('.docx') || name.endsWith('.indd')) {
       const buffer = await file.arrayBuffer();
       const ingested = await ingestManuscript(file.name, buffer);
 

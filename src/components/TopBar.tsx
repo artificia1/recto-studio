@@ -912,7 +912,7 @@ export function TopBar({
         <input
           type="file"
           ref={placeInputRef}
-          accept=".md,.markdown,.txt,.docx"
+          accept=".md,.markdown,.txt,.docx,.indd"
           style={{ display: 'none' }}
           onChange={handlePlaceFileChange}
         />
