@@ -64,6 +64,8 @@ export function TopBar({
   } | null>(null);
 
   const [collabRoom, setCollabRoom] = useState(collabSession.getSessionId() || 'recto-live');
+  const [collabPassword, setCollabPassword] = useState(collabSession.getPassword() || '');
+  const [showPassword, setShowPassword] = useState(false);
   const [collabUserName, setCollabUserName] = useState(collabSession.getUserName());
   const [collabPeers, setCollabPeers] = useState<PeerPresence[]>(collabSession.getPeers());
   const [isConnected, setIsConnected] = useState(collabSession.isConnected());
@@ -102,6 +104,16 @@ export function TopBar({
   }, [state.settings.title]);
 
   useEffect(() => {
+    try {
+      if (typeof window !== 'undefined' && window.location?.search) {
+        const params = new URLSearchParams(window.location.search);
+        const roomParam = params.get('room');
+        const pwdParam = params.get('pwd');
+        if (roomParam) setCollabRoom(roomParam);
+        if (pwdParam) setCollabPassword(pwdParam);
+      }
+    } catch {}
+
     return collabSession.onPeersChange((peers) => {
       setCollabPeers([...peers]);
       setIsConnected(collabSession.isConnected());
@@ -353,7 +365,11 @@ export function TopBar({
       setIsConnected(false);
       setCollabPeers([]);
     } else {
-      collabSession.connect(collabRoom.trim() || 'recto-live', collabUserName.trim());
+      collabSession.connect(
+        collabRoom.trim() || 'recto-live',
+        collabUserName.trim(),
+        collabPassword.trim()
+      );
       setIsConnected(true);
       setCollabPeers(collabSession.getPeers());
     }
@@ -361,7 +377,11 @@ export function TopBar({
 
   const handleCopyShareLink = () => {
     const url = window.location.href.split('?')[0];
-    navigator.clipboard.writeText(`${url}?room=${encodeURIComponent(collabRoom.trim() || 'recto-live')}`);
+    let shareUrl = `${url}?room=${encodeURIComponent(collabRoom.trim() || 'recto-live')}`;
+    if (collabPassword.trim()) {
+      shareUrl += `&pwd=${encodeURIComponent(collabPassword.trim())}`;
+    }
+    navigator.clipboard.writeText(shareUrl);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
   };
@@ -930,13 +950,23 @@ export function TopBar({
             borderColor: isConnected ? '#10b981' : undefined,
             color: isConnected ? '#10b981' : undefined,
           }}
-          title="Live Peer-to-Peer Real-Time Collaboration"
+          title={
+            isConnected
+              ? (collabSession.isPasswordProtected()
+                  ? `Live Session (🔒 Password Protected) · ${collabPeers.length + 1} connected`
+                  : `Live Session (Public) · ${collabPeers.length + 1} connected`)
+              : 'Live Peer-to-Peer Real-Time Collaboration'
+          }
         >
           <span
             className="status-dot"
             style={{ backgroundColor: isConnected ? '#10b981' : '#6b7280' }}
           />
-          {isConnected ? `Live (${collabPeers.length + 1})` : 'Collaborate'}
+          {isConnected
+            ? (collabSession.isPasswordProtected()
+                ? `🔒 Live (${collabPeers.length + 1})`
+                : `Live (${collabPeers.length + 1})`)
+            : 'Collaborate'}
         </button>
 
         {/* Unified Export Action Group */}
@@ -1535,6 +1565,60 @@ export function TopBar({
               </div>
 
               <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                  <label style={{ fontSize: '11px', color: '#aaa' }}>
+                    Room Password (Required to Secure Access):
+                  </label>
+                  {collabPassword.trim() && (
+                    <span style={{ fontSize: '10px', color: '#10b981', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                      🔒 Password Protected
+                    </span>
+                  )}
+                </div>
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="Set password to block random users from joining..."
+                    value={collabPassword}
+                    disabled={isConnected}
+                    onInput={(e) => setCollabPassword((e.target as HTMLInputElement).value)}
+                    style={{
+                      width: '100%',
+                      background: isConnected ? '#181818' : '#242424',
+                      color: '#fff',
+                      border: '1px solid #444',
+                      borderRadius: '4px',
+                      padding: '6px 52px 6px 10px',
+                      fontSize: '12px',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((p) => !p)}
+                    style={{
+                      position: 'absolute',
+                      right: '6px',
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#9ca3af',
+                      cursor: 'pointer',
+                      fontSize: '11px',
+                      padding: '2px 6px',
+                    }}
+                    title={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showPassword ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+                <span style={{ fontSize: '10px', color: '#777', marginTop: '3px', display: 'block' }}>
+                  {collabPassword.trim()
+                    ? 'Only peers entering this exact password can connect, synchronize, and edit.'
+                    : 'Set a password to lock this session, or leave blank for open collaboration.'}
+                </span>
+              </div>
+
+              <div>
                 <label style={{ display: 'block', fontSize: '11px', color: '#aaa', marginBottom: '4px' }}>
                   Your Designer Handle:
                 </label>
@@ -1595,7 +1679,9 @@ export function TopBar({
                   }}
                 />
                 <span style={{ fontSize: '12px', fontWeight: 600 }}>
-                  {isConnected ? `Connected to '${collabSession.getSessionId()}'` : 'Disconnected'}
+                  {isConnected
+                    ? `Connected to '${collabSession.getSessionId()}' ${collabSession.isPasswordProtected() ? '(🔒 Protected)' : '(Public)'}`
+                    : 'Disconnected'}
                 </span>
               </div>
               <button
@@ -1689,7 +1775,9 @@ export function TopBar({
                 onClick={handleCopyShareLink}
                 title="Copy shareable room link to clipboard"
               >
-                {copiedLink ? 'Copied Link!' : 'Copy Share Link'}
+                {copiedLink
+                  ? (collabPassword.trim() ? 'Copied Secure Link!' : 'Copied Link!')
+                  : (collabPassword.trim() ? 'Copy Secure Share Link' : 'Copy Share Link')}
               </button>
               <button className="action-btn" onClick={() => setShowCollabModal(false)}>
                 Close

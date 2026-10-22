@@ -6,9 +6,26 @@ import { stateManager, StateManager } from './state';
 
 export type PeersChangeListener = (peers: PeerPresence[]) => void;
 
+export function hashCollabPassword(password: string): string {
+  if (!password || !password.trim()) return '';
+  const clean = password.trim();
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < clean.length; i++) {
+    const ch = clean.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
 export class CollabSession {
   private channel: BroadcastChannel | null = null;
   private sessionId: string | null = null;
+  private password: string = '';
+  private passwordHash: string = '';
   private peerId: string;
   private userName: string;
   private userColor: string;
@@ -42,16 +59,19 @@ export class CollabSession {
     };
   }
 
-  public connect(sessionId: string = 'recto-live', userName?: string): void {
+  public connect(sessionId: string = 'recto-live', userName?: string, password?: string): void {
     if (this.channel) {
       this.disconnect();
     }
 
     this.sessionId = sessionId;
     if (userName) this.userName = userName;
+    this.password = password ? password.trim() : '';
+    this.passwordHash = hashCollabPassword(this.password);
 
     if (typeof BroadcastChannel !== 'undefined') {
-      this.channel = new BroadcastChannel(`recto_collab_${sessionId}`);
+      const chanKey = this.passwordHash ? `${sessionId}__p_${this.passwordHash}` : sessionId;
+      this.channel = new BroadcastChannel(`recto_collab_${chanKey}`);
       this.channel.onmessage = (event: MessageEvent<CollabMessage>) => {
         this.handleMessage(event.data);
       };
@@ -81,12 +101,26 @@ export class CollabSession {
       this.channel = null;
     }
     this.sessionId = null;
+    this.password = '';
+    this.passwordHash = '';
     this.peers.clear();
     this.notifyPeers();
   }
 
   public isConnected(): boolean {
     return this.channel !== null && this.sessionId !== null;
+  }
+
+  public isPasswordProtected(): boolean {
+    return Boolean(this.passwordHash);
+  }
+
+  public getPassword(): string {
+    return this.password;
+  }
+
+  public getPasswordHash(): string {
+    return this.passwordHash;
   }
 
   public getSessionId(): string | null {
@@ -139,7 +173,8 @@ export class CollabSession {
   private sendMessage(msg: CollabMessage): void {
     if (this.channel) {
       try {
-        this.channel.postMessage(msg);
+        const payload = this.passwordHash ? { ...msg, authHash: this.passwordHash } : msg;
+        this.channel.postMessage(payload);
       } catch (e) {
         console.warn('Failed to broadcast collab message', e);
       }
@@ -202,6 +237,19 @@ export class CollabSession {
 
     // Ignore self messages
     if ('peerId' in msg && msg.peerId === this.peerId) return;
+
+    // Password security verification
+    if (this.passwordHash) {
+      if (!('authHash' in msg) || msg.authHash !== this.passwordHash) {
+        // Discard unauthenticated or wrong-password packet
+        return;
+      }
+    } else {
+      if ('authHash' in msg && msg.authHash) {
+        // Public session discards packets meant for password-protected sessions
+        return;
+      }
+    }
 
     if (msg.type === 'presence') {
       if (msg.peer && msg.peer.peerId !== this.peerId) {

@@ -1509,6 +1509,87 @@ unsub();
 collabSession.disconnect();
 assert.strictEqual(collabSession.isConnected(), false, 'collabSession must be disconnected');
 
+// 6. CollabSession: Password Authentication & Intruder Rejection
+collabSession.connect('secure-editorial-room', 'Alice Senior Dev', 'SuperSecretPass2026!');
+assert.strictEqual(collabSession.isConnected(), true, 'Must connect to secure room');
+assert.strictEqual(collabSession.isPasswordProtected(), true, 'Must be marked as password protected');
+assert.strictEqual(collabSession.getPassword(), 'SuperSecretPass2026!', 'Password must match');
+const validAuthHash = collabSession.getPasswordHash();
+assert(validAuthHash.length > 0, 'Password hash must be generated');
+
+// Test 6a: Intruder with no password / wrong authHash attempting op_add
+const unauthorizedElem: TextElement = {
+  id: 'intruder-text-elem',
+  type: 'text',
+  pageId: 'page-1',
+  x: 10,
+  y: 10,
+  width: 50,
+  height: 20,
+  rotation: 0,
+  opacity: 1,
+  zIndex: 1,
+  locked: false,
+  text: 'Intruder malicious text',
+  fontFamily: 'Inter',
+  fontSizePt: 12,
+  lineHeight: 1.2,
+  letterSpacingPt: 0,
+  color: '#000000',
+  alignment: 'left',
+  columns: 1,
+  columnGutterMm: 4,
+  backgroundColor: 'transparent',
+  borderColor: 'transparent',
+  borderWidthMm: 0,
+  paddingMm: 0,
+};
+
+collabSession.handleMessage({
+  type: 'op_add',
+  peerId: 'intruder-peer',
+  element: unauthorizedElem,
+  timestamp: Date.now(),
+  // No authHash
+});
+
+curSpread = stateManager.getActiveSpread();
+assert(!curSpread.elements.some((e) => e.id === 'intruder-text-elem'), 'Intruder without password must be rejected and not added to state');
+
+collabSession.handleMessage({
+  type: 'op_add',
+  peerId: 'intruder-peer',
+  element: unauthorizedElem,
+  timestamp: Date.now(),
+  authHash: 'wrong-hash-123',
+});
+
+curSpread = stateManager.getActiveSpread();
+assert(!curSpread.elements.some((e) => e.id === 'intruder-text-elem'), 'Intruder with wrong password hash must be rejected');
+
+// Test 6b: Authorized collaborator with valid password hash
+const authorizedElem: TextElement = {
+  ...unauthorizedElem,
+  id: 'authorized-text-elem',
+  text: 'Authorized secure team text',
+};
+
+collabSession.handleMessage({
+  type: 'op_add',
+  peerId: 'authorized-peer-1',
+  element: authorizedElem,
+  timestamp: Date.now(),
+  authHash: validAuthHash,
+});
+
+curSpread = stateManager.getActiveSpread();
+assert(curSpread.elements.some((e) => e.id === 'authorized-text-elem'), 'Authorized peer with matching password hash must be accepted and added to state');
+
+// Clean up
+stateManager.deleteElement('authorized-text-elem');
+collabSession.disconnect();
+assert.strictEqual(collabSession.isPasswordProtected(), false, 'Disconnect must clear password protection');
+
 console.log('✓ Local-first Git snapshots, diffing, rollback, and real-time collaboration adapter verified.');
 
 console.log('\n=============================================');
