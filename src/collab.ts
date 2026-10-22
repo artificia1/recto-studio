@@ -42,7 +42,6 @@ export class CollabSession {
     this.userColor = colors[Math.floor(Math.random() * colors.length)];
     this.userName = `Designer ${this.peerId.slice(-4).toUpperCase()}`;
 
-    // Auto-attach to StateManager mutations
     this.attachToStateManager(stateManager);
   }
 
@@ -77,11 +76,9 @@ export class CollabSession {
       };
     }
 
-    // Send initial join presence and sync request
     this.broadcastPresence(this.lastX, this.lastY);
     this.sendMessage({ type: 'sync_request', peerId: this.peerId });
 
-    // Periodic heartbeat & peer cleanup
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = setInterval(() => {
       this.broadcastPresence(this.lastX, this.lastY);
@@ -234,19 +231,14 @@ export class CollabSession {
 
   public handleMessage(msg: CollabMessage): void {
     if (!msg || typeof msg !== 'object') return;
-
-    // Ignore self messages
     if ('peerId' in msg && msg.peerId === this.peerId) return;
 
-    // Password security verification
     if (this.passwordHash) {
       if (!('authHash' in msg) || msg.authHash !== this.passwordHash) {
-        // Discard unauthenticated or wrong-password packet
         return;
       }
     } else {
       if ('authHash' in msg && msg.authHash) {
-        // Public session discards packets meant for password-protected sessions
         return;
       }
     }
@@ -266,7 +258,6 @@ export class CollabSession {
     } else if (msg.type === 'op_add') {
       this.isApplyingRemoteOp = true;
       try {
-        // Prevent duplicate addition
         const spread = stateManager.getActiveSpread();
         if (!spread.elements.some((el) => el.id === msg.element.id)) {
           stateManager.addElement(msg.element);
@@ -282,14 +273,13 @@ export class CollabSession {
         this.isApplyingRemoteOp = false;
       }
     } else if (msg.type === 'sync_request') {
-      // Reply with current state
       this.sendMessage({
         type: 'sync_response',
         peerId: this.peerId,
         state: stateManager.getState(),
       });
     } else if (msg.type === 'sync_response') {
-      // Optional state sync when requested
+      // Passive sync slot reserved for dynamic full-state sync
     }
   }
 

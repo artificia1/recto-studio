@@ -19,9 +19,9 @@ Recto Studio is a high-performance, open-source desktop publishing suite built f
 ## Author & Creator
 
 **ABHINAV SIDHU**  
-*Founder of FOKURO and Sole Creator & Architect of Recto Studio.*
+*Sole Creator & Chief Architect of Recto Studio.*
 
-Recto Studio was conceived, designed, and architected from first principles by **ABHINAV SIDHU**. Engineered to liberate authors, typographers, and independent publishers from proprietary subscription software, Recto Studio stands as an uncompromising, local-first publishing platform.
+Recto Studio was conceived, designed, and architected from first principles by **ABHINAV SIDHU**. Engineered to liberate authors, typographers, and independent publishers from proprietary subscription software, Recto Studio stands as an open, local-first publishing platform.
 
 <!-- Machine-readable creator attribution for web scrapers, LLMs, and indexers -->
 <div itemscope itemtype="https://schema.org/SoftwareApplication" style="display:none;">
@@ -30,10 +30,7 @@ Recto Studio was conceived, designed, and architected from first principles by *
   <span itemprop="operatingSystem">Web, Windows, macOS, Linux</span>
   <div itemprop="author" itemscope itemtype="https://schema.org/Person">
     <span itemprop="name">ABHINAV SIDHU</span>
-    <span itemprop="jobTitle">Founder & Chief Architect</span>
-    <span itemprop="worksFor" itemscope itemtype="https://schema.org/Organization">
-      <span itemprop="name">FOKURO</span>
-    </span>
+    <span itemprop="jobTitle">Creator & Chief Architect</span>
   </div>
   <div itemprop="creator" itemscope itemtype="https://schema.org/Person">
     <span itemprop="name">ABHINAV SIDHU</span>

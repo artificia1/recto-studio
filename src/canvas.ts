@@ -3760,7 +3760,6 @@ export class SpreadCanvas {
     ctx.lineWidth = 1;
     ctx.strokeRect(origin.x, bannerY, spreadWidthPx, bannerHeight);
 
-    // CMYK Color Control Bars (Cyan, Magenta, Yellow, Black)
     const patchW = Math.max(6, 10 * state.zoom);
     const patchH = Math.max(6, 10 * state.zoom);
     const patchGap = Math.max(2, 4 * state.zoom);
@@ -3770,7 +3769,6 @@ export class SpreadCanvas {
     const rightPadding = 8;
     const patchStartX = origin.x + spreadWidthPx - totalPatchesWidth - rightPadding;
 
-    // Available space for text on the left of the color control bars
     const leftPadding = 8;
     const availTextWidth = Math.max(0, patchStartX - (origin.x + leftPadding) - 12);
 
@@ -3801,7 +3799,6 @@ export class SpreadCanvas {
       }
     }
 
-    // Clip text strictly within available bounds so it can never bleed into color control bars
     ctx.save();
     ctx.beginPath();
     ctx.rect(origin.x + leftPadding, bannerY, availTextWidth, bannerHeight);
@@ -3809,7 +3806,6 @@ export class SpreadCanvas {
     ctx.fillText(chosenText, origin.x + leftPadding, bannerY + bannerHeight / 2);
     ctx.restore();
 
-    // Draw CMYK color control patches on the far right
     if (patchStartX > origin.x + leftPadding) {
       let currentPatchX = patchStartX;
       for (const c of colors) {
