@@ -953,7 +953,7 @@ export function TopBar({
           title={
             isConnected
               ? (collabSession.isPasswordProtected()
-                  ? `Live Session (🔒 Password Protected) · ${collabPeers.length + 1} connected`
+                  ? `Live Session (Password Protected) · ${collabPeers.length + 1} connected`
                   : `Live Session (Public) · ${collabPeers.length + 1} connected`)
               : 'Live Peer-to-Peer Real-Time Collaboration'
           }
@@ -964,7 +964,7 @@ export function TopBar({
           />
           {isConnected
             ? (collabSession.isPasswordProtected()
-                ? `🔒 Live (${collabPeers.length + 1})`
+                ? `Protected (${collabPeers.length + 1})`
                 : `Live (${collabPeers.length + 1})`)
             : 'Collaborate'}
         </button>
@@ -1212,7 +1212,7 @@ export function TopBar({
                 }}
               >
                 <div style={{ color: '#10b981', fontWeight: 600, marginBottom: '4px' }}>
-                  ✓ Detected {parsedPreview.records.length} records, {parsedPreview.headers.length} columns:
+                  Detected {parsedPreview.records.length} records, {parsedPreview.headers.length} columns:
                 </div>
                 <div style={{ color: '#93c5fd', fontFamily: 'monospace' }}>
                   {parsedPreview.headers.map((h) => `{{${h}}}`).join('  ')}
@@ -1571,7 +1571,7 @@ export function TopBar({
                   </label>
                   {collabPassword.trim() && (
                     <span style={{ fontSize: '10px', color: '#10b981', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                      🔒 Password Protected
+                      [Protected Session]
                     </span>
                   )}
                 </div>
@@ -1680,7 +1680,7 @@ export function TopBar({
                 />
                 <span style={{ fontSize: '12px', fontWeight: 600 }}>
                   {isConnected
-                    ? `Connected to '${collabSession.getSessionId()}' ${collabSession.isPasswordProtected() ? '(🔒 Protected)' : '(Public)'}`
+                    ? `Connected to '${collabSession.getSessionId()}' ${collabSession.isPasswordProtected() ? '(Protected)' : '(Public)'}`
                     : 'Disconnected'}
                 </span>
               </div>
