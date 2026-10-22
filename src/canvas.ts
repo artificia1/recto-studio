@@ -3750,34 +3750,77 @@ export class SpreadCanvas {
     if (!state.showSlugBanner || state.previewMode) return;
     const { numPages, pageWidthMm } = this.getSpreadDimensions(state);
     const spreadWidthPx = numPages * pageWidthMm * pxPerMm;
+    const bannerHeight = 18 * state.zoom;
     const bannerY = origin.y - (state.settings.bleedMm + 14) * pxPerMm;
 
     ctx.save();
     ctx.fillStyle = '#0f0f12';
-    ctx.fillRect(origin.x, bannerY, spreadWidthPx, 18 * state.zoom);
+    ctx.fillRect(origin.x, bannerY, spreadWidthPx, bannerHeight);
     ctx.strokeStyle = '#2d2d34';
     ctx.lineWidth = 1;
-    ctx.strokeRect(origin.x, bannerY, spreadWidthPx, 18 * state.zoom);
-
-    ctx.fillStyle = '#a0a0a5';
-    ctx.font = `${Math.max(9, 10 * state.zoom)}px monospace`;
-    ctx.textBaseline = 'middle';
-    const slugText = `RECTO PREPRESS SLUG | Doc: ${state.settings.title || 'Untitled'} | Spread ${state.activeSpreadIndex + 1}/${state.spreads.length} | Bleed: ${state.settings.bleedMm}mm | PDF/X-1a CMYK`;
-    ctx.fillText(slugText, origin.x + 8, bannerY + (9 * state.zoom));
+    ctx.strokeRect(origin.x, bannerY, spreadWidthPx, bannerHeight);
 
     // CMYK Color Control Bars (Cyan, Magenta, Yellow, Black)
-    const patchW = 10 * state.zoom;
-    const patchH = 10 * state.zoom;
-    const patchY = bannerY + (4 * state.zoom);
+    const patchW = Math.max(6, 10 * state.zoom);
+    const patchH = Math.max(6, 10 * state.zoom);
+    const patchGap = Math.max(2, 4 * state.zoom);
+    const patchY = bannerY + (bannerHeight - patchH) / 2;
     const colors = ['#00a0e9', '#e6007e', '#fff100', '#111111'];
-    let patchX = origin.x + spreadWidthPx - (colors.length * (patchW + 4)) - 8;
-    for (const c of colors) {
-      ctx.fillStyle = c;
-      ctx.fillRect(patchX, patchY, patchW, patchH);
-      ctx.strokeStyle = '#ffffff';
-      ctx.strokeRect(patchX, patchY, patchW, patchH);
-      patchX += patchW + 4;
+    const totalPatchesWidth = colors.length * patchW + (colors.length - 1) * patchGap;
+    const rightPadding = 8;
+    const patchStartX = origin.x + spreadWidthPx - totalPatchesWidth - rightPadding;
+
+    // Available space for text on the left of the color control bars
+    const leftPadding = 8;
+    const availTextWidth = Math.max(0, patchStartX - (origin.x + leftPadding) - 12);
+
+    ctx.fillStyle = '#a0a0a5';
+    const fontSize = Math.max(8, Math.min(11, 10 * state.zoom));
+    ctx.font = `${fontSize}px monospace`;
+    ctx.textBaseline = 'middle';
+
+    const title = state.settings.title || 'Untitled';
+    const spreadNum = `${state.activeSpreadIndex + 1}/${state.spreads.length}`;
+    const bleed = `${state.settings.bleedMm}mm`;
+
+    // Adaptive candidate strings matching available width (prevents text/patch collision on single-page spreads)
+    const candidates = [
+      `RECTO PREPRESS SLUG | Doc: ${title} | Spread ${spreadNum} | Bleed: ${bleed} | PDF/X-1a CMYK`,
+      `Doc: ${title} | Spread ${spreadNum} | Bleed: ${bleed} | PDF/X-1a`,
+      `Doc: ${title} | Spread ${spreadNum} | Bleed: ${bleed}`,
+      `Doc: ${title} | Spread ${spreadNum}`,
+      `Doc: ${title} | Sp ${spreadNum}`,
+      `${title} | ${spreadNum}`,
+    ];
+
+    let chosenText = candidates[candidates.length - 1];
+    for (const cand of candidates) {
+      if (ctx.measureText(cand).width <= availTextWidth) {
+        chosenText = cand;
+        break;
+      }
     }
+
+    // Clip text strictly within available bounds so it can never bleed into color control bars
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(origin.x + leftPadding, bannerY, availTextWidth, bannerHeight);
+    ctx.clip();
+    ctx.fillText(chosenText, origin.x + leftPadding, bannerY + bannerHeight / 2);
+    ctx.restore();
+
+    // Draw CMYK color control patches on the far right
+    if (patchStartX > origin.x + leftPadding) {
+      let currentPatchX = patchStartX;
+      for (const c of colors) {
+        ctx.fillStyle = c;
+        ctx.fillRect(currentPatchX, patchY, patchW, patchH);
+        ctx.strokeStyle = '#ffffff';
+        ctx.strokeRect(currentPatchX, patchY, patchW, patchH);
+        currentPatchX += patchW + patchGap;
+      }
+    }
+
     ctx.restore();
   }
 
