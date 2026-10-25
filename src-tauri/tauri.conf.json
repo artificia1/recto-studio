@@ -38,6 +38,29 @@
     ],
     "category": "GraphicsAndDesign",
     "shortDescription": "Autonomous open-source desktop publishing studio",
-    "longDescription": "High-fidelity, offline-first editorial layout and typography studio designed for independent publishers and zine creators."
+    "longDescription": "High-fidelity, offline-first editorial layout and typography studio designed for independent publishers and zine creators.",
+    "fileAssociations": [
+      {
+        "ext": ["recto", "papercut"],
+        "name": "Recto Publication Document",
+        "description": "Recto Studio Publication Document (.recto)",
+        "role": "Editor",
+        "mimeType": "application/x-recto"
+      },
+      {
+        "ext": ["idml"],
+        "name": "InDesign Markup Document",
+        "description": "Adobe InDesign IDML Package (.idml)",
+        "role": "Editor",
+        "mimeType": "application/vnd.adobe.indesign-idml-package"
+      },
+      {
+        "ext": ["indd"],
+        "name": "Adobe InDesign Native Binary Document",
+        "description": "Adobe InDesign Document (.indd)",
+        "role": "Editor",
+        "mimeType": "application/x-indesign"
+      }
+    ]
   }
 }

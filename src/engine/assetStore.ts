@@ -185,6 +185,49 @@ export class AssetStore {
   public getMetadata(assetId: string): AssetMetadata | undefined {
     return this.metadataMap.get(assetId);
   }
+
+  /**
+   * Traces the alpha channel of an image buffer into normalized vertical slices [minX, maxX]
+   * for organic contour text wrapping around silhouettes.
+   */
+  public computeAlphaContour(
+    pixelData: Uint8ClampedArray | Uint8Array,
+    width: number,
+    height: number,
+    slices: number = 32,
+    alphaThreshold: number = 15
+  ): Array<{ minX: number; maxX: number }> {
+    const contour: Array<{ minX: number; maxX: number }> = [];
+    const rowsPerSlice = Math.max(1, Math.floor(height / slices));
+
+    for (let s = 0; s < slices; s++) {
+      const startY = s * rowsPerSlice;
+      const endY = Math.min(height, (s + 1) * rowsPerSlice);
+      let minX = width;
+      let maxX = -1;
+
+      for (let y = startY; y < endY; y++) {
+        const rowOffset = y * width * 4;
+        for (let x = 0; x < width; x++) {
+          const alpha = pixelData[rowOffset + (x * 4) + 3];
+          if (alpha > alphaThreshold) {
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+          }
+        }
+      }
+
+      if (maxX >= minX) {
+        contour.push({
+          minX: Math.round((minX / width) * 1000) / 1000,
+          maxX: Math.round((maxX / width) * 1000) / 1000,
+        });
+      } else {
+        contour.push({ minX: 1, maxX: 0 }); // Fully transparent slice
+      }
+    }
+    return contour;
+  }
 }
 
 export const assetStore = new AssetStore();

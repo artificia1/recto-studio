@@ -9,7 +9,8 @@ import { parseMarkdownContent } from './src/contentImport';
 import { parseIdmlPackage } from './src/idmlImport';
 import { exportDocumentToIdml } from './src/export/idmlExport';
 import { parseCsv } from './src/dataMerge';
-import { formatOpenTypeText, getLeadingHangOffset, getTrailingHangOffset, calculateImageFitting, splitWordIntoFitChunks, isTextFrameOverset } from './src/canvas';
+import { formatOpenTypeText, getLeadingHangOffset, getTrailingHangOffset, calculateImageFitting, splitWordIntoFitChunks, isTextFrameOverset, segmentTextWithGrep } from './src/canvas';
+import { colorEngine, ICC_PROFILES } from './src/engine/colorEngine';
 import { generateEpubPackage, exportDocumentToEpub } from './src/epubExport';
 import { generateFlipbookHtml, exportDocumentToFlipbook } from './src/flipbookExport';
 import { collabSession } from './src/collab';
@@ -3974,8 +3975,88 @@ stateManager.deleteElement(insertedQr.id);
 
 console.log('✓ InDesign Parity Suite (Native Vector QR Codes, Anchored Objects, Split Columns, Scripting Engine & Conditional Text) verified.');
 
+// --- Suite 58: Enterprise Parity Suite (Live GREP Pipeline, Contour Alpha Wrap, Prepress Color Management & Tauri File Associations) ---
+console.log('\n--- Suite 58: Enterprise Parity Suite (Live GREP Pipeline, Contour Alpha Wrap, Prepress Color Management & Tauri File Associations) ---');
+
+// 1. Live GREP Text Run Segmentation
+const testGrepRules = [
+  { id: 'rule-acronyms', pattern: '\\b[A-Z]{3,}\\b', bold: true, color: '#e11d48' },
+  { id: 'rule-currency', pattern: '\\$\\d+(\\.\\d{2})?', color: '#059669', italic: true },
+];
+const segmented = segmentTextWithGrep('Visit NASA or buy for $49.99 today', testGrepRules, '#111111');
+assert.strictEqual(segmented.length, 5, 'Must tokenize into 5 distinct runs');
+assert.strictEqual(segmented[0].text, 'Visit ', 'Prefix must match');
+assert.strictEqual(segmented[1].text, 'NASA', 'Acronym must match');
+assert.strictEqual(segmented[1].bold, true, 'NASA must be marked bold');
+assert.strictEqual(segmented[1].color, '#e11d48', 'NASA must receive acronym rule color');
+assert.strictEqual(segmented[2].text, ' or buy for ', 'Intermediate text preserved');
+assert.strictEqual(segmented[3].text, '$49.99', 'Currency tokenized');
+assert.strictEqual(segmented[3].italic, true, 'Currency must be marked italic');
+assert.strictEqual(segmented[3].color, '#059669', 'Currency must receive green color');
+assert.strictEqual(segmented[4].text, ' today', 'Suffix preserved');
+
+// 2. Alpha Channel Contour Extraction for Organic Text Wrap
+// Create 4x4 RGBA bitmap where middle 2x2 is opaque (alpha=255) and perimeter is transparent (alpha=0)
+const testWidth = 4;
+const testHeight = 4;
+const testRgba = new Uint8ClampedArray(testWidth * testHeight * 4);
+for (let y = 1; y <= 2; y++) {
+  for (let x = 1; x <= 2; x++) {
+    testRgba[(y * testWidth + x) * 4 + 3] = 255;
+  }
+}
+const alphaContour = assetStore.computeAlphaContour(testRgba, testWidth, testHeight, 4, 15);
+assert.strictEqual(alphaContour.length, 4, 'Contour must contain 4 vertical slices');
+assert(alphaContour[0].minX > alphaContour[0].maxX, 'Row 0 is transparent');
+assert.strictEqual(alphaContour[1].minX, 0.25, 'Row 1 starts at x=1 (1/4 = 0.25)');
+assert.strictEqual(alphaContour[1].maxX, 0.5, 'Row 1 ends at x=2 (2/4 = 0.5)');
+assert.strictEqual(alphaContour[2].minX, 0.25, 'Row 2 starts at x=1');
+assert.strictEqual(alphaContour[2].maxX, 0.5, 'Row 2 ends at x=2');
+assert(alphaContour[3].minX > alphaContour[3].maxX, 'Row 3 is transparent');
+
+// Test stateManager.setElementAlphaContour
+const contourTargetImg = stateManager.getActiveSpread().elements.find(e => e.type === 'image');
+if (contourTargetImg) {
+  stateManager.setElementAlphaContour(contourTargetImg.id, alphaContour);
+  const updatedImg = stateManager.getElementById(contourTargetImg.id) as ImageElement;
+  assert.strictEqual(updatedImg.textWrap?.mode, 'contour', 'setElementAlphaContour must enable contour mode');
+  assert.strictEqual(updatedImg.alphaContour?.length, 4, 'alphaContour must be attached to element');
+}
+
+// 3. Prepress Color Engine & Soft-Proofing
+assert(ICC_PROFILES.FOGRA39.maxTacPercent === 330, 'FOGRA39 TAC limit must be 330%');
+assert(ICC_PROFILES.GRACoL2006.maxTacPercent === 320, 'GRACoL2006 TAC limit must be 320%');
+assert(ICC_PROFILES.SWOP2006.maxTacPercent === 300, 'SWOP2006 TAC limit must be 300%');
+
+const pureBlackCmyk = colorEngine.rgbToCmyk(0, 0, 0, 'FOGRA39');
+assert.deepStrictEqual(pureBlackCmyk, [0, 0, 0, 100], 'Pure Black Golden Rule: rgb(0,0,0) must map to [0,0,0,100]');
+
+const pureWhiteCmyk = colorEngine.rgbToCmyk(255, 255, 255, 'FOGRA39');
+assert.deepStrictEqual(pureWhiteCmyk, [0, 0, 0, 0], 'Pure White: rgb(255,255,255) must map to [0,0,0,0]');
+
+const softProofResult = colorEngine.softProof('#3b82f6', 'FOGRA39');
+assert(softProofResult.startsWith('#'), 'Soft proof must return valid hex color');
+
+const gamutAuditSafe = stateManager.auditColorGamut('#333333', 'FOGRA39');
+assert.strictEqual(gamutAuditSafe.inGamut, true, 'Neutral dark grey must be in-gamut');
+
+const gamutAuditNeon = stateManager.auditColorGamut('#00ff00', 'SWOP2006');
+assert.strictEqual(gamutAuditNeon.inGamut, false, 'Vivid neon green must be flagged out-of-gamut for publication SWOP');
+assert(gamutAuditNeon.warning && gamutAuditNeon.warning.includes('gamut'), 'Gamut audit must provide descriptive warning');
+
+// 4. Desktop OS File Associations (Tauri v2)
+const tauriConfRaw = fs.readFileSync('src-tauri/tauri.conf.json', 'utf-8');
+const tauriConf = JSON.parse(tauriConfRaw);
+assert(Array.isArray(tauriConf.bundle?.fileAssociations), 'tauri.conf.json must define bundle.fileAssociations');
+const exts = tauriConf.bundle.fileAssociations.flatMap((fa: any) => fa.ext);
+assert(exts.includes('recto'), 'File associations must register .recto');
+assert(exts.includes('idml'), 'File associations must register .idml');
+assert(exts.includes('indd'), 'File associations must register .indd');
+
+console.log('✓ Enterprise Parity Suite (Live GREP Pipeline, Contour Alpha Wrap, Prepress Color Management & Tauri File Associations) verified.');
+
 console.log('\n=============================================');
-console.log('ALL 57 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
+console.log('ALL 58 TEST SUITES PASSED FLAWLESSLY! (100% OK)');
 console.log('=============================================\n');
 
 

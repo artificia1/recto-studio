@@ -13,6 +13,7 @@ import {
   TextOnPathSettings,
   DisplayQuality,
   OpenTypeFeatures,
+  GrepStyleRule,
 } from './types';
 import { stateManager, numberToSuperscript } from './state';
 import { collabSession } from './collab';
@@ -70,6 +71,70 @@ export function getTrailingHangOffset(lineText: string, ctx: CanvasRenderingCont
     return (charW || 6) * 0.5;
   }
   return 0;
+}
+
+export interface TextRunSegment {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  color?: string;
+}
+
+/**
+ * Splits a text line into styled runs according to active GREP rules.
+ */
+export function segmentTextWithGrep(
+  lineText: string,
+  grepRules?: GrepStyleRule[],
+  defaultColor?: string
+): TextRunSegment[] {
+  if (!grepRules || grepRules.length === 0 || !lineText) {
+    return [{ text: lineText, color: defaultColor }];
+  }
+
+  const matches: { start: number; end: number; rule: GrepStyleRule }[] = [];
+  for (const rule of grepRules) {
+    if (!rule.pattern) continue;
+    try {
+      const rx = new RegExp(rule.pattern, 'g');
+      let m: RegExpExecArray | null;
+      while ((m = rx.exec(lineText)) !== null) {
+        matches.push({ start: m.index, end: m.index + m[0].length, rule });
+        if (m.index === rx.lastIndex) rx.lastIndex++;
+      }
+    } catch {
+      // Ignore malformed regex
+    }
+  }
+
+  if (matches.length === 0) {
+    return [{ text: lineText, color: defaultColor }];
+  }
+
+  matches.sort((a, b) => a.start - b.start);
+
+  const segments: TextRunSegment[] = [];
+  let curr = 0;
+  for (const m of matches) {
+    if (m.start > curr) {
+      segments.push({ text: lineText.slice(curr, m.start), color: defaultColor });
+    }
+    if (m.end > curr) {
+      const start = Math.max(curr, m.start);
+      segments.push({
+        text: lineText.slice(start, m.end),
+        bold: m.rule.bold,
+        italic: m.rule.italic,
+        color: m.rule.color || defaultColor,
+      });
+      curr = m.end;
+    }
+  }
+  if (curr < lineText.length) {
+    segments.push({ text: lineText.slice(curr), color: defaultColor });
+  }
+
+  return segments;
 }
 
 export function splitWordIntoFitChunks(word: string, maxW: number, ctx: CanvasRenderingContext2D): string[] {
@@ -2760,6 +2825,7 @@ export class SpreadCanvas {
         }
 
         const pStyle = text.paragraphStyleId ? state.paragraphStyles.find(s => s.id === text.paragraphStyleId) : undefined;
+        const activeGrepRules = pStyle?.grepStyles || (text as any).grepStyles;
         if (pStyle?.shadingColor) {
           const sPaddingPx = (pStyle.shadingPaddingMm || 1.5) * pxPerMm;
           ctx.save();
@@ -2887,18 +2953,33 @@ export class SpreadCanvas {
                   let obsL = obsMinX;
                   let obsR = obsMaxX;
 
-                  if (obs.textWrap?.mode === 'contour' && obs.type === 'shape' && (obs as ShapeElement).shapeKind === 'ellipse') {
+                  if (obs.textWrap?.mode === 'contour') {
                     const midY = currentY + fontSizePx / 2;
-                    const cy = (obsMinY + obsMaxY) / 2;
-                    const ry = (obsMaxY - obsMinY) / 2;
-                    if (Math.abs(midY - cy) < ry && ry > 0) {
-                      const rx = (obsMaxX - obsMinX) / 2;
-                      const dx = rx * Math.sqrt(Math.max(0, 1 - Math.pow((midY - cy) / ry, 2)));
-                      const cx = (obsMinX + obsMaxX) / 2;
-                      obsL = cx - dx;
-                      obsR = cx + dx;
-                    } else {
-                      continue;
+                    if (obs.type === 'shape' && (obs as ShapeElement).shapeKind === 'ellipse') {
+                      const cy = (obsMinY + obsMaxY) / 2;
+                      const ry = (obsMaxY - obsMinY) / 2;
+                      if (Math.abs(midY - cy) < ry && ry > 0) {
+                        const rx = (obsMaxX - obsMinX) / 2;
+                        const dx = rx * Math.sqrt(Math.max(0, 1 - Math.pow((midY - cy) / ry, 2)));
+                        const cx = (obsMinX + obsMaxX) / 2;
+                        obsL = cx - dx;
+                        obsR = cx + dx;
+                      } else {
+                        continue;
+                      }
+                    } else if (obs.type === 'image') {
+                      const img = obs as ImageElement;
+                      if (img.alphaContour && img.alphaContour.length > 0) {
+                        const yNorm = Math.max(0, Math.min(1, (midY - obsMinY) / (obsMaxY - obsMinY || 1)));
+                        const sliceIdx = Math.min(img.alphaContour.length - 1, Math.floor(yNorm * img.alphaContour.length));
+                        const slice = img.alphaContour[sliceIdx];
+                        if (slice && slice.minX <= slice.maxX) {
+                          obsL = obsMinX + (slice.minX * (obsMaxX - obsMinX));
+                          obsR = obsMinX + (slice.maxX * (obsMaxX - obsMinX));
+                        } else {
+                          continue;
+                        }
+                      }
                     }
                   }
 
@@ -2965,11 +3046,23 @@ export class SpreadCanvas {
                 const hangR = getTrailingHangOffset(lineStr, ctx, Boolean(text.opticalMarginAlignment));
 
                 if (text.alignment === 'center') {
-                  ctx.textAlign = 'center';
-                  ctx.fillText(lineStr, colX + lineIndent + (lineAvailW - hangL + hangR) / 2, currentY);
+                  if (activeGrepRules && activeGrepRules.length > 0) {
+                    ctx.textAlign = 'left';
+                    const totalW = ctx.measureText(lineStr).width;
+                    this.drawLineWithGrep(ctx, lineStr, colX + lineIndent + (lineAvailW - hangL + hangR) / 2 - totalW / 2, currentY, fontSizePx, text.fontFamily || 'serif', text.color || '#111111', activeGrepRules);
+                  } else {
+                    ctx.textAlign = 'center';
+                    ctx.fillText(lineStr, colX + lineIndent + (lineAvailW - hangL + hangR) / 2, currentY);
+                  }
                 } else if (text.alignment === 'right') {
-                  ctx.textAlign = 'right';
-                  ctx.fillText(lineStr, colX + lineIndent + lineAvailW + hangR, currentY);
+                  if (activeGrepRules && activeGrepRules.length > 0) {
+                    ctx.textAlign = 'left';
+                    const totalW = ctx.measureText(lineStr).width;
+                    this.drawLineWithGrep(ctx, lineStr, colX + lineIndent + lineAvailW + hangR - totalW, currentY, fontSizePx, text.fontFamily || 'serif', text.color || '#111111', activeGrepRules);
+                  } else {
+                    ctx.textAlign = 'right';
+                    ctx.fillText(lineStr, colX + lineIndent + lineAvailW + hangR, currentY);
+                  }
                 } else if (text.alignment === 'justify' && !isParaEnd && lineWords.length > 1) {
                   let totalWordsW = 0;
                   const wWidths: number[] = [];
@@ -2984,12 +3077,12 @@ export class SpreadCanvas {
                   let curWordX = colX + lineIndent - hangL;
                   ctx.textAlign = 'left';
                   for (let w = 0; w < lineWords.length; w++) {
-                    ctx.fillText(lineWords[w], curWordX, currentY);
+                    this.drawLineWithGrep(ctx, lineWords[w], curWordX, currentY, fontSizePx, text.fontFamily || 'serif', text.color || '#111111', activeGrepRules);
                     curWordX += wWidths[w] + gap;
                   }
                 } else {
                   ctx.textAlign = 'left';
-                  ctx.fillText(lineStr, colX + lineIndent - hangL, currentY);
+                  this.drawLineWithGrep(ctx, lineStr, colX + lineIndent - hangL, currentY, fontSizePx, text.fontFamily || 'serif', text.color || '#111111', activeGrepRules);
                 }
               }
 
@@ -3196,16 +3289,28 @@ export class SpreadCanvas {
                 const hangR = getTrailingHangOffset(line.text, ctx, Boolean(text.opticalMarginAlignment));
 
                 if (text.alignment === 'center') {
-                  ctx.textAlign = 'center';
-                  ctx.fillText(line.text, colX + line.indentX + (line.availWidth - hangL + hangR) / 2, currentY);
+                  if (activeGrepRules && activeGrepRules.length > 0) {
+                    ctx.textAlign = 'left';
+                    const totalW = ctx.measureText(line.text).width;
+                    this.drawLineWithGrep(ctx, line.text, colX + line.indentX + (line.availWidth - hangL + hangR) / 2 - totalW / 2, currentY, fontSizePx, text.fontFamily || 'serif', text.color || '#111111', activeGrepRules);
+                  } else {
+                    ctx.textAlign = 'center';
+                    ctx.fillText(line.text, colX + line.indentX + (line.availWidth - hangL + hangR) / 2, currentY);
+                  }
                 } else if (text.alignment === 'right') {
-                  ctx.textAlign = 'right';
-                  ctx.fillText(line.text, colX + line.indentX + line.availWidth + hangR, currentY);
+                  if (activeGrepRules && activeGrepRules.length > 0) {
+                    ctx.textAlign = 'left';
+                    const totalW = ctx.measureText(line.text).width;
+                    this.drawLineWithGrep(ctx, line.text, colX + line.indentX + line.availWidth + hangR - totalW, currentY, fontSizePx, text.fontFamily || 'serif', text.color || '#111111', activeGrepRules);
+                  } else {
+                    ctx.textAlign = 'right';
+                    ctx.fillText(line.text, colX + line.indentX + line.availWidth + hangR, currentY);
+                  }
                 } else if (text.alignment === 'justify' && !line.isLastInPara) {
                   const words = line.text.trim().split(/\s+/);
                   if (words.length <= 1) {
                     ctx.textAlign = 'left';
-                    ctx.fillText(line.text, colX + line.indentX - hangL, currentY);
+                    this.drawLineWithGrep(ctx, line.text, colX + line.indentX - hangL, currentY, fontSizePx, text.fontFamily || 'serif', text.color || '#111111', activeGrepRules);
                   } else {
                     let totalWordsW = 0;
                     const wWidths: number[] = [];
@@ -3220,13 +3325,13 @@ export class SpreadCanvas {
                     let curWordX = colX + line.indentX - hangL;
                     ctx.textAlign = 'left';
                     for (let w = 0; w < words.length; w++) {
-                      ctx.fillText(words[w], curWordX, currentY);
+                      this.drawLineWithGrep(ctx, words[w], curWordX, currentY, fontSizePx, text.fontFamily || 'serif', text.color || '#111111', activeGrepRules);
                       curWordX += wWidths[w] + gap;
                     }
                   }
                 } else {
                   ctx.textAlign = 'left';
-                  ctx.fillText(line.text, colX + line.indentX - hangL, currentY);
+                  this.drawLineWithGrep(ctx, line.text, colX + line.indentX - hangL, currentY, fontSizePx, text.fontFamily || 'serif', text.color || '#111111', activeGrepRules);
                 }
               }
 
@@ -4442,6 +4547,40 @@ export class SpreadCanvas {
     if (isSelected || el.id === activePathId) {
       this.renderPathNodesAndHandles(ctx, el, elScreenX, elScreenY, pxPerMm);
     }
+  }
+
+  private drawLineWithGrep(
+    ctx: CanvasRenderingContext2D,
+    lineText: string,
+    startX: number,
+    startY: number,
+    fontSizePx: number,
+    fontFamily: string,
+    defaultColor: string,
+    grepRules?: GrepStyleRule[]
+  ): void {
+    if (!grepRules || grepRules.length === 0) {
+      ctx.fillText(lineText, startX, startY);
+      return;
+    }
+    const segs = segmentTextWithGrep(lineText, grepRules, defaultColor);
+    let curX = startX;
+    const origFont = ctx.font;
+    const origFill = ctx.fillStyle;
+    for (const seg of segs) {
+      if (seg.bold || seg.italic) {
+        const weight = seg.bold ? 'bold ' : '';
+        const slant = seg.italic ? 'italic ' : '';
+        ctx.font = `${weight}${slant}${fontSizePx}px ${fontFamily}`;
+      } else {
+        ctx.font = origFont;
+      }
+      ctx.fillStyle = seg.color || defaultColor;
+      ctx.fillText(seg.text, curX, startY);
+      curX += ctx.measureText(seg.text).width;
+    }
+    ctx.font = origFont;
+    ctx.fillStyle = origFill;
   }
 
   private renderTextOnPath(

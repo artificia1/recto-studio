@@ -774,6 +774,19 @@ export function TopBar({
                   <span>Insert Footnote...</span>
                 </button>
               )}
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowFileMenu(false);
+                  const activePage = stateManager.getActiveSpread().pages[0];
+                  if (activePage) {
+                    stateManager.generateTableOfContents(activePage.id, '.');
+                  }
+                }}
+                title="Scan document headings and generate automated Table of Contents with dot leaders"
+              >
+                <span>Generate Table of Contents...</span>
+              </button>
 
               <div className="dropdown-menu-divider" />
 

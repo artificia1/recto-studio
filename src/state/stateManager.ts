@@ -43,6 +43,7 @@ import { parseCsv, generateMergedSpreads, substituteElementTokens } from '../dat
 import { KnuthPlassComposer, ComposerOptions } from '../engine/knuthPlass';
 import { psdEngine } from '../engine/psdParser';
 import { assetStore } from '../engine/assetStore';
+import { colorEngine, GamutAuditResult, IccProfileName } from '../engine/colorEngine';
 
 const SUPERSCRIPTS: Record<string, string> = {
   '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
@@ -4420,6 +4421,37 @@ export class StateManager {
       }
       return content;
     });
+  }
+
+  /**
+   * Generates and assigns an organic alpha silhouette contour to an image element for contour text wrapping.
+   */
+  public setElementAlphaContour(elementId: string, contour: Array<{ minX: number; maxX: number }>): void {
+    const el = this.getElementById(elementId);
+    if (!el || el.type !== 'image') return;
+    this.updateElement(elementId, {
+      alphaContour: contour,
+      textWrap: {
+        mode: 'contour',
+        standoffMm: el.textWrap?.standoffMm ?? 3,
+      },
+    });
+  }
+
+  /**
+   * Audits a color against target ICC profile printing limits (TAC and gamut clipping).
+   */
+  public auditColorGamut(hexColor: string, profile?: IccProfileName): GamutAuditResult {
+    const prof = profile || (this.state.settings.iccProfile as IccProfileName) || 'FOGRA39';
+    return colorEngine.auditColorGamut(hexColor, prof);
+  }
+
+  /**
+   * Generates a soft-proof simulated color for on-screen preview.
+   */
+  public softProofColor(hexColor: string, profile?: IccProfileName): string {
+    const prof = profile || (this.state.settings.iccProfile as IccProfileName) || 'FOGRA39';
+    return colorEngine.softProof(hexColor, prof);
   }
 
   private saveSnapshotsToStorage() {

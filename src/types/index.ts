@@ -327,6 +327,7 @@ export interface ImageElement extends BaseElement {
     height: number;
   }[];
   activePsdLayerIds?: number[];
+  alphaContour?: Array<{ minX: number; maxX: number }>;
 }
 
 export type ShapeKind = 'rectangle' | 'ellipse' | 'line';
