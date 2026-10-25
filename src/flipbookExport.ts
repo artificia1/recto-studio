@@ -102,12 +102,16 @@ export function generateFlipbookHtml(state: ProjectState): string {
         elementsHtml += `    <div style="${baseStyle} ${textStyle}">\n${parasHtml}    </div>\n`;
       } else if (el.type === 'image') {
         const img = el as ImageElement;
-        const fit = img.fitMode === 'fill' ? 'cover' : img.fitMode === 'fit' ? 'contain' : img.fitMode === 'center' ? 'none' : 'fill';
+        const fit = (img.fitMode === 'fit' || img.fitMode === 'frameToContent')
+          ? 'contain'
+          : (img.fitMode === 'contentToFrame' || img.fitMode === 'stretch')
+          ? 'fill'
+          : 'cover';
         const borderWPx = Math.max(1, Math.round((img.borderWidthMm || 0) * PX_PER_MM));
         const border = img.borderWidthMm > 0 && img.borderColor !== 'transparent' ? `border: ${borderWPx}px solid ${img.borderColor};` : '';
         elementsHtml += `    <div style="${baseStyle} overflow: hidden; ${border}">\n`;
         if (img.src) {
-          elementsHtml += `      <img src="${escapeXml(img.src)}" alt="${escapeXml(img.caption || '')}" style="width: 100%; height: 100%; object-fit: ${fit}; display: block; image-rendering: high-quality; image-rendering: -webkit-optimize-contrast;"/>\n`;
+          elementsHtml += `      <img src="${escapeXml(img.src)}" alt="${escapeXml(img.caption || '')}" style="width: 100%; height: 100%; object-fit: ${fit}; object-position: center; display: block; image-rendering: high-quality; image-rendering: -webkit-optimize-contrast;"/>\n`;
         } else {
           elementsHtml += `      <div style="width: 100%; height: 100%; background: #eee; display: flex; align-items: center; justify-content: center; color: #888; font-size: 14px;">[Image Frame]</div>\n`;
         }

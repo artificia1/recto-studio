@@ -2030,7 +2030,7 @@ export class StateManager {
   public async registerImageAsset(elementId: string, data: ArrayBuffer | string, name?: string): Promise<boolean> {
     const el = this.getElementById(elementId);
     if (!el || el.type !== 'image') return false;
-    const meta = await assetStore.registerAsset(data, { name, width: el.width, height: el.height });
+    const meta = await assetStore.registerAsset(data, { name });
     const img = el as ImageElement;
     img.assetId = meta.id;
     img.proxySrc = meta.proxyDataUrl;

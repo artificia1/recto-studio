@@ -7,6 +7,7 @@
 import { jsPDF } from 'jspdf';
 import { ProjectState, Page, Spread, TextElement, ImageElement, ShapeElement, VectorPathElement, TableElement } from '../types/index';
 import { stateManager, numberToSuperscript } from '../state';
+import { calculateImageFitting } from '../canvas';
 import { assetStore } from '../engine/assetStore';
 import { tableEngine } from '../engine/tableEngine';
 import { getFreeToneColor, getSafeSpotName, generatePdfSeparationDict, FreeToneSpotColor } from '../engine/spotColors';
@@ -386,7 +387,54 @@ export async function exportDocumentToPdf(
         const fullResSrc = (assetStore.getFullResolution(img.assetId || img.src) as string) || img.src;
         if (fullResSrc && (fullResSrc.startsWith('data:image') || fullResSrc.startsWith('http') || fullResSrc.startsWith('blob:'))) {
           try {
-            doc.addImage(fullResSrc, 'JPEG', elX, elY, img.width, img.height);
+            let imgW = img.originalWidth || 0;
+            let imgH = img.originalHeight || 0;
+            let fileType = 'JPEG';
+
+            try {
+              const props = doc.getImageProperties(fullResSrc);
+              if (props && props.width > 0 && props.height > 0) {
+                imgW = props.width;
+                imgH = props.height;
+                if (props.fileType) fileType = props.fileType;
+              }
+            } catch {
+              // Ignore jsPDF inspection errors for unsupported types
+            }
+
+            if (!imgW || !imgH) {
+              const dims = stateManager.getImageDimensions(fullResSrc) || stateManager.getImageDimensions(img.src);
+              if (dims && dims.width > 0 && dims.height > 0) {
+                imgW = dims.width;
+                imgH = dims.height;
+              }
+            }
+
+            const imgWMm = imgW > 0 ? imgW / 3.7795275591 : img.width;
+            const imgHMm = imgH > 0 ? imgH / 3.7795275591 : img.height;
+            const fitMode = img.fitMode || 'fill';
+            const fit = calculateImageFitting(elX, elY, img.width, img.height, imgWMm, imgHMm, fitMode);
+
+            const needsClipping = fitMode === 'fill' || fitMode === 'center';
+            if (needsClipping) {
+              doc.saveGraphicsState();
+              doc.rect(elX, elY, img.width, img.height, null);
+              doc.clip();
+              doc.discardPath();
+            }
+
+            doc.addImage(fullResSrc, fileType, fit.drawX, fit.drawY, fit.drawW, fit.drawH);
+
+            if (needsClipping) {
+              doc.restoreGraphicsState();
+            }
+
+            if (img.borderWidthMm > 0 && img.borderColor && img.borderColor !== 'transparent') {
+              applyCmykDrawColor(doc, img.borderColor);
+              doc.setLineWidth(img.borderWidthMm);
+              doc.rect(elX, elY, img.width, img.height, 'S');
+            }
+
             assetStore.flushPageExportBuffer(img.assetId || img.src);
           } catch (e) {
             drawPlaceholderImage(doc, elX, elY, img.width, img.height, img.caption);

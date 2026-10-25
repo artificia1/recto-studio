@@ -1335,6 +1335,38 @@ assert(flipbookHtml.includes('ArrowRight'), 'Flipbook script must handle ArrowRi
 assert(flipbookHtml.includes('ArrowLeft'), 'Flipbook script must handle ArrowLeft key navigation');
 assert(flipbookHtml.includes('fullscreen'), 'Flipbook script must handle fullscreen mode');
 
+// Verify flipbook formatting for image fitting modes
+const stateWithImg: ProjectState = {
+  ...activeState,
+  spreads: [
+    {
+      ...activeState.spreads[0],
+      elements: [
+        {
+          id: 'test-flip-img',
+          type: 'image',
+          pageId: activeState.spreads[0].pages[0].id,
+          x: 10,
+          y: 10,
+          width: 100,
+          height: 100,
+          rotation: 0,
+          opacity: 1,
+          zIndex: 1,
+          locked: false,
+          src: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+          fitMode: 'fill',
+          borderColor: 'transparent',
+          borderWidthMm: 0,
+        },
+      ],
+    },
+  ],
+};
+const flipWithImg = generateFlipbookHtml(stateWithImg);
+assert(flipWithImg.includes('object-fit: cover'), 'Flipbook must format filled/centered images with object-fit: cover');
+assert(flipWithImg.includes('object-position: center'), 'Flipbook must format images with object-position: center');
+
 // 4. Flipbook export helper
 const { html: exportedHtml, filename: flipbookFilename } = exportDocumentToFlipbook(activeState, { download: false });
 assert.strictEqual(exportedHtml, flipbookHtml);
@@ -1685,6 +1717,14 @@ assert(Math.abs(imgEl.height - 56.3) < 0.2, 'Frame height must resize to match 1
 stateManager.applyImageFitMode('fill');
 imgEl = stateManager.getActiveSpread().elements.find((e) => e.id === 'img-fit-test-1') as ImageElement;
 assert.strictEqual(imgEl.fitMode, 'fill', 'applyImageFitMode must set fitMode to fill');
+
+// Verify PDF export with fitted image clips and renders proportionally
+const sampleJpegData = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
+stateManager.updateElement('img-fit-test-1', { src: sampleJpegData, fitMode: 'fill' });
+const fittedPdfDoc = await exportDocumentToPdf(stateManager.getState(), { exportFormat: 'pages', spreadRange: [0] });
+const fittedPdfOutput = fittedPdfDoc.output();
+assert(typeof fittedPdfOutput === 'string' && fittedPdfOutput.length > 0, 'PDF export with fitted image must succeed');
+assert(fittedPdfOutput.includes('q') && fittedPdfOutput.includes('Q'), 'PDF export must isolate graphics state for image frame clipping');
 
 stateManager.deleteElement('img-fit-test-1');
 

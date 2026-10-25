@@ -55,8 +55,8 @@ export class AssetStore {
 
     // Compute dimensions and generate screen proxy
     const proxyResult = await this.generateScreenProxy(source, 72, 1200);
-    const originalWidth = meta.width || proxyResult.originalWidth || 1200;
-    const originalHeight = meta.height || proxyResult.originalHeight || 800;
+    const originalWidth = proxyResult.originalWidth || meta.width || 1200;
+    const originalHeight = proxyResult.originalHeight || meta.height || 800;
 
     const assetMeta: AssetMetadata = {
       id,
