@@ -7,6 +7,7 @@ import { exportDocumentToPdf } from './src/pdfExport';
 import { readZip, createZipArchive } from './src/zip';
 import { parseMarkdownContent } from './src/contentImport';
 import { parseIdmlPackage } from './src/idmlImport';
+import { exportDocumentToIdml } from './src/export/idmlExport';
 import { parseCsv } from './src/dataMerge';
 import { formatOpenTypeText, getLeadingHangOffset, getTrailingHangOffset, calculateImageFitting, splitWordIntoFitChunks, isTextFrameOverset } from './src/canvas';
 import { generateEpubPackage, exportDocumentToEpub } from './src/epubExport';
@@ -956,6 +957,44 @@ assert(importedImgEl, 'Must map Rectangle with Image to ImageElement');
 // Load IDML into active StateManager
 await stateManager.loadFromIdml(mockIdmlZip);
 assert.strictEqual(stateManager.getState().settings.widthMm, 210, 'StateManager should reflect loaded IDML geometry');
+
+// 4. IDML Export & Round-Trip Image Preservation
+const sampleB64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+const idmlRoundtripState: ProjectState = {
+  ...INITIAL_STATE,
+  spreads: [
+    {
+      ...INITIAL_STATE.spreads[0],
+      elements: [
+        {
+          id: 'test-idml-img-1',
+          type: 'image',
+          pageId: INITIAL_STATE.spreads[0].pages[0].id,
+          x: 20,
+          y: 30,
+          width: 80,
+          height: 60,
+          rotation: 0,
+          opacity: 1,
+          zIndex: 1,
+          locked: false,
+          src: sampleB64,
+          name: 'photo-test.png',
+          fitMode: 'fill',
+          borderColor: '#111111',
+          borderWidthMm: 0,
+        },
+      ],
+    },
+  ],
+};
+const exportedIdmlBytes = exportDocumentToIdml(idmlRoundtripState);
+assert(exportedIdmlBytes && exportedIdmlBytes.length > 0, 'exportDocumentToIdml must produce valid byte archive');
+const reimportedIdmlState = await parseIdmlPackage(exportedIdmlBytes);
+const reimportedImg = reimportedIdmlState.spreads[0].elements.find((el) => el.type === 'image') as ImageElement;
+assert(reimportedImg, 'Reimported IDML must contain the ImageElement');
+assert(reimportedImg.src && reimportedImg.src.startsWith('data:image/png;base64,'), 'Reimported ImageElement must retain its base64 image data URL');
+assert(reimportedImg.caption !== 'Imported InDesign Photo Frame', 'Reimported ImageElement must not fallback to placeholder caption');
 
 console.log('✓ Adobe InDesign IDML Import Engine & Manuscript Ingestion Pipeline verified.');
 

@@ -269,7 +269,7 @@ export function TopBar({
     setShowExportMenu(false);
     const canvas = (window as any).recto?.spreadCanvas;
     if (canvas && typeof canvas.exportSpreadAsPng === 'function') {
-      const dataUrl = canvas.exportSpreadAsPng(2);
+      const dataUrl = canvas.exportSpreadAsPng(3);
       if (dataUrl) {
         const link = document.createElement('a');
         const spreadNum = state.activeSpreadIndex + 1;

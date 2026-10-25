@@ -10,7 +10,7 @@ import {
   CanvasElement,
   DEFAULT_LAYERS,
 } from './types';
-import { readZip } from './zip';
+import { readZip, uint8ArrayToBase64 } from './zip';
 import { DEFAULT_PARAGRAPH_STYLES, DEFAULT_MASTER_SPREADS } from './state';
 
 const PT_TO_MM = 25.4 / 72; // 1 point = 0.352778 mm
@@ -618,6 +618,43 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array): Pr
 
       const isImage = rXml.includes('<Image') || rXml.includes('Image/');
       if (isImage) {
+        let imageSrc = '';
+        const rawAssetUrl = extractXmlAttr(rXml, 'AssetURL') || extractXmlAttr(rXml, 'LinkResourceURI') || '';
+        const cleanName = rawAssetUrl.replace(/\\/g, '/');
+        const baseName = cleanName.split('/').pop() || '';
+
+        // 1. Check for embedded <Contents> in XML
+        const contentsMatch = rXml.match(/<Contents[^>]*>([\s\S]*?)<\/Contents>/i);
+        if (contentsMatch && contentsMatch[1].trim()) {
+          const rawB64 = contentsMatch[1].trim().replace(/\s+/g, '');
+          const lower = baseName.toLowerCase();
+          const mime = lower.endsWith('.png') || rawB64.startsWith('iVBORw0KGgo') ? 'image/png' : lower.endsWith('.svg') || rawB64.startsWith('PHN2Zy') ? 'image/svg+xml' : lower.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
+          imageSrc = `data:${mime};base64,${rawB64}`;
+        }
+
+        // 2. Check for linked image in IDML package archive (Links/ or direct filename)
+        if (!imageSrc && baseName) {
+          let fileBytes: Uint8Array | undefined;
+          if (files.has(cleanName)) fileBytes = files.get(cleanName);
+          else if (files.has(`Links/${baseName}`)) fileBytes = files.get(`Links/${baseName}`);
+          else if (files.has(`Resources/${baseName}`)) fileBytes = files.get(`Resources/${baseName}`);
+          else if (files.has(`Resources/Links/${baseName}`)) fileBytes = files.get(`Resources/Links/${baseName}`);
+          else {
+            for (const [k, v] of files.entries()) {
+              if (k.toLowerCase().endsWith(baseName.toLowerCase())) {
+                fileBytes = v;
+                break;
+              }
+            }
+          }
+
+          if (fileBytes && fileBytes.length > 0) {
+            const lower = baseName.toLowerCase();
+            const mime = lower.endsWith('.png') ? 'image/png' : lower.endsWith('.svg') ? 'image/svg+xml' : lower.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
+            imageSrc = `data:${mime};base64,${uint8ArrayToBase64(fileBytes)}`;
+          }
+        }
+
         const imgEl: ImageElement = {
           id: `idml-img-${sIdx}-${rIdx}`,
           type: 'image',
@@ -630,11 +667,12 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array): Pr
           opacity: 1,
           zIndex: 5 + rIdx,
           locked: false,
-          src: '',
+          src: imageSrc,
           fitMode: 'fill',
           borderColor: '#111111',
           borderWidthMm: 0,
-          caption: 'Imported InDesign Photo Frame',
+          name: baseName || undefined,
+          caption: baseName || (imageSrc ? 'Photo Frame' : 'Imported InDesign Photo Frame'),
         };
         spreadElements.push(imgEl);
       } else {

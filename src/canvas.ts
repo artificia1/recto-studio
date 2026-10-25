@@ -508,8 +508,11 @@ export class SpreadCanvas {
     const rect = this.canvas.getBoundingClientRect();
     const { spreadWidthPx, spreadHeightPx } = this.getSpreadDimensions(state);
 
-    const centerX = rect.width / 2 + state.panX;
-    const centerY = rect.height / 2 + state.panY;
+    const canvasW = rect.width > 0 ? rect.width : (this.canvas.width || spreadWidthPx);
+    const canvasH = rect.height > 0 ? rect.height : (this.canvas.height || spreadHeightPx);
+
+    const centerX = canvasW / 2 + state.panX;
+    const centerY = canvasH / 2 + state.panY;
 
     this._origin.x = centerX - spreadWidthPx / 2;
     this._origin.y = centerY - spreadHeightPx / 2;
@@ -2376,50 +2379,80 @@ export class SpreadCanvas {
   }
 
   /**
-   * Exports the currently active spread as a high-resolution PNG data URL.
+   * Exports the currently active spread as a high-resolution, print-quality PNG data URL.
+   * Completely excludes editor overlays, selection handles, and guides (renders pristine preview mode).
    */
-  public exportSpreadAsPng(scaleFactor: number = 2): string {
+  public exportSpreadAsPng(scaleFactor: number = 3): string {
+    if (typeof document === 'undefined') return '';
     const state = stateManager.getState();
     const { numPages, pageWidthMm, pageHeightMm } = this.getSpreadDimensions(state);
-    const origin = this.getSpreadScreenOrigin(state);
-    const pxPerMm = MM_TO_PX * state.zoom;
-    const spreadWidthPx = numPages * pageWidthMm * pxPerMm;
-    const spreadHeightPx = pageHeightMm * pxPerMm;
 
-    if (typeof document === 'undefined') return '';
-    const offCanvas = document.createElement('canvas');
-    offCanvas.width = Math.round(spreadWidthPx * scaleFactor);
-    offCanvas.height = Math.round(spreadHeightPx * scaleFactor);
-    const offCtx = offCanvas.getContext('2d');
-    if (!offCtx) return '';
+    // Save interactive view state
+    const prevZoom = state.zoom;
+    const prevPanX = state.panX;
+    const prevPanY = state.panY;
+    const prevPreview = state.previewMode;
+    const prevDisplayQuality = state.displayQuality;
+    const prevSelectedId = state.selectedElementId;
+    const prevSelectedIds = state.selectedElementIds ? [...state.selectedElementIds] : [];
 
-    offCtx.imageSmoothingEnabled = true;
-    offCtx.imageSmoothingQuality = 'high';
+    const origCanvas = this.canvas;
+    const origCtx = this.ctx;
+    const origStaticCanvas = this.staticCanvas;
+    const origStaticDirtyKey = this.staticDirtyKey;
 
-    offCtx.drawImage(
-      this.canvas,
-      origin.x,
-      origin.y,
-      spreadWidthPx,
-      spreadHeightPx,
-      0,
-      0,
-      offCanvas.width,
-      offCanvas.height
-    );
+    try {
+      // 300 DPI print quality: 300 DPI / 25.4 mm = 11.811 px/mm -> exportZoom = 300 / 96 = 3.125
+      const exportZoom = Math.max(scaleFactor || 3, 300 / 96);
+      const pxPerMm = MM_TO_PX * exportZoom;
+      const targetW = Math.round(numPages * pageWidthMm * pxPerMm);
+      const targetH = Math.round(pageHeightMm * pxPerMm);
 
-    return offCanvas.toDataURL('image/png');
+      const offCanvas = document.createElement('canvas');
+      offCanvas.width = targetW;
+      offCanvas.height = targetH;
+      const offCtx = offCanvas.getContext('2d');
+      if (!offCtx) return '';
+
+      this.canvas = offCanvas;
+      this.ctx = offCtx;
+      this.staticCanvas = document.createElement('canvas');
+      this.staticDirtyKey = '';
+
+      // Set clean preview mode at 300 DPI with uncompressed assets and zero selection overlays
+      state.zoom = exportZoom;
+      state.panX = 0;
+      state.panY = 0;
+      state.previewMode = true;
+      state.displayQuality = 'high';
+      state.selectedElementId = null;
+      state.selectedElementIds = [];
+
+      this.render();
+
+      return offCanvas.toDataURL('image/png');
+    } finally {
+      this.canvas = origCanvas;
+      this.ctx = origCtx;
+      this.staticCanvas = origStaticCanvas;
+      this.staticDirtyKey = origStaticDirtyKey;
+
+      state.zoom = prevZoom;
+      state.panX = prevPanX;
+      state.panY = prevPanY;
+      state.previewMode = prevPreview;
+      state.displayQuality = prevDisplayQuality;
+      state.selectedElementId = prevSelectedId;
+      state.selectedElementIds = prevSelectedIds;
+
+      this.render();
+    }
   }
 
   public render() {
     this.overflownTextFrameIds.clear();
     const state = stateManager.getState();
     const rect = this.canvas.getBoundingClientRect();
-    const ctx = this.ctx;
-
-    ctx.fillStyle = '#1e1e1e';
-    ctx.fillRect(0, 0, rect.width, rect.height);
-
     const {
       numPages,
       pageWidthMm,
@@ -2427,6 +2460,13 @@ export class SpreadCanvas {
       spreadWidthPx,
       spreadHeightPx,
     } = this.getSpreadDimensions(state);
+
+    const canvasW = rect.width > 0 ? rect.width : (this.canvas.width || spreadWidthPx);
+    const canvasH = rect.height > 0 ? rect.height : (this.canvas.height || spreadHeightPx);
+    const ctx = this.ctx;
+
+    ctx.fillStyle = state.previewMode ? '#ffffff' : '#1e1e1e';
+    ctx.fillRect(0, 0, canvasW, canvasH);
 
     const origin = this.getSpreadScreenOrigin(state);
     const pxPerMm = MM_TO_PX * state.zoom;

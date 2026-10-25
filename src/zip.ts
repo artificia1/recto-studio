@@ -213,3 +213,31 @@ export function createZipArchive(files: Record<string, string | Uint8Array>): Ui
   }
   return out;
 }
+
+export function uint8ArrayToBase64(bytes: Uint8Array): string {
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(bytes).toString('base64');
+  }
+  let binary = '';
+  const len = bytes.byteLength;
+  const chunkSize = 8192;
+  for (let i = 0; i < len; i += chunkSize) {
+    const chunk = bytes.subarray(i, Math.min(i + chunkSize, len));
+    binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
+  }
+  return btoa(binary);
+}
+
+export function base64ToUint8Array(base64Str: string): Uint8Array {
+  const clean = (base64Str.includes(',') ? base64Str.split(',')[1] : base64Str).replace(/\s+/g, '');
+  if (typeof Buffer !== 'undefined') {
+    return new Uint8Array(Buffer.from(clean, 'base64'));
+  }
+  const binary = atob(clean);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+

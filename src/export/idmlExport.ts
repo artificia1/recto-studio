@@ -8,7 +8,8 @@
  */
 
 import { ProjectState, TextElement, ImageElement, ShapeElement } from '../types';
-import { createZipArchive } from '../zip';
+import { createZipArchive, base64ToUint8Array, uint8ArrayToBase64 } from '../zip';
+import { assetStore } from '../engine/assetStore';
 
 const MM_TO_PT = 72 / 25.4; // 1 mm = 2.83464567 pt
 
@@ -177,6 +178,34 @@ ${styleDefs}
       </TextFrame>`);
       } else if (el.type === 'image') {
         const imgEl = el as ImageElement;
+        const fullResSrc: unknown = assetStore.getFullResolution(imgEl.assetId || imgEl.src) || imgEl.src;
+        let b64Data = '';
+        let fileName = imgEl.name || `image_${el.id}.jpg`;
+
+        if (fullResSrc) {
+          if (typeof fullResSrc === 'string' && fullResSrc.startsWith('data:')) {
+            const parts = fullResSrc.split(',');
+            b64Data = parts[1] || '';
+            const mime = parts[0].split(';')[0].split(':')[1] || 'image/jpeg';
+            const ext = mime === 'image/png' ? '.png' : mime === 'image/svg+xml' ? '.svg' : mime === 'image/webp' ? '.webp' : '.jpg';
+            if (!fileName.includes('.')) fileName += ext;
+            if (b64Data) {
+              try {
+                files[`Links/${fileName}`] = base64ToUint8Array(b64Data);
+              } catch {
+                // Ignore base64 decode failure
+              }
+            }
+          } else if (fullResSrc instanceof ArrayBuffer) {
+            files[`Links/${fileName}`] = new Uint8Array(fullResSrc);
+            try {
+              b64Data = uint8ArrayToBase64(new Uint8Array(fullResSrc));
+            } catch {
+              // Ignore
+            }
+          }
+        }
+
         const pathGeometry = `
           <PathGeometry>
             <GeometryPathType PathOpen="false">
@@ -195,9 +224,9 @@ ${styleDefs}
         </Properties>
         <Image Self="Image_${el.id}">
           <Properties>
-            <Profile>Embedded</Profile>
+            <Profile>Embedded</Profile>${b64Data ? `\n            <Contents>${b64Data}</Contents>` : ''}
           </Properties>
-          <Link Self="Link_${el.id}" AssetURL="${escapeXml(imgEl.name || 'image.jpg')}" StoredState="Normal" />
+          <Link Self="Link_${el.id}" AssetURL="${escapeXml(fileName)}" StoredState="${b64Data ? 'Embedded' : 'Normal'}" />
         </Image>
       </Rectangle>`);
       } else if (el.type === 'shape') {
