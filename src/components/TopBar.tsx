@@ -75,6 +75,40 @@ export function TopBar({
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [showFileMenu, setShowFileMenu] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const handleFsChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement || (document as any).webkitFullscreenElement));
+    };
+    document.addEventListener('fullscreenchange', handleFsChange);
+    document.addEventListener('webkitfullscreenchange', handleFsChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFsChange);
+      document.removeEventListener('webkitfullscreenchange', handleFsChange);
+    };
+  }, []);
+
+  const handleToggleFullscreen = () => {
+    try {
+      if (!document.fullscreenElement && !(document as any).webkitFullscreenElement) {
+        const root = document.documentElement;
+        if (root.requestFullscreen) {
+          root.requestFullscreen().catch(() => {});
+        } else if ((root as any).webkitRequestFullscreen) {
+          (root as any).webkitRequestFullscreen();
+        }
+      } else {
+        if (document.exitFullscreen) {
+          document.exitFullscreen().catch(() => {});
+        } else if ((document as any).webkitExitFullscreen) {
+          (document as any).webkitExitFullscreen();
+        }
+      }
+    } catch {
+      // Ignore fullscreen failure on restricted environments
+    }
+  };
   const newMenuRef = useRef<HTMLDivElement>(null);
   const fileMenuRef = useRef<HTMLDivElement>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
@@ -1119,6 +1153,15 @@ export function TopBar({
             </div>
           )}
         </div>
+
+        {/* Immersive Fullscreen Mode (Removes Mobile/Tablet Browser Navigation Chrome) */}
+        <button
+          className={`action-btn top-btn-fullscreen ${isFullscreen ? 'active' : ''}`}
+          onClick={handleToggleFullscreen}
+          title={isFullscreen ? 'Exit Immersive Fullscreen' : 'Enter Immersive Fullscreen (Hide Browser Top & Bottom Bars)'}
+        >
+          {isFullscreen ? '✕ Exit' : '⛶ Fullscreen'}
+        </button>
       </div>
 
       {showDataMergeModal && (

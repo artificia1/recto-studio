@@ -372,6 +372,49 @@ html, body {
   }
 }
 
+@media (max-width: 900px) {
+  .top-bar {
+    overflow-x: auto;
+    overflow-y: visible;
+    scrollbar-width: none;
+    padding: 0 8px;
+    gap: 6px;
+  }
+  .top-bar::-webkit-scrollbar {
+    display: none;
+  }
+  .doc-title-input {
+    display: none !important;
+  }
+  .top-btn-collab, .top-btn-history {
+    display: none !important;
+  }
+  .top-center-controls {
+    flex-shrink: 0;
+    gap: 4px;
+  }
+  .top-center-controls .styled-select {
+    max-width: 95px !important;
+    font-size: 10px;
+    padding: 2px 4px;
+    flex-shrink: 0 !important;
+  }
+}
+
+@media (max-width: 750px) {
+  .brand-badge {
+    display: none !important;
+  }
+  .top-center-controls {
+    gap: 3px;
+  }
+  .action-btn, .action-btn-primary {
+    padding: 3px 6px;
+    font-size: 10px;
+    height: 26px;
+  }
+}
+
 .action-btn {
   background-color: var(--bg-input);
   border: 1px solid var(--border-color);
