@@ -349,6 +349,16 @@ export class SpreadCanvas {
   private mouseScreenX: number = 0;
   private mouseScreenY: number = 0;
 
+  // Touch gesture & pinch tracking
+  private lastTouchX: number = 0;
+  private lastTouchY: number = 0;
+  private initialPinchDist: number = 0;
+  private initialPinchZoom: number = 1;
+  private initialPinchPanX: number = 0;
+  private initialPinchPanY: number = 0;
+  private initialPinchMidX: number = 0;
+  private initialPinchMidY: number = 0;
+
   // Zero-allocation pre-allocated reusable coordinate and struct caches
   private _origin = { x: 0, y: 0 };
   private _pointMm = { x: 0, y: 0 };
@@ -459,45 +469,100 @@ export class SpreadCanvas {
     this.canvas.addEventListener('touchstart', (e: TouchEvent) => {
       if (e.touches.length === 1) {
         const touch = e.touches[0];
+        this.lastTouchX = touch.clientX;
+        this.lastTouchY = touch.clientY;
         const fakeMouse = {
           clientX: touch.clientX,
           clientY: touch.clientY,
           button: 0,
-          preventDefault: () => e.preventDefault(),
+          preventDefault: () => { if (e.cancelable) e.preventDefault(); },
           stopPropagation: () => e.stopPropagation(),
         } as unknown as MouseEvent;
         this.handleMouseDown(fakeMouse);
       } else if (e.touches.length === 2) {
+        if (e.cancelable) e.preventDefault();
         this.isPanning = true;
+        this.isDrawingNew = false;
+        this.isDragging = false;
+        this.isResizing = false;
+        this.activeHandle = null;
         const state = stateManager.getState();
-        const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-        const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-        this.panStartX = midX - state.panX;
-        this.panStartY = midY - state.panY;
+        const t0 = e.touches[0];
+        const t1 = e.touches[1];
+        const midX = (t0.clientX + t1.clientX) / 2;
+        const midY = (t0.clientY + t1.clientY) / 2;
+        this.lastTouchX = midX;
+        this.lastTouchY = midY;
+        this.initialPinchDist = Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY);
+        this.initialPinchZoom = state.zoom;
+        this.initialPinchPanX = state.panX;
+        this.initialPinchPanY = state.panY;
+        this.initialPinchMidX = midX;
+        this.initialPinchMidY = midY;
       }
     }, { passive: false });
 
     window.addEventListener('touchmove', (e: TouchEvent) => {
-      if (e.touches.length === 1) {
+      if (e.touches.length === 1 && !this.isPanning) {
         const touch = e.touches[0];
+        this.lastTouchX = touch.clientX;
+        this.lastTouchY = touch.clientY;
         const fakeMouse = {
           clientX: touch.clientX,
           clientY: touch.clientY,
-          preventDefault: () => e.preventDefault(),
+          button: 0,
+          preventDefault: () => { if (e.cancelable) e.preventDefault(); },
           stopPropagation: () => e.stopPropagation(),
         } as unknown as MouseEvent;
         this.handleMouseMove(fakeMouse);
-      } else if (e.touches.length === 2 && this.isPanning) {
-        const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-        const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-        stateManager.setPan(midX - this.panStartX, midY - this.panStartY);
+      } else if (e.touches.length === 2) {
+        if (e.cancelable) e.preventDefault();
+        const t0 = e.touches[0];
+        const t1 = e.touches[1];
+        const curDist = Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY);
+        const midX = (t0.clientX + t1.clientX) / 2;
+        const midY = (t0.clientY + t1.clientY) / 2;
+        this.lastTouchX = midX;
+        this.lastTouchY = midY;
+
+        if (this.initialPinchDist > 5) {
+          const scale = curDist / this.initialPinchDist;
+          const targetZoom = Math.max(0.2, Math.min(3.0, this.initialPinchZoom * scale));
+          const rect = this.canvas.getBoundingClientRect();
+          const cX = rect.left + rect.width / 2;
+          const cY = rect.top + rect.height / 2;
+          const zoomRatio = targetZoom / this.initialPinchZoom;
+          const newPanX = (midX - cX) - (this.initialPinchMidX - cX - this.initialPinchPanX) * zoomRatio;
+          const newPanY = (midY - cY) - (this.initialPinchMidY - cY - this.initialPinchPanY) * zoomRatio;
+
+          stateManager.setZoom(targetZoom);
+          stateManager.setPan(newPanX, newPanY);
+        }
       }
     }, { passive: false });
 
-    window.addEventListener('touchend', () => {
-      this.handleMouseUp({} as MouseEvent);
-      this.isPanning = false;
-    });
+    const onTouchEnd = (e: TouchEvent) => {
+      if (this.isPanning && e.touches.length === 0) {
+        this.isPanning = false;
+        return;
+      }
+      const touch = (e.changedTouches && e.changedTouches[0]) || (e.touches && e.touches[0]);
+      const clientX = touch ? touch.clientX : this.lastTouchX;
+      const clientY = touch ? touch.clientY : this.lastTouchY;
+      const fakeMouse = {
+        clientX,
+        clientY,
+        button: 0,
+        preventDefault: () => {},
+        stopPropagation: () => {},
+      } as unknown as MouseEvent;
+      this.handleMouseUp(fakeMouse);
+      if (e.touches.length === 0) {
+        this.isPanning = false;
+      }
+    };
+    window.addEventListener('touchend', onTouchEnd);
+    window.addEventListener('touchcancel', onTouchEnd);
 
     this.canvas.addEventListener('dragover', (e) => e.preventDefault());
     this.canvas.addEventListener('drop', this.handleFileDrop.bind(this));
@@ -1294,14 +1359,9 @@ export class SpreadCanvas {
       }
 
       if (updates.length > 0) {
-        stateManager.updateElements(updates);
+        stateManager.updateElements(updates, false);
       }
       this.render();
-      return;
-
-      if (updates.length > 0) {
-        stateManager.updateElements(updates);
-      }
       return;
     }
 
@@ -1339,7 +1399,7 @@ export class SpreadCanvas {
         y: Math.round(newY * 10) / 10,
         width: Math.round(newW * 10) / 10,
         height: Math.round(newH * 10) / 10,
-      });
+      }, false);
       return;
     }
 
@@ -1388,8 +1448,15 @@ export class SpreadCanvas {
   private handleMouseUp(e: MouseEvent) {
     const state = stateManager.getState();
     const rect = this.canvas.getBoundingClientRect();
-    const screenX = e.clientX - rect.left;
-    const screenY = e.clientY - rect.top;
+    const clientX = (e && typeof e.clientX === 'number' && !isNaN(e.clientX)) ? e.clientX : this.lastTouchX;
+    const clientY = (e && typeof e.clientY === 'number' && !isNaN(e.clientY)) ? e.clientY : this.lastTouchY;
+    const screenX = clientX - rect.left;
+    const screenY = clientY - rect.top;
+
+    const hadInteractiveMod = this.isDragging || this.isResizing;
+    if (hadInteractiveMod) {
+      stateManager.commitHistory();
+    }
 
     if (this.isPanning) {
       this.isPanning = false;
@@ -1465,8 +1532,10 @@ export class SpreadCanvas {
       const { pageWidthMm } = this.getSpreadDimensions(state);
       const pageIdx = Math.max(0, spread.pages.findIndex((p) => p.id === this.drawTargetPage!.id));
       const pageStartMm = pageIdx * pageWidthMm;
-      const targetLocalX = endMmX - pageStartMm;
-      const targetLocalY = endMmY;
+      const validEndMmX = isNaN(endMmX) ? this.drawCurrentMmX + pageStartMm : endMmX;
+      const validEndMmY = isNaN(endMmY) ? this.drawCurrentMmY : endMmY;
+      const targetLocalX = validEndMmX - pageStartMm;
+      const targetLocalY = validEndMmY;
 
       const rawW = Math.abs(targetLocalX - this.drawStartMmX);
       const rawH = Math.abs(targetLocalY - this.drawStartMmY);
@@ -2453,11 +2522,14 @@ export class SpreadCanvas {
     if (!src && !proxySrc) return null;
     if (quality === 'fast') return null;
 
-    const effectiveSrc = (quality !== 'high' && proxySrc)
-      ? proxySrc
-      : (quality !== 'high' && assetId ? assetStore.getScreenProxy(assetId) || src : src);
+    const isInteracting = this.isDragging || this.isPanning || this.isResizing;
+    const effectiveQuality = isInteracting ? 'typical' : quality;
 
-    if (quality === 'high') {
+    const effectiveSrc = (effectiveQuality !== 'high' && proxySrc)
+      ? proxySrc
+      : (effectiveQuality !== 'high' && assetId ? assetStore.getScreenProxy(assetId) || src : src);
+
+    if (effectiveQuality === 'high') {
       let img = this.fullResCache.get(src);
       if (!img) {
         img = new Image();
@@ -2498,7 +2570,8 @@ export class SpreadCanvas {
   }
 
   private createImageProxy(src: string, img: HTMLImageElement): HTMLCanvasElement {
-    const maxDim = 800;
+    const isMobileOrTablet = typeof window !== 'undefined' && (window.innerWidth < 1024 || 'ontouchstart' in window);
+    const maxDim = isMobileOrTablet ? 600 : 800;
     let w = img.naturalWidth;
     let h = img.naturalHeight;
     if (w > maxDim || h > maxDim) {

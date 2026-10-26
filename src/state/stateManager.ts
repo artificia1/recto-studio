@@ -1323,7 +1323,11 @@ export class StateManager {
     this.onMutation?.({ type: 'add', elementId: element.id, element });
   }
 
-  public updateElement(id: string, updates: Partial<CanvasElement>) {
+  public commitHistory() {
+    this.pushHistory();
+  }
+
+  public updateElement(id: string, updates: Partial<CanvasElement>, recordHistory: boolean = true) {
     const spread = this.getActiveSpread();
     const idx = spread.elements.findIndex(el => el.id === id);
     if (idx !== -1) {
@@ -1341,13 +1345,15 @@ export class StateManager {
         }
         this.updateAnchoredPositions(id);
       }
-      this.pushHistory();
+      if (recordHistory) {
+        this.pushHistory();
+      }
       this.notify();
       this.onMutation?.({ type: 'update', elementId: id, updates });
     }
   }
 
-  public updateElements(updates: { id: string; partial: Partial<CanvasElement> }[]) {
+  public updateElements(updates: { id: string; partial: Partial<CanvasElement> }[], recordHistory: boolean = true) {
     const spread = this.getActiveSpread();
     let changed = false;
     for (const { id, partial } of updates) {
@@ -1371,7 +1377,9 @@ export class StateManager {
       }
     }
     if (changed) {
-      this.pushHistory();
+      if (recordHistory) {
+        this.pushHistory();
+      }
       this.notify();
     }
   }
@@ -1444,6 +1452,8 @@ export class StateManager {
     name?: string
   ): void {
     if (!src || width <= 0 || height <= 0) return;
+    const existing = this.imageDimensionsCache.get(src);
+    if (existing && existing.width === width && existing.height === height) return;
     this.registerImageAspectRatio(src, width, height);
     this.imageDimensionsCache.set(src, {
       width,

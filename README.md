@@ -44,6 +44,7 @@ Recto Studio was conceived, designed, and architected from first principles by *
 - **Client-Side PDF/X-1a & Tagged PDF/UA Compiler**: Zero-cloud prepress engine generating print-ready PDFs with 3mm bleed, crop marks, spot/process colors, semantic structure trees, and accessible screen-reader tags directly in browser memory.
 - **Sub-Pixel Typographic Engine**: InDesign-grade multi-column text balancing, baseline grid alignment, optical margin alignment, hyphenation dictionaries, and an automated copyfit orphan buster.
 - **Zero-Allocation Canvas Pipeline**: 60 FPS viewport rendering featuring dual-buffer coordinate mapping, spatial indexing, sub-pixel edge alignment, and magnetic snapping without GC stutter on low-power hardware.
+- **Mobile & Tablet Touch Architecture (iOS / iPadOS & Android)**: Actively developed mobile and tablet engine featuring 1-finger shape, text frame, and element creation/dragging/resizing; 2-finger buttery pinch-to-zoom and pan; adaptive landscape viewport layouts; and a dedicated ⛶ Fullscreen mode eliminating mobile browser bars for distraction-free publishing.
 - **Peer-to-Peer CRDT Real-Time Collaboration**: Distributed document synchronization enabling multiple collaborators to co-edit spreads, adjust typography, and see live remote presence cursors across browser tabs or local networks.
 - **Universal Multi-Format Output Engine**:
   - **Print PDF**: Native PDF/X-1a with trim marks and bleed.
@@ -70,6 +71,7 @@ To provide full technical transparency to publishers and contributors, Recto Stu
 | **Knuth-Plass Global Paragraph Composer** | Beta | Dynamic programming TeX DAG composer active on multi-line text blocks |
 | **HarfBuzz WASM Complex Script Shaper** | Beta | OpenType shaping engine for bidirectional and Indic scripts |
 | **Adobe InDesign (.idml) Package Importer** | Beta | Extracts stories, spreads, graphic attributes, and styles from IDML archives |
+| **Tablet & Mobile Touch Engine (iOS/iPadOS + Android)** | Active Development | 2-finger pinch-to-zoom/pan, 1-finger shape creation, responsive UI & fullscreen mode |
 | **VeraPDF Automated Conformance Suite** | Roadmap | End-to-end PDF/A-1b and PDF/X-1a automated compliance CI test harness |
 | **Real-Time Multi-User WebRTC Mesh** | Roadmap | Zero-dependency peer-to-peer awareness and CRDT state synchronizer |
 
