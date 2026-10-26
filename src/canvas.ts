@@ -448,11 +448,56 @@ export class SpreadCanvas {
   }
 
   private initEvents() {
+    this.canvas.style.touchAction = 'none';
     this.canvas.addEventListener('mousedown', this.handleMouseDown.bind(this));
     window.addEventListener('mousemove', this.handleMouseMove.bind(this));
     window.addEventListener('mouseup', this.handleMouseUp.bind(this));
     this.canvas.addEventListener('wheel', this.handleWheel.bind(this), { passive: false });
     this.canvas.addEventListener('dblclick', this.handleDoubleClick.bind(this));
+
+    // Touch support for tablets & landscape touchscreens
+    this.canvas.addEventListener('touchstart', (e: TouchEvent) => {
+      if (e.touches.length === 1) {
+        const touch = e.touches[0];
+        const fakeMouse = {
+          clientX: touch.clientX,
+          clientY: touch.clientY,
+          button: 0,
+          preventDefault: () => e.preventDefault(),
+          stopPropagation: () => e.stopPropagation(),
+        } as unknown as MouseEvent;
+        this.handleMouseDown(fakeMouse);
+      } else if (e.touches.length === 2) {
+        this.isPanning = true;
+        const state = stateManager.getState();
+        const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        this.panStartX = midX - state.panX;
+        this.panStartY = midY - state.panY;
+      }
+    }, { passive: false });
+
+    window.addEventListener('touchmove', (e: TouchEvent) => {
+      if (e.touches.length === 1) {
+        const touch = e.touches[0];
+        const fakeMouse = {
+          clientX: touch.clientX,
+          clientY: touch.clientY,
+          preventDefault: () => e.preventDefault(),
+          stopPropagation: () => e.stopPropagation(),
+        } as unknown as MouseEvent;
+        this.handleMouseMove(fakeMouse);
+      } else if (e.touches.length === 2 && this.isPanning) {
+        const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        stateManager.setPan(midX - this.panStartX, midY - this.panStartY);
+      }
+    }, { passive: false });
+
+    window.addEventListener('touchend', () => {
+      this.handleMouseUp({} as MouseEvent);
+      this.isPanning = false;
+    });
 
     this.canvas.addEventListener('dragover', (e) => e.preventDefault());
     this.canvas.addEventListener('drop', this.handleFileDrop.bind(this));
