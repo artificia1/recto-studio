@@ -114,6 +114,7 @@ export function TopBar({
   const exportMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const idmlInputRef = useRef<HTMLInputElement>(null);
+  const inddInputRef = useRef<HTMLInputElement>(null);
   const placeInputRef = useRef<HTMLInputElement>(null);
   const csvInputRef = useRef<HTMLInputElement>(null);
 
@@ -219,39 +220,72 @@ export function TopBar({
     idmlInputRef.current?.click();
   };
 
-  const handleFileChange = async (e: Event) => {
+  const handleInddClick = () => {
+    inddInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e: Event | any) => {
     const target = e.target as HTMLInputElement;
     const file = target.files?.[0];
     if (file) {
-      const lower = file.name.toLowerCase();
-      if (lower.endsWith('.idml') || lower.endsWith('.indd')) {
+      try {
+        const lower = file.name.toLowerCase();
+        if (lower.endsWith('.idml') || lower.endsWith('.indd')) {
+          const buffer = await file.arrayBuffer();
+          if (lower.endsWith('.indd')) {
+            await stateManager.loadFromIndd(buffer, file.name);
+          } else {
+            await stateManager.loadFromIdml(buffer, file.name);
+          }
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = (re) => {
+          if (typeof re.target?.result === 'string') {
+            stateManager.loadFromJson(re.target.result);
+          }
+        };
+        reader.readAsText(file);
+      } catch (err) {
+        console.error('Failed to load project file:', err);
+      } finally {
+        target.value = '';
+      }
+    }
+  };
+
+  const handleIdmlFileChange = async (e: Event | any) => {
+    const target = e.target as HTMLInputElement;
+    const file = target.files?.[0];
+    if (file) {
+      try {
         const buffer = await file.arrayBuffer();
-        if (lower.endsWith('.indd')) {
+        if (file.name.toLowerCase().endsWith('.indd')) {
           await stateManager.loadFromIndd(buffer, file.name);
         } else {
           await stateManager.loadFromIdml(buffer, file.name);
         }
-        return;
+      } catch (err) {
+        console.error('Failed to import InDesign document:', err);
+        alert('Failed to import InDesign document: ' + (err instanceof Error ? err.message : String(err)));
+      } finally {
+        target.value = '';
       }
-      const reader = new FileReader();
-      reader.onload = (re) => {
-        if (typeof re.target?.result === 'string') {
-          stateManager.loadFromJson(re.target.result);
-        }
-      };
-      reader.readAsText(file);
     }
   };
 
-  const handleIdmlFileChange = async (e: Event) => {
+  const handleInddFileChange = async (e: Event | any) => {
     const target = e.target as HTMLInputElement;
     const file = target.files?.[0];
     if (file) {
-      const buffer = await file.arrayBuffer();
-      if (file.name.toLowerCase().endsWith('.indd')) {
+      try {
+        const buffer = await file.arrayBuffer();
         await stateManager.loadFromIndd(buffer, file.name);
-      } else {
-        await stateManager.loadFromIdml(buffer, file.name);
+      } catch (err) {
+        console.error('Failed to import InDesign .indd document:', err);
+        alert('Failed to import InDesign document: ' + (err instanceof Error ? err.message : String(err)));
+      } finally {
+        target.value = '';
       }
     }
   };
@@ -265,14 +299,20 @@ export function TopBar({
     placeInputRef.current?.click();
   };
 
-  const handlePlaceFileChange = async (e: Event) => {
+  const handlePlaceFileChange = async (e: Event | any) => {
     const target = e.target as HTMLInputElement;
     const file = target.files?.[0];
     const textEl = selectedElements.find((el) => el.type === 'text');
     if (file && textEl) {
-      const buffer = await file.arrayBuffer();
-      const ingested = await ingestManuscript(file.name, buffer);
-      stateManager.placeTextContent(textEl.id, ingested);
+      try {
+        const buffer = await file.arrayBuffer();
+        const ingested = await ingestManuscript(file.name, buffer);
+        stateManager.placeTextContent(textEl.id, ingested);
+      } catch (err) {
+        console.error('Failed to place text content:', err);
+      } finally {
+        target.value = '';
+      }
     }
   };
 
@@ -635,8 +675,12 @@ export function TopBar({
               + New Blank
             </button>
             <button
-              className="action-btn dropdown-arrow-btn"
-              onClick={() => setShowNewMenu((prev) => !prev)}
+              className={`action-btn dropdown-arrow-btn ${showNewMenu ? 'active' : ''}`}
+              onClick={() => {
+                setShowNewMenu((prev) => !prev);
+                setShowFileMenu(false);
+                setShowExportMenu(false);
+              }}
               title="Choose Blank Book Preset: A4, 6x9 Novel, US Letter, Square..."
             >
               ▾
@@ -721,7 +765,11 @@ export function TopBar({
         <div className="top-dropdown" ref={fileMenuRef}>
           <button
             className={`action-btn ${showFileMenu ? 'active' : ''}`}
-            onClick={() => setShowFileMenu((prev) => !prev)}
+            onClick={() => {
+              setShowFileMenu((prev) => !prev);
+              setShowNewMenu(false);
+              setShowExportMenu(false);
+            }}
             title="File Management, Project IO, and Document Imports"
           >
             File ▾
@@ -778,12 +826,14 @@ export function TopBar({
                 className="top-dropdown-item"
                 onClick={() => {
                   setShowFileMenu(false);
-                  handlePlaceClick();
+                  handleInddClick();
                 }}
-                title="Place markdown, text, or Word document into selected frame (Ctrl+D)"
+                title="Import native binary Adobe InDesign (.indd) layout, spreads, stories and previews"
               >
-                <span>Place Manuscript Text...</span>
-                <span className="dropdown-item-shortcut">Ctrl+D</span>
+                <div>
+                  <div className="dropdown-item-title">Import InDesign Document (.indd)...</div>
+                  <div className="dropdown-item-sub">Native binary layout, previews, stories & typography</div>
+                </div>
               </button>
               <button
                 className="top-dropdown-item"
@@ -791,9 +841,23 @@ export function TopBar({
                   setShowFileMenu(false);
                   handleIdmlClick();
                 }}
-                title="Open Adobe InDesign (.indd binary or .idml package)"
+                title="Open Adobe InDesign XML Package (.idml)"
               >
-                <span>Open InDesign Document (.indd / .idml)...</span>
+                <div>
+                  <div className="dropdown-item-title">Import InDesign Package (.idml)...</div>
+                  <div className="dropdown-item-sub">Complete vector frames, text styles, swatches & geometry</div>
+                </div>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowFileMenu(false);
+                  handlePlaceClick();
+                }}
+                title="Place markdown, text, or Word document into selected frame (Ctrl+D)"
+              >
+                <span>Place Manuscript Text...</span>
+                <span className="dropdown-item-shortcut">Ctrl+D</span>
               </button>
               <button
                 className="top-dropdown-item"
@@ -970,6 +1034,13 @@ export function TopBar({
         />
         <input
           type="file"
+          ref={inddInputRef}
+          accept=".indd,application/x-indesign"
+          style={{ display: 'none' }}
+          onChange={handleInddFileChange}
+        />
+        <input
+          type="file"
           ref={placeInputRef}
           accept=".md,.markdown,.txt,.docx"
           style={{ display: 'none' }}
@@ -1043,8 +1114,12 @@ export function TopBar({
               Export PDF
             </button>
             <button
-              className="action-btn-primary dropdown-arrow-btn"
-              onClick={() => setShowExportMenu((prev) => !prev)}
+              className={`action-btn-primary dropdown-arrow-btn ${showExportMenu ? 'active' : ''}`}
+              onClick={() => {
+                setShowExportMenu((prev) => !prev);
+                setShowFileMenu(false);
+                setShowNewMenu(false);
+              }}
               title="Export Clean PDF, PDF/X-1a Prepress, EPUB 3, Web Flipbook, or Package"
             >
               ▾

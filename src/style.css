@@ -53,9 +53,7 @@ html, body {
   gap: 8px;
   z-index: 200;
   position: relative;
-  overflow-x: auto;
-  overflow-y: visible;
-  scrollbar-width: none;
+  overflow: visible !important;
   box-sizing: border-box;
   width: 100%;
 }
@@ -381,9 +379,7 @@ html, body {
 
 @media (max-width: 900px) {
   .top-bar {
-    overflow-x: auto;
-    overflow-y: visible;
-    scrollbar-width: none;
+    overflow: visible !important;
     padding: 0 8px;
     gap: 6px;
   }
@@ -406,6 +402,11 @@ html, body {
     padding: 2px 4px;
     flex-shrink: 0 !important;
   }
+  .top-dropdown-menu.file-dropdown-menu,
+  .top-dropdown-menu.new-dropdown-menu {
+    right: 0;
+    left: auto;
+  }
 }
 
 @media (max-width: 750px) {
@@ -419,6 +420,62 @@ html, body {
     padding: 3px 6px;
     font-size: 10px;
     height: 26px;
+  }
+}
+
+@media (max-width: 650px) {
+  .top-bar {
+    padding: 0 4px;
+    gap: 4px;
+    overflow: visible !important;
+  }
+  .brand-logo {
+    display: none !important;
+  }
+  .top-actions {
+    gap: 3px;
+    padding-right: 2px;
+  }
+  .action-btn, .action-btn-primary {
+    padding: 3px 5px;
+    font-size: 9.5px;
+    height: 26px;
+  }
+  .btn-group-joined .dropdown-arrow-btn {
+    padding: 3px 8px;
+    min-width: 24px;
+  }
+  .top-center-controls .styled-select {
+    max-width: 80px !important;
+    font-size: 9.5px;
+    padding: 1px 2px;
+  }
+  .spread-indicator {
+    padding: 0 2px;
+    font-size: 9px;
+  }
+}
+
+@media (max-width: 480px) {
+  .top-bar {
+    overflow: visible !important;
+  }
+  .icon-btn {
+    width: 22px;
+    height: 22px;
+    font-size: 11px;
+  }
+  .top-center-controls .styled-select {
+    max-width: 68px !important;
+    font-size: 9px;
+  }
+  .top-btn-fullscreen {
+    font-size: 0 !important;
+    padding: 3px 6px !important;
+  }
+  .top-btn-fullscreen::before {
+    content: "⛶";
+    font-size: 11px;
   }
 }
 
@@ -477,6 +534,12 @@ html, body {
   filter: brightness(1.15);
 }
 
+.action-btn-primary.active {
+  background: #005a9e;
+  border-color: #0284c7;
+  filter: brightness(1.2);
+}
+
 /* Joined Button Group for Export Dropdown & New Blank Dropdown */
 .btn-group-joined {
   display: inline-flex;
@@ -499,9 +562,11 @@ html, body {
 .btn-group-joined .dropdown-arrow-btn {
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
-  padding: 4px 6px;
+  padding: 4px 10px;
+  min-width: 28px;
   font-size: 10px;
   line-height: 1;
+  cursor: pointer;
 }
 
 /* Dropdown Menu Container */
@@ -520,6 +585,7 @@ html, body {
   border-radius: 6px;
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.65);
   min-width: 240px;
+  max-width: calc(100vw - 16px);
   max-height: calc(100vh - 54px);
   overflow-y: auto;
   overflow-x: hidden;
