@@ -733,8 +733,43 @@ export class SpreadCanvas {
       if (hit && hit.type === 'text') {
         stateManager.linkTextFrames(state.linkingFromFrameId, hit.id);
       } else {
-        stateManager.setLinkingFromFrame(null);
+        const pageHit = this.findPageAtMm(mmX, mmY, state);
+        if (pageHit) {
+          // InDesign behavior: Clicking empty space with loaded outport creates a new linked text frame!
+          const sourceEl = stateManager.getElementById(state.linkingFromFrameId) as TextElement | undefined;
+          const newId = `text-${Date.now()}`;
+          const w = sourceEl ? sourceEl.width : 60;
+          const h = sourceEl ? sourceEl.height : 60;
+          stateManager.addElement({
+            id: newId,
+            type: 'text',
+            pageId: pageHit.page.id,
+            x: Math.round(pageHit.localX),
+            y: Math.round(pageHit.localY),
+            width: Math.round(w),
+            height: Math.round(h),
+            rotation: 0,
+            opacity: 1,
+            zIndex: 10,
+            locked: false,
+            text: '',
+            fontFamily: sourceEl?.fontFamily || 'serif',
+            fontSizePt: sourceEl?.fontSizePt || 12,
+            lineHeight: sourceEl?.lineHeight || 1.3,
+            letterSpacingPt: sourceEl?.letterSpacingPt || 0,
+            color: sourceEl?.color || '#111111',
+            columns: sourceEl?.columns || 1,
+            columnGutterMm: sourceEl?.columnGutterMm || 4,
+            alignment: sourceEl?.alignment || 'left',
+            backgroundColor: 'transparent',
+            borderColor: 'transparent',
+            borderWidthMm: 0,
+            paddingMm: sourceEl?.paddingMm || 2,
+          });
+          stateManager.linkTextFrames(state.linkingFromFrameId, newId);
+        }
       }
+      stateManager.setLinkingFromFrame(null);
       return;
     }
 
