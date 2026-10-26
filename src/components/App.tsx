@@ -131,9 +131,13 @@ export function App() {
     const file = files[0];
     const name = file.name.toLowerCase();
 
-    if (name.endsWith('.idml')) {
+    if (name.endsWith('.idml') || name.endsWith('.indd')) {
       const buffer = await file.arrayBuffer();
-      await stateManager.loadFromIdml(buffer);
+      if (name.endsWith('.indd')) {
+        await stateManager.loadFromIndd(buffer, file.name);
+      } else {
+        await stateManager.loadFromIdml(buffer, file.name);
+      }
       return;
     }
 
@@ -143,7 +147,7 @@ export function App() {
       return;
     }
 
-    if (name.endsWith('.md') || name.endsWith('.markdown') || name.endsWith('.txt') || name.endsWith('.docx') || name.endsWith('.indd')) {
+    if (name.endsWith('.md') || name.endsWith('.markdown') || name.endsWith('.txt') || name.endsWith('.docx')) {
       const buffer = await file.arrayBuffer();
       const ingested = await ingestManuscript(file.name, buffer);
 

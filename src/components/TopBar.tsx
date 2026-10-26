@@ -187,7 +187,7 @@ export function TopBar({
     if (val === 'fit') {
       stateManager.setZoom(0.85);
       stateManager.setPan(0, 0);
-    } else {
+    } else if (val !== 'custom') {
       stateManager.setZoom(parseFloat(val));
     }
   };
@@ -223,9 +223,14 @@ export function TopBar({
     const target = e.target as HTMLInputElement;
     const file = target.files?.[0];
     if (file) {
-      if (file.name.toLowerCase().endsWith('.idml')) {
+      const lower = file.name.toLowerCase();
+      if (lower.endsWith('.idml') || lower.endsWith('.indd')) {
         const buffer = await file.arrayBuffer();
-        await stateManager.loadFromIdml(buffer);
+        if (lower.endsWith('.indd')) {
+          await stateManager.loadFromIndd(buffer, file.name);
+        } else {
+          await stateManager.loadFromIdml(buffer, file.name);
+        }
         return;
       }
       const reader = new FileReader();
@@ -243,7 +248,11 @@ export function TopBar({
     const file = target.files?.[0];
     if (file) {
       const buffer = await file.arrayBuffer();
-      await stateManager.loadFromIdml(buffer);
+      if (file.name.toLowerCase().endsWith('.indd')) {
+        await stateManager.loadFromIndd(buffer, file.name);
+      } else {
+        await stateManager.loadFromIdml(buffer, file.name);
+      }
     }
   };
 
@@ -525,10 +534,13 @@ export function TopBar({
 
         <select
           className="styled-select"
-          value={state.zoom.toString()}
+          value={!['0.5', '0.75', '1', '1.25', '1.5', '2'].includes((Math.round(state.zoom * 100) / 100).toString()) ? 'custom' : (Math.round(state.zoom * 100) / 100).toString()}
           onChange={handleZoomChange}
           title="Canvas Zoom"
         >
+          {!['0.5', '0.75', '1', '1.25', '1.5', '2'].includes((Math.round(state.zoom * 100) / 100).toString()) && (
+            <option value="custom">{Math.round(state.zoom * 100)}%</option>
+          )}
           <option value="fit">Fit Spread</option>
           <option value="0.5">50%</option>
           <option value="0.75">75%</option>
@@ -779,9 +791,9 @@ export function TopBar({
                   setShowFileMenu(false);
                   handleIdmlClick();
                 }}
-                title="Open Adobe InDesign (.idml) package"
+                title="Open Adobe InDesign (.indd binary or .idml package)"
               >
-                <span>Open InDesign Package (.idml)...</span>
+                <span>Open InDesign Document (.indd / .idml)...</span>
               </button>
               <button
                 className="top-dropdown-item"
@@ -945,21 +957,21 @@ export function TopBar({
         <input
           type="file"
           ref={fileInputRef}
-          accept=".recto,.papercut,.json,.idml"
+          accept=".recto,.papercut,.json,.idml,.indd"
           style={{ display: 'none' }}
           onChange={handleFileChange}
         />
         <input
           type="file"
           ref={idmlInputRef}
-          accept=".idml,application/vnd.adobe.indesign-idml-package"
+          accept=".idml,.indd,application/vnd.adobe.indesign-idml-package"
           style={{ display: 'none' }}
           onChange={handleIdmlFileChange}
         />
         <input
           type="file"
           ref={placeInputRef}
-          accept=".md,.markdown,.txt,.docx,.indd"
+          accept=".md,.markdown,.txt,.docx"
           style={{ display: 'none' }}
           onChange={handlePlaceFileChange}
         />

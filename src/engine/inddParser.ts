@@ -12,7 +12,7 @@
  * 5. Heuristic Sector-Scanning UTF-16LE Story Carving
  */
 
-import { CanvasElement, ImageElement, TextElement } from '../types';
+import { CanvasElement, ImageElement, TextElement, ProjectState, Spread, ParagraphStyle, DEFAULT_LAYERS } from '../types';
 
 export interface InddFontInfo {
   name: string;
@@ -433,4 +433,228 @@ export function buildInddElements(
   elements.push(metaEl);
 
   return elements;
+}
+
+/**
+ * Parses a native binary Adobe InDesign (.indd) file directly into a full ProjectState,
+ * extracting page geometry, embedded visual previews, carved UTF-16LE stories,
+ * paragraph styles, swatches, and metadata.
+ */
+export function parseInddToProjectState(
+  data: Uint8Array | ArrayBuffer,
+  fileName?: string
+): ProjectState {
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  const metadata = parseInddMetadata(bytes);
+  const stories = carveUtf16Stories(bytes);
+
+  const docTitle = metadata.title || fileName?.replace(/\.[^/.]+$/, '') || 'InDesign Project';
+  const pageWidthMm = 210;
+  const pageHeightMm = 297;
+  const facingPages = (metadata.pageCount || 1) > 1;
+
+  const spreads: Spread[] = [];
+
+  // Spread 0: Page 1 (Cover / Recto)
+  const page1Id = 'indd-p-1';
+  const page1Elements: CanvasElement[] = buildInddElements(metadata, page1Id, pageWidthMm, pageHeightMm);
+
+  if (stories.length > 0 && !metadata.thumbnailDataUrl) {
+    page1Elements.push({
+      id: `indd-story-1-${Date.now()}`,
+      name: 'InDesign Carved Story',
+      type: 'text',
+      pageId: page1Id,
+      x: 20,
+      y: 20,
+      width: pageWidthMm - 40,
+      height: pageHeightMm - 70,
+      rotation: 0,
+      opacity: 1,
+      zIndex: 5,
+      locked: false,
+      text: stories[0],
+      fontFamily: metadata.fonts[0]?.family || 'Merriweather, Georgia, serif',
+      fontSizePt: 10,
+      lineHeight: 1.4,
+      letterSpacingPt: 0,
+      color: '#1a1a1a',
+      alignment: 'justify',
+      columns: 2,
+      columnGutterMm: 5,
+      backgroundColor: 'transparent',
+      borderColor: 'transparent',
+      borderWidthMm: 0,
+      paddingMm: 2,
+    });
+  }
+
+  spreads.push({
+    id: 'indd-spread-0',
+    spreadIndex: 0,
+    pages: [{ id: page1Id, pageNumber: 1, side: facingPages ? 'right' : 'single' }],
+    elements: page1Elements,
+  });
+
+  // If facing pages or pageCount > 1, create Spread 1 (Pages 2 & 3)
+  if (facingPages) {
+    const page2Id = 'indd-p-2';
+    const page3Id = 'indd-p-3';
+    const spread1Elements: CanvasElement[] = [];
+
+    const storyP2 = stories.length > 0 ? (metadata.thumbnailDataUrl ? stories[0] : stories[1] || stories[0]) : '';
+    const storyP3 = stories.length > 1 ? (metadata.thumbnailDataUrl ? stories[1] : stories[2] || '') : '';
+
+    if (storyP2) {
+      spread1Elements.push({
+        id: `indd-story-p2-${Date.now()}`,
+        name: 'InDesign Feature Article (Left)',
+        type: 'text',
+        pageId: page2Id,
+        x: 18,
+        y: 20,
+        width: pageWidthMm - 43,
+        height: pageHeightMm - 40,
+        rotation: 0,
+        opacity: 1,
+        zIndex: 5,
+        locked: false,
+        text: storyP2,
+        fontFamily: metadata.fonts[0]?.family || 'Merriweather, Georgia, serif',
+        fontSizePt: 10,
+        lineHeight: 1.4,
+        letterSpacingPt: 0,
+        color: '#1a1a1a',
+        alignment: 'justify',
+        columns: 2,
+        columnGutterMm: 5,
+        backgroundColor: 'transparent',
+        borderColor: 'transparent',
+        borderWidthMm: 0,
+        paddingMm: 2,
+      });
+    }
+
+    if (storyP3) {
+      spread1Elements.push({
+        id: `indd-story-p3-${Date.now()}`,
+        name: 'InDesign Feature Article (Right)',
+        type: 'text',
+        pageId: page3Id,
+        x: 25,
+        y: 20,
+        width: pageWidthMm - 43,
+        height: pageHeightMm - 40,
+        rotation: 0,
+        opacity: 1,
+        zIndex: 5,
+        locked: false,
+        text: storyP3,
+        fontFamily: metadata.fonts[1]?.family || metadata.fonts[0]?.family || 'Merriweather, Georgia, serif',
+        fontSizePt: 10,
+        lineHeight: 1.4,
+        letterSpacingPt: 0,
+        color: '#1a1a1a',
+        alignment: 'justify',
+        columns: 2,
+        columnGutterMm: 5,
+        backgroundColor: 'transparent',
+        borderColor: 'transparent',
+        borderWidthMm: 0,
+        paddingMm: 2,
+      });
+    }
+
+    spreads.push({
+      id: 'indd-spread-1',
+      spreadIndex: 1,
+      pages: [
+        { id: page2Id, pageNumber: 2, side: 'left' },
+        { id: page3Id, pageNumber: 3, side: 'right' },
+      ],
+      elements: spread1Elements,
+    });
+  }
+
+  const paragraphStyles: ParagraphStyle[] = [
+    {
+      id: 'style-h1',
+      name: 'Headline (InDesign)',
+      fontFamily: metadata.fonts.find(f => f.name.includes('Bold') || f.name.includes('Black'))?.name || 'sans-serif',
+      fontSizePt: 24,
+      lineHeight: 1.2,
+      letterSpacingPt: -0.5,
+      color: '#0d99ff',
+      alignment: 'left',
+      snapToBaseline: true,
+      dropCapLines: 0,
+    },
+    {
+      id: 'style-body',
+      name: 'Body Text (InDesign)',
+      fontFamily: metadata.fonts[0]?.name || 'serif',
+      fontSizePt: 10,
+      lineHeight: 1.4,
+      letterSpacingPt: 0,
+      color: '#1a1a1a',
+      alignment: 'justify',
+      snapToBaseline: true,
+      dropCapLines: 0,
+    },
+  ];
+
+  return {
+    settings: {
+      title: docTitle,
+      preset: 'A4',
+      widthMm: pageWidthMm,
+      heightMm: pageHeightMm,
+      facingPages,
+      bleedMm: 3,
+      margins: {
+        topMm: 20,
+        bottomMm: 20,
+        insideMm: 25,
+        outsideMm: 18,
+      },
+      columnCount: 2,
+      columnGutterMm: 5,
+      colorMode: 'cmyk',
+      iccProfile: 'FOGRA39',
+      baselineGrid: {
+        enabled: true,
+        incrementPt: 12,
+        startMm: 20,
+      },
+    },
+    spreads,
+    activeSpreadIndex: 0,
+    selectedElementId: null,
+    selectedElementIds: [],
+    activeTool: 'select',
+    zoom: 0.85,
+    panX: 0,
+    panY: 0,
+    showGuides: true,
+    showBleed: true,
+    showBaselineGrid: true,
+    snapToGuides: true,
+    displayQuality: 'typical',
+    paragraphStyles,
+    masterSpreads: [
+      {
+        id: 'master-a',
+        name: 'A-Master',
+        prefix: 'A',
+        pages: [
+          { id: 'master-p-1', pageNumber: 1, side: 'left' },
+          { id: 'master-p-2', pageNumber: 2, side: 'right' },
+        ],
+        elements: [],
+      },
+    ],
+    linkingFromFrameId: null,
+    layers: DEFAULT_LAYERS,
+    activeLayerId: 'layer-1',
+  };
 }

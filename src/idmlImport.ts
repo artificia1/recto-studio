@@ -12,6 +12,7 @@ import {
 } from './types';
 import { readZip, uint8ArrayToBase64 } from './zip';
 import { DEFAULT_PARAGRAPH_STYLES, DEFAULT_MASTER_SPREADS } from './state';
+import { isInddBuffer, parseInddToProjectState } from './engine/inddParser';
 
 const PT_TO_MM = 25.4 / 72; // 1 point = 0.352778 mm
 
@@ -294,7 +295,10 @@ function distributeStoryAcrossFrames(chain: TextElement[], fullStoryText: string
   }
 }
 
-export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array): Promise<ProjectState> {
+export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fileName?: string): Promise<ProjectState> {
+  if (isInddBuffer(idmlBuffer)) {
+    return parseInddToProjectState(idmlBuffer, fileName);
+  }
   const files = await readZip(idmlBuffer);
   const textDecoder = new TextDecoder();
 

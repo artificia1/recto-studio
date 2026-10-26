@@ -39,6 +39,7 @@ import { generateEan13DataUrl } from '../engine/barcodeEngine';
 import { generateQrDataUrl } from '../engine/qrEngine';
 import { RectoDB } from './persistence';
 import { parseIdmlPackage } from '../idmlImport';
+import { parseInddToProjectState, isInddBuffer } from '../engine/inddParser';
 import { parseCsv, generateMergedSpreads, substituteElementTokens } from '../dataMerge';
 import { KnuthPlassComposer, ComposerOptions } from '../engine/knuthPlass';
 import { psdEngine } from '../engine/psdParser';
@@ -2498,9 +2499,9 @@ export class StateManager {
     }
   }
 
-  public async loadFromIdml(idmlBuffer: ArrayBuffer | Uint8Array) {
+  public async loadFromIndd(inddBuffer: ArrayBuffer | Uint8Array, fileName?: string) {
     try {
-      const newState = await parseIdmlPackage(idmlBuffer);
+      const newState = parseInddToProjectState(inddBuffer, fileName);
       if (!Array.isArray(newState.layers) || newState.layers.length === 0) {
         newState.layers = JSON.parse(JSON.stringify(DEFAULT_LAYERS));
       }
@@ -2508,6 +2509,29 @@ export class StateManager {
         newState.activeLayerId = newState.layers[0]?.id || 'layer-1';
       }
       this.state = newState;
+      this.renumberPages();
+      this.pushHistory();
+      this.notify();
+    } catch (e) {
+      console.error('Failed to parse INDD document', e);
+      throw e;
+    }
+  }
+
+  public async loadFromIdml(idmlBuffer: ArrayBuffer | Uint8Array, fileName?: string) {
+    if (isInddBuffer(idmlBuffer)) {
+      return this.loadFromIndd(idmlBuffer, fileName);
+    }
+    try {
+      const newState = await parseIdmlPackage(idmlBuffer, fileName);
+      if (!Array.isArray(newState.layers) || newState.layers.length === 0) {
+        newState.layers = JSON.parse(JSON.stringify(DEFAULT_LAYERS));
+      }
+      if (!newState.activeLayerId) {
+        newState.activeLayerId = newState.layers[0]?.id || 'layer-1';
+      }
+      this.state = newState;
+      this.renumberPages();
       this.pushHistory();
       this.notify();
     } catch (e) {

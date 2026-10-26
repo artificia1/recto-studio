@@ -32,7 +32,7 @@ import { calculateCoverSpineMetrics, createWrapCoverSpreadInProject, PAPER_STOCK
 import { parseDataset, generateRepeaterSpreads } from './src/dataMerge';
 import { getFreeToneColor, getAllFreeToneColors, generatePdfSeparationDict } from './src/engine/spotColors';
 import { calculateEan13CheckDigit, generateEan13Svg } from './src/engine/barcodeEngine';
-import { isInddBuffer, extractInddXmp, parseInddMetadata, buildInddElements, parseInddBinaryHeader, carveUtf16Stories, analyzeInddBinaryStructure } from './src/engine/inddParser';
+import { isInddBuffer, extractInddXmp, parseInddMetadata, buildInddElements, parseInddBinaryHeader, carveUtf16Stories, analyzeInddBinaryStructure, parseInddToProjectState } from './src/engine/inddParser';
 import { ingestManuscript } from './src/contentImport';
 import { generateQrMatrix, generateQrSvg, generateQrDataUrl } from './src/engine/qrEngine';
 
@@ -3865,6 +3865,18 @@ assert.strictEqual(inddElements[1].type, 'text');
 const ingestedIndd = await ingestManuscript('magazine.indd', inddBuffer);
 assert(ingestedIndd.formattedText.includes('The Paris Monograph'));
 assert.strictEqual(ingestedIndd.inddMetadata?.pageCount, 48);
+
+// Full .indd Project State Parsing & Ingestion
+const inddProject = parseInddToProjectState(inddBuffer, 'sample_magazine.indd');
+assert(inddProject.spreads.length >= 2, 'Must generate publication spreads for multi-page INDD');
+assert(inddProject.spreads[0].elements.length >= 2, 'Cover spread must contain visual thumbnail and metadata card');
+assert(inddProject.spreads[1].elements.length >= 1, 'Spread 1 must contain carved story text frames');
+assert.strictEqual(inddProject.settings.title, 'The Paris Monograph');
+
+await stateManager.loadFromIndd(inddBuffer, 'sample_magazine.indd');
+const loadedInddState = stateManager.getState();
+assert.strictEqual(loadedInddState.settings.title, 'The Paris Monograph');
+assert(loadedInddState.spreads[0].elements.length >= 2, 'Loaded INDD state must have populated cover elements');
 
 console.log('✓ Advanced Publishing Superpowers (Object Styles, Dynamic Xrefs, Span Columns, Multi-Level Index & Smart .indd Ingestion) verified.');
 
