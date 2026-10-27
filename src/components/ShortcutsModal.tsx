@@ -64,6 +64,8 @@ const SHORTCUT_SECTIONS: ShortcutSection[] = [
   {
     title: 'Document & Output',
     items: [
+      { keys: ['Cmd/Ctrl', 'Alt', 'P'], desc: 'Document Setup (Trim, Bleed, Margins)' },
+      { keys: ['Cmd/Ctrl', 'K'], desc: 'Document Preferences & Setup Tab' },
       { keys: ['Cmd/Ctrl', 'Z'], desc: 'Undo' },
       { keys: ['Cmd/Ctrl', 'Shift', 'Z'], desc: 'Redo' },
       { keys: ['Cmd/Ctrl', 'Shift', 'I'], desc: 'Booklet Imposition Studio' },

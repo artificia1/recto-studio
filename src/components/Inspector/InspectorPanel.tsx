@@ -10,10 +10,18 @@ import { ProjectState } from '../../types';
 
 interface InspectorPanelProps {
   state: ProjectState;
+  activeTab?: 'properties' | 'styles' | 'pages' | 'layers' | 'links' | 'templates' | 'setup';
+  onTabChange?: (tab: 'properties' | 'styles' | 'pages' | 'layers' | 'links' | 'templates' | 'setup') => void;
 }
 
-export function InspectorPanel({ state }: InspectorPanelProps) {
-  const [activeTab, setActiveTab] = useState<'properties' | 'styles' | 'pages' | 'layers' | 'links' | 'templates' | 'setup'>('properties');
+export function InspectorPanel({ state, activeTab: propActiveTab, onTabChange }: InspectorPanelProps) {
+  const [internalTab, setInternalTab] = useState<'properties' | 'styles' | 'pages' | 'layers' | 'links' | 'templates' | 'setup'>('properties');
+  const activeTab = propActiveTab !== undefined ? propActiveTab : internalTab;
+
+  const handleTabClick = (tabId: 'properties' | 'styles' | 'pages' | 'layers' | 'links' | 'templates' | 'setup') => {
+    setInternalTab(tabId);
+    onTabChange?.(tabId);
+  };
 
   const tabs: { id: 'properties' | 'styles' | 'pages' | 'layers' | 'links' | 'templates' | 'setup'; label: string }[] = [
     { id: 'properties', label: 'Properties' },
@@ -32,7 +40,7 @@ export function InspectorPanel({ state }: InspectorPanelProps) {
           <button
             key={tab.id}
             className={`inspector-tab ${activeTab === tab.id ? 'active' : ''}`}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => handleTabClick(tab.id)}
             title={tab.label}
           >
             {tab.label}

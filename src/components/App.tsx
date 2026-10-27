@@ -29,6 +29,7 @@ export function App() {
   const [showBarcodeModal, setShowBarcodeModal] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
   const [showScriptsModal, setShowScriptsModal] = useState(false);
+  const [inspectorTab, setInspectorTab] = useState<'properties' | 'styles' | 'pages' | 'layers' | 'links' | 'templates' | 'setup'>('properties');
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rulerTopRef = useRef<HTMLCanvasElement>(null);
@@ -47,6 +48,12 @@ export function App() {
       } else if (isMod && e.shiftKey && (e.key === 'b' || e.key === 'B')) {
         e.preventDefault();
         setShowCoverSpine((prev) => !prev);
+      } else if (isMod && e.altKey && (e.key === 'p' || e.key === 'P')) {
+        e.preventDefault();
+        setInspectorTab('setup');
+      } else if (isMod && !e.altKey && !e.shiftKey && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        setInspectorTab('setup');
       } else if (isMod && e.altKey && (e.key === 'l' || e.key === 'L')) {
         e.preventDefault();
         stateManager.toggleEditorialLock();
@@ -266,6 +273,7 @@ export function App() {
         onOpenBarcode={() => setShowBarcodeModal(true)}
         onOpenQr={() => setShowQrModal(true)}
         onOpenScripts={() => setShowScriptsModal(true)}
+        onOpenDocumentSetup={() => setInspectorTab('setup')}
       />
       <ControlBar state={state} />
 
@@ -285,7 +293,7 @@ export function App() {
           </div>
         </main>
 
-        <InspectorPanel state={state} />
+        <InspectorPanel state={state} activeTab={inspectorTab} onTabChange={setInspectorTab} />
       </div>
 
       <StatusBar state={state} />

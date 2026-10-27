@@ -1,5 +1,5 @@
 import { stateManager } from '../../state';
-import { ProjectState } from '../../types';
+import { ProjectState, PAGE_PRESETS, PagePreset } from '../../types';
 import { MathInput } from '../common/MathInput';
 
 interface SetupTabProps {
@@ -8,6 +8,24 @@ interface SetupTabProps {
 
 export function SetupTab({ state }: SetupTabProps) {
   const s = state.settings;
+
+  const handlePresetSelect = (preset: PagePreset) => {
+    const dim = PAGE_PRESETS[preset];
+    if (dim) {
+      stateManager.updateSettings({
+        preset,
+        widthMm: dim.widthMm,
+        heightMm: dim.heightMm,
+      });
+    }
+  };
+
+  const handleCustomDimensionChange = (key: 'widthMm' | 'heightMm', val: number) => {
+    stateManager.updateSettings({
+      preset: 'Custom',
+      [key]: val,
+    });
+  };
 
   const handleMarginChange = (key: keyof ProjectState['settings']['margins'], val: number) => {
     stateManager.updateSettings({
@@ -20,9 +38,74 @@ export function SetupTab({ state }: SetupTabProps) {
 
   return (
     <div className="setup-view">
-      <div className="section-header">PAGE & GRID SETUP</div>
+      <div className="section-header">DOCUMENT SETUP & PREFERENCES</div>
 
+      {/* Page Geometry & Spreads */}
       <div className="setup-group">
+        <div className="group-title">PAGE TRIM & SPREAD SETUP</div>
+        <div style={{ marginBottom: '8px' }}>
+          <label style={{ fontSize: '11px', display: 'block', marginBottom: '3px' }}>
+            Trim Preset:
+          </label>
+          <select
+            className="styled-select"
+            style={{ width: '100%', marginBottom: '6px' }}
+            value={s.preset}
+            onChange={(e) => handlePresetSelect((e.target as HTMLSelectElement).value as PagePreset)}
+          >
+            <option value="A4">A4 (210 × 297 mm)</option>
+            <option value="US-Letter">US Letter (8.5 × 11 in)</option>
+            <option value="Book-Trade-6x9">Trade Paperback (6 × 9 in)</option>
+            <option value="Digest-5.5x8.5">Digest (5.5 × 8.5 in)</option>
+            <option value="Zine-A5">Zine / Pamphlet A5 (148 × 210 mm)</option>
+            <option value="Custom">Custom Dimensions...</option>
+          </select>
+        </div>
+
+        <div className="input-grid-2">
+          <label>
+            Width (mm):
+            <MathInput
+              value={s.widthMm}
+              min={50}
+              max={1200}
+              step={1}
+              onChange={(val) => handleCustomDimensionChange('widthMm', val)}
+            />
+          </label>
+          <label>
+            Height (mm):
+            <MathInput
+              value={s.heightMm}
+              min={50}
+              max={1200}
+              step={1}
+              onChange={(val) => handleCustomDimensionChange('heightMm', val)}
+            />
+          </label>
+        </div>
+
+        <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '11px' }}>
+            <input
+              type="checkbox"
+              checked={s.facingPages !== false}
+              onChange={(e) => stateManager.updateSettings({ facingPages: (e.target as HTMLInputElement).checked })}
+            />
+            Facing Pages (Reader / Editorial Spreads)
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '11px' }}>
+            <input
+              type="checkbox"
+              checked={s.overprintBlack !== false}
+              onChange={(e) => stateManager.updateSettings({ overprintBlack: (e.target as HTMLInputElement).checked })}
+            />
+            Overprint [Black] Plate (/OP true)
+          </label>
+        </div>
+      </div>
+
+      <div className="setup-group" style={{ marginTop: '16px' }}>
         <div className="group-title">MARGINS (MM)</div>
         <div className="input-grid-2">
           <label>
@@ -65,7 +148,7 @@ export function SetupTab({ state }: SetupTabProps) {
       </div>
 
       <div className="setup-group" style={{ marginTop: '16px' }}>
-        <div className="group-title">BLEED & SLUG (MM)</div>
+        <div className="group-title">BLEED & COLUMNS (MM)</div>
         <div className="input-grid-2">
           <label>
             Bleed:

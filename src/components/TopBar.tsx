@@ -29,6 +29,7 @@ interface TopBarProps {
   onOpenBarcode?: () => void;
   onOpenQr?: () => void;
   onOpenScripts?: () => void;
+  onOpenDocumentSetup?: () => void;
 }
 
 export function TopBar({
@@ -42,6 +43,7 @@ export function TopBar({
   onOpenBarcode,
   onOpenQr,
   onOpenScripts,
+  onOpenDocumentSetup,
 }: TopBarProps) {
   const [showImpositionModal, setShowImpositionModal] = useState(false);
   const [showCoverSpineModal, setShowCoverSpineModal] = useState(false);
@@ -818,6 +820,17 @@ export function TopBar({
                 title="Insert New Page Spread"
               >
                 <span>+ Add Page Spread</span>
+              </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowFileMenu(false);
+                  onOpenDocumentSetup?.();
+                }}
+                title="Adjust trim dimensions, facing pages, margins, bleed, and baseline grid (Alt+Ctrl+P)"
+              >
+                <span>Document Setup / Preferences...</span>
+                <span className="dropdown-item-shortcut">Alt+Ctrl+P</span>
               </button>
 
               <div className="dropdown-menu-divider" />
