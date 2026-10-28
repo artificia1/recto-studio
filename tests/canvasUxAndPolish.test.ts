@@ -242,4 +242,75 @@ describe('Canvas UX & Layout Polish', () => {
       expect(novelState.spreads[0].pages[0].pageNumber).toBe(1);
     });
   });
+
+  describe('Mobile, Tablet & Stylus Architecture', () => {
+    it('supports selecting the pencil tool', () => {
+      stateManager.setTool('pencil');
+      expect(stateManager.getState().activeTool).toBe('pencil');
+    });
+
+    it('performs atomic zoom and pan updates with a single notification broadcast', () => {
+      let notifyCount = 0;
+      const unsubscribe = stateManager.subscribe(() => {
+        notifyCount++;
+      });
+
+      stateManager.setZoomAndPan(1.4, 250, -120);
+
+      const state = stateManager.getState();
+      expect(state.zoom).toBe(1.4);
+      expect(state.panX).toBe(250);
+      expect(state.panY).toBe(-120);
+      // Ensures no double-render cascade during pinch-to-zoom
+      expect(notifyCount).toBe(1);
+
+      unsubscribe();
+    });
+
+    it('duplicates elements with offset via duplicateElement', () => {
+      const activeSpread = stateManager.getActiveSpread();
+      const pageId = activeSpread.pages[0].id;
+      const origCount = activeSpread.elements.length;
+
+      const t1: TextElement = {
+        id: 'dup-test-elem',
+        type: 'text',
+        pageId,
+        x: 20,
+        y: 30,
+        width: 60,
+        height: 40,
+        rotation: 0,
+        opacity: 1,
+        zIndex: 5,
+        locked: false,
+        text: 'Duplicate Me',
+        fontFamily: 'serif',
+        fontSizePt: 12,
+        lineHeight: 1.3,
+        letterSpacingPt: 0,
+        color: '#111111',
+        columns: 1,
+        columnGutterMm: 4,
+        alignment: 'left',
+        backgroundColor: 'transparent',
+        borderColor: 'transparent',
+        borderWidthMm: 0,
+        paddingMm: 2,
+      };
+      stateManager.addElement(t1);
+
+      const dupId = stateManager.duplicateElement('dup-test-elem');
+      expect(dupId).toBeTruthy();
+
+      const updatedSpread = stateManager.getActiveSpread();
+      expect(updatedSpread.elements.length).toBe(origCount + 2);
+
+      const duplicated = updatedSpread.elements.find(e => e.id === dupId);
+      expect(duplicated).toBeDefined();
+      expect(duplicated?.x).toBe(28); // 20 + 8mm offset
+      expect(duplicated?.y).toBe(38); // 30 + 8mm offset
+      expect(stateManager.getState().selectedElementId).toBe(dupId);
+    });
+  });
 });

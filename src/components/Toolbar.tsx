@@ -70,6 +70,17 @@ export function Toolbar({ state }: ToolbarProps) {
       </button>
 
       <button
+        className={`tool-btn ${currentTool === 'pencil' ? 'active' : ''}`}
+        onClick={() => stateManager.setTool('pencil')}
+        title="Pencil / Freehand Stylus Tool (N)"
+      >
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M11.5 2.5l2 2-8 8-2.5.5.5-2.5 8-8z" fill="currentColor" fillOpacity="0.15" />
+          <path d="M10 4l2 2M2.5 13.5l1.5-1.5" />
+        </svg>
+      </button>
+
+      <button
         className={`tool-btn ${currentTool === 'shape-rect' ? 'active' : ''}`}
         onClick={() => stateManager.setTool('shape-rect')}
         title="Rectangle Tool (M)"

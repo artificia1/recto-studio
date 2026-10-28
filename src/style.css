@@ -2367,6 +2367,233 @@ kbd {
   line-height: 1.4;
 }
 
+/* MOBILE & TABLET ERGONOMICS & ACCESSIBILITY */
+
+.inspector-mobile-header {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background-color: #18181b;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.inspector-mobile-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--text-primary);
+}
+
+.inspector-mobile-close-btn {
+  background: transparent;
+  border: none;
+  color: #a1a1aa;
+  font-size: 18px;
+  line-height: 1;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.inspector-mobile-close-btn:hover,
+.inspector-mobile-close-btn:active {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+}
+
+/* Floating Inspector Drawer Toggle Button */
+.mobile-inspector-toggle-btn {
+  display: none;
+  position: fixed;
+  bottom: 24px;
+  right: 16px;
+  z-index: 1500;
+  background: #18181b;
+  border: 1px solid #3f3f46;
+  border-radius: 20px;
+  padding: 8px 14px;
+  color: #fafafa;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+  align-items: center;
+  gap: 6px;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.mobile-inspector-toggle-btn:active {
+  background: #27272a;
+  transform: scale(0.97);
+}
+
+/* Floating Canvas Zoom Pill */
+.mobile-canvas-zoom-pill {
+  display: none;
+  position: fixed;
+  bottom: 24px;
+  left: 60px;
+  z-index: 1500;
+  background: #18181b;
+  border: 1px solid #3f3f46;
+  border-radius: 20px;
+  padding: 4px 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  align-items: center;
+  gap: 2px;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.mobile-zoom-btn {
+  background: transparent;
+  border: none;
+  color: #e4e4e7;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mobile-zoom-btn:active {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.mobile-zoom-fit-btn {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-cyan);
+}
+
+.mobile-zoom-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #a1a1aa;
+  padding: 0 4px;
+  min-width: 36px;
+  text-align: center;
+}
+
+/* Floating Touch Action Pill when Element is Selected */
+.mobile-touch-actions-pill {
+  position: fixed;
+  top: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1500;
+  background: #18181b;
+  border: 1px solid #3f3f46;
+  border-radius: 24px;
+  padding: 4px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  animation: slideDownFade 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  touch-action: manipulation;
+  user-select: none;
+  max-width: 95vw;
+  overflow-x: auto;
+}
+
+.mobile-action-btn {
+  background: #27272a;
+  border: 1px solid #3f3f46;
+  color: #e4e4e7;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.mobile-action-btn:active {
+  background: #3f3f46;
+  transform: scale(0.96);
+}
+
+.mobile-action-btn-danger {
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.mobile-action-btn-danger:active {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+@keyframes slideDownFade {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -12px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+/* Slide-over Drawer Backdrop */
+.mobile-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
+  z-index: 1999;
+}
+
+@media (max-width: 900px) {
+  .inspector-mobile-header {
+    display: flex;
+  }
+
+  .mobile-inspector-toggle-btn {
+    display: flex;
+  }
+
+  .mobile-canvas-zoom-pill {
+    display: flex;
+  }
+
+  /* Transform Inspector Panel into a Slide-Over Drawer on mobile/tablet screens */
+  .inspector-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 330px;
+    max-width: 86vw;
+    height: 100vh;
+    z-index: 2000;
+    box-shadow: -4px 0 28px rgba(0, 0, 0, 0.75);
+    transform: translateX(105%);
+    transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .inspector-panel.mobile-open {
+    transform: translateX(0);
+  }
+
+  /* Make toolbar buttons comfortable for touch & stylus */
+  .tool-btn {
+    width: 36px;
+    height: 36px;
+  }
+}
+
 
 
 

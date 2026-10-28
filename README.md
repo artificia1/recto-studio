@@ -43,8 +43,13 @@ Recto Studio was conceived, designed, and architected from first principles by *
 
 - **Client-Side PDF/X-1a & Tagged PDF/UA Compiler**: Zero-cloud prepress engine generating print-ready PDFs with 3mm bleed, crop marks, spot/process colors, semantic structure trees, and accessible screen-reader tags directly in browser memory.
 - **Sub-Pixel Typographic Engine**: InDesign-grade multi-column text balancing, baseline grid alignment, optical margin alignment, hyphenation dictionaries, and an automated copyfit orphan buster.
-- **Zero-Allocation Canvas Pipeline**: 60 FPS viewport rendering featuring dual-buffer coordinate mapping, spatial indexing, sub-pixel edge alignment, and magnetic snapping without GC stutter on low-power hardware.
-- **Mobile & Tablet Touch Architecture (iOS / iPadOS & Android)**: Actively developed mobile and tablet engine featuring 1-finger shape, text frame, and element creation/dragging/resizing; 2-finger buttery pinch-to-zoom and pan; adaptive landscape viewport layouts; and a dedicated ⛶ Fullscreen mode eliminating mobile browser bars for distraction-free publishing.
+- **Zero-Allocation Canvas Pipeline**: 60/120 FPS requestAnimationFrame render coalescing loop featuring dual-buffer coordinate mapping, spatial indexing, sub-pixel edge alignment, and magnetic snapping without GC stutter or VSYNC starvation on mobile or low-power hardware.
+- **Mobile, Tablet & Stylus Architecture (iOS / iPadOS & Android)**: Actively developed mobile and tablet engine featuring:
+  - **Freehand Pencil Tool (`N`) & Stylus Support**: Native support for Apple Pencil, Samsung S-Pen, and Surface Pen converting pressure-sensitive strokes into smooth Catmull-Rom cubic Bézier vectors (`VectorPathElement`).
+  - **Hardware Palm Rejection**: Seamless pointer tracking that filters out palm touches while the stylus is actively drawing.
+  - **Touch Ergonomics & 48px Hit Targets**: Expanded 24px handle radius for finger resizing, floating Mobile Touch Action Pill (Copy, Front, Back, Lock, Delete), and haptic feedback.
+  - **Responsive Slide-Over Inspector**: Collapsible drawer on screens $\le 900\text{px}$ preserving 100% of the canvas workspace, with quick-access floating Inspector and Canvas Zoom pills (`−`, `Fit`, `+`).
+  - **Buttery Pinch-to-Zoom & Pan**: Two-finger multi-touch gesture navigation with atomic single-render state mutations.
 - **Peer-to-Peer CRDT Real-Time Collaboration**: Distributed document synchronization enabling multiple collaborators to co-edit spreads, adjust typography, and see live remote presence cursors across browser tabs or local networks.
 - **Universal Multi-Format Output Engine**:
   - **Print PDF**: Native PDF/X-1a with trim marks and bleed.

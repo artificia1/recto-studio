@@ -1030,6 +1030,13 @@ export class StateManager {
     this.notify();
   }
 
+  public setZoomAndPan(zoom: number, panX: number, panY: number) {
+    this.state.zoom = Math.max(0.2, Math.min(3.0, zoom));
+    this.state.panX = panX;
+    this.state.panY = panY;
+    this.notify();
+  }
+
   public toggleGuides() {
     this.state.showGuides = !this.state.showGuides;
     this.notify();
@@ -1631,6 +1638,24 @@ export class StateManager {
     this.pushHistory();
     this.notify();
     this.onMutation?.({ type: 'delete', elementId: id });
+  }
+
+  public duplicateElement(id: string): string | undefined {
+    const spread = this.getActiveSpread();
+    const el = spread.elements.find(item => item.id === id);
+    if (!el) return undefined;
+    const cloned: CanvasElement = JSON.parse(JSON.stringify(el));
+    cloned.id = `elem-dup-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    cloned.x = Math.round((cloned.x + 8) * 10) / 10;
+    cloned.y = Math.round((cloned.y + 8) * 10) / 10;
+    cloned.locked = false;
+    if (cloned.type === 'text') {
+      const textCloned = cloned as TextElement;
+      delete textCloned.prevFrameId;
+      delete textCloned.nextFrameId;
+    }
+    this.addElement(cloned);
+    return cloned.id;
   }
 
   public findElementById(id: string): { element: CanvasElement; spread: Spread } | null {

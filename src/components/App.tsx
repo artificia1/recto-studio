@@ -29,6 +29,7 @@ export function App() {
   const [showBarcodeModal, setShowBarcodeModal] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
   const [showScriptsModal, setShowScriptsModal] = useState(false);
+  const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const [inspectorTab, setInspectorTab] = useState<'properties' | 'styles' | 'pages' | 'layers' | 'links' | 'templates' | 'setup'>('properties');
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -293,7 +294,117 @@ export function App() {
           </div>
         </main>
 
-        <InspectorPanel state={state} activeTab={inspectorTab} onTabChange={setInspectorTab} />
+        {/* Floating Mobile / Tablet UI Controls */}
+        <button
+          className="mobile-inspector-toggle-btn"
+          onClick={() => setMobileInspectorOpen(!mobileInspectorOpen)}
+          title="Toggle Inspector"
+          aria-label="Toggle Inspector"
+        >
+          ⚙ Inspector
+        </button>
+
+        <div className="mobile-canvas-zoom-pill">
+          <button
+            className="mobile-zoom-btn"
+            onClick={() => stateManager.setZoom(Math.max(0.2, Math.round((state.zoom - 0.15) * 100) / 100))}
+            title="Zoom Out"
+            aria-label="Zoom Out"
+          >
+            −
+          </button>
+          <button
+            className="mobile-zoom-btn mobile-zoom-fit-btn"
+            onClick={() => stateManager.setZoomAndPan(0.85, 0, 0)}
+            title="Fit Spread to Screen"
+            aria-label="Fit Spread"
+          >
+            Fit
+          </button>
+          <span className="mobile-zoom-label">{Math.round(state.zoom * 100)}%</span>
+          <button
+            className="mobile-zoom-btn"
+            onClick={() => stateManager.setZoom(Math.min(3.0, Math.round((state.zoom + 0.15) * 100) / 100))}
+            title="Zoom In"
+            aria-label="Zoom In"
+          >
+            +
+          </button>
+        </div>
+
+        {/* Floating Touch Action Pill when element is selected */}
+        {state.selectedElementId && (
+          <div className="mobile-touch-actions-pill">
+            <button
+              className="mobile-action-btn"
+              onClick={() => {
+                if (state.selectedElementId) {
+                  stateManager.duplicateElement(state.selectedElementId);
+                }
+              }}
+              title="Duplicate Element"
+            >
+              ⧉ Copy
+            </button>
+            <button
+              className="mobile-action-btn"
+              onClick={() => {
+                if (state.selectedElementId) {
+                  stateManager.changeElementOrder(state.selectedElementId, 'front');
+                }
+              }}
+              title="Bring to Front"
+            >
+              ↑ Front
+            </button>
+            <button
+              className="mobile-action-btn"
+              onClick={() => {
+                if (state.selectedElementId) {
+                  stateManager.changeElementOrder(state.selectedElementId, 'back');
+                }
+              }}
+              title="Send to Back"
+            >
+              ↓ Back
+            </button>
+            <button
+              className="mobile-action-btn"
+              onClick={() => {
+                if (state.selectedElementId) {
+                  stateManager.toggleLock([state.selectedElementId]);
+                }
+              }}
+              title="Toggle Lock"
+            >
+              🔒 Lock
+            </button>
+            <button
+              className="mobile-action-btn mobile-action-btn-danger"
+              onClick={() => {
+                stateManager.deleteSelectedElements();
+              }}
+              title="Delete Element"
+            >
+              🗑 Delete
+            </button>
+          </div>
+        )}
+
+        {mobileInspectorOpen && (
+          <div
+            className="mobile-drawer-backdrop"
+            onClick={() => setMobileInspectorOpen(false)}
+          />
+        )}
+
+        <InspectorPanel
+          state={state}
+          activeTab={inspectorTab}
+          onTabChange={setInspectorTab}
+          isOpen={mobileInspectorOpen}
+          onClose={() => setMobileInspectorOpen(false)}
+        />
       </div>
 
       <StatusBar state={state} />

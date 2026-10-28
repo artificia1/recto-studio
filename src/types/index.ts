@@ -431,7 +431,7 @@ export interface Spread {
   detachedMasterElementIds?: string[];
 }
 
-export type ToolType = 'select' | 'text' | 'frame' | 'table' | 'pen' | 'shape-rect' | 'shape-ellipse' | 'shape-line' | 'measure' | 'hand' | 'zoom';
+export type ToolType = 'select' | 'text' | 'frame' | 'table' | 'pen' | 'pencil' | 'shape-rect' | 'shape-ellipse' | 'shape-line' | 'measure' | 'hand' | 'zoom';
 
 export interface CommentPin {
   id: string;

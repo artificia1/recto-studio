@@ -399,6 +399,19 @@ export class SpreadCanvas {
   // Active in-place canvas overlay editor (WordPad/Figma style)
   private activeInlineEditor: { elementId: string; el: HTMLElement } | null = null;
 
+  // High-performance requestAnimationFrame render coalescing loop
+  private renderRafId: number | null = null;
+
+  // Stylus (Apple Pencil, S-Pen, Surface Pen) and Palm Rejection Tracking
+  private activePenPointerId: number | null = null;
+  private currentPointerType: string = 'mouse';
+  private currentPointerPressure: number = 0.5;
+
+  // Freehand Pencil Drawing State
+  private isPencilDrawing: boolean = false;
+  private pencilStrokePoints: Array<{ x: number; y: number; pressure: number }> = [];
+  private pencilTargetPage: Page | null = null;
+
   constructor(
     container: HTMLElement,
     canvas: HTMLCanvasElement,
@@ -419,14 +432,22 @@ export class SpreadCanvas {
 
     window.addEventListener('resize', () => {
       this.resizeCanvas();
-      this.render();
+      this.scheduleRender();
     });
 
     stateManager.subscribe(() => {
-      this.render();
+      this.scheduleRender();
     });
 
     collabSession.onPeersChange(() => {
+      this.scheduleRender();
+    });
+  }
+
+  public scheduleRender() {
+    if (this.renderRafId !== null) return;
+    this.renderRafId = requestAnimationFrame(() => {
+      this.renderRafId = null;
       this.render();
     });
   }
@@ -465,8 +486,21 @@ export class SpreadCanvas {
     this.canvas.addEventListener('wheel', this.handleWheel.bind(this), { passive: false });
     this.canvas.addEventListener('dblclick', this.handleDoubleClick.bind(this));
 
+    // Pointer events for Stylus (Apple Pencil, S-Pen, Surface Pen) and Palm Rejection
+    this.canvas.addEventListener('pointerdown', this.handlePointerDown.bind(this));
+    window.addEventListener('pointermove', this.handlePointerMove.bind(this));
+    window.addEventListener('pointerup', this.handlePointerUp.bind(this));
+    window.addEventListener('pointercancel', this.handlePointerCancel.bind(this));
+
     // Touch support for tablets & landscape touchscreens
     this.canvas.addEventListener('touchstart', (e: TouchEvent) => {
+      // Palm Rejection: If an active stylus pen is in contact with screen, reject palm touches
+      if (this.activePenPointerId !== null) {
+        if (e.cancelable) e.preventDefault();
+        return;
+      }
+      this.currentPointerType = 'touch';
+
       if (e.touches.length === 1) {
         const touch = e.touches[0];
         this.lastTouchX = touch.clientX;
@@ -503,6 +537,13 @@ export class SpreadCanvas {
     }, { passive: false });
 
     window.addEventListener('touchmove', (e: TouchEvent) => {
+      // Palm Rejection: Ignore touch moves while pen is actively drawing
+      if (this.activePenPointerId !== null) {
+        if (e.cancelable) e.preventDefault();
+        return;
+      }
+      this.currentPointerType = 'touch';
+
       if (e.touches.length === 1 && !this.isPanning) {
         const touch = e.touches[0];
         this.lastTouchX = touch.clientX;
@@ -535,13 +576,16 @@ export class SpreadCanvas {
           const newPanX = (midX - cX) - (this.initialPinchMidX - cX - this.initialPinchPanX) * zoomRatio;
           const newPanY = (midY - cY) - (this.initialPinchMidY - cY - this.initialPinchPanY) * zoomRatio;
 
-          stateManager.setZoom(targetZoom);
-          stateManager.setPan(newPanX, newPanY);
+          // Single atomic update eliminates double-render cascade on mobile devices
+          stateManager.setZoomAndPan(targetZoom, newPanX, newPanY);
         }
       }
     }, { passive: false });
 
     const onTouchEnd = (e: TouchEvent) => {
+      if (this.activePenPointerId !== null) {
+        return;
+      }
       if (this.isPanning && e.touches.length === 0) {
         this.isPanning = false;
         return;
@@ -621,6 +665,8 @@ export class SpreadCanvas {
         stateManager.setTool('text');
       } else if (!isMod && !e.altKey && (e.key === 'p' || e.key === 'P')) {
         stateManager.setTool('pen');
+      } else if (!isMod && !e.altKey && (e.key === 'n' || e.key === 'N')) {
+        stateManager.setTool('pencil');
       } else if (!isMod && !e.altKey && (e.key === 'b' || e.key === 'B')) {
         stateManager.setTool('table');
       } else if (e.key === 'Escape' || e.key === 'Enter') {
@@ -771,6 +817,12 @@ export class SpreadCanvas {
     if (state.activeTool !== 'select') {
       if (state.activeTool === 'pen') {
         this.handlePenMouseDown(mmX, mmY, screenX, screenY, e);
+        return;
+      }
+      if (state.activeTool === 'pencil') {
+        if (!this.isPencilDrawing) {
+          this.handlePencilMouseDown(mmX, mmY, screenX, screenY, e);
+        }
         return;
       }
       if (state.activeTool === 'text') {
@@ -1016,6 +1068,11 @@ export class SpreadCanvas {
     this.mouseScreenY = screenY;
 
     collabSession.broadcastPresence(mmX, mmY, state.selectedElementId);
+
+    if (this.isPencilDrawing) {
+      this.handlePencilMouseMove(e);
+      return;
+    }
 
     if (state.linkingFromFrameId) {
       this.render();
@@ -1427,7 +1484,7 @@ export class SpreadCanvas {
       this.canvas.style.cursor = 'grab';
     } else if (state.activeTool === 'text') {
       this.canvas.style.cursor = 'text';
-    } else if (state.activeTool === 'frame' || state.activeTool === 'table' || state.activeTool === 'pen' || state.activeTool.startsWith('shape')) {
+    } else if (state.activeTool === 'frame' || state.activeTool === 'table' || state.activeTool === 'pen' || state.activeTool === 'pencil' || state.activeTool.startsWith('shape')) {
       this.canvas.style.cursor = 'crosshair';
     } else {
       this.canvas.style.cursor = 'default';
@@ -1456,6 +1513,10 @@ export class SpreadCanvas {
     const hadInteractiveMod = this.isDragging || this.isResizing;
     if (hadInteractiveMod) {
       stateManager.commitHistory();
+    }
+
+    if (this.isPencilDrawing) {
+      this.handlePencilMouseUp(e);
     }
 
     if (this.isPanning) {
@@ -2338,7 +2399,234 @@ export class SpreadCanvas {
     this.activePenPathId = newId;
     this.activePenNodeIndex = 0;
     this.isPenDraggingHandle = true;
-    this.render();
+    this.scheduleRender();
+  }
+
+  private handlePointerDown(e: PointerEvent) {
+    this.currentPointerType = e.pointerType || 'mouse';
+    this.currentPointerPressure = e.pressure > 0 ? e.pressure : 0.5;
+
+    if (e.pointerType === 'pen') {
+      this.activePenPointerId = e.pointerId;
+    }
+
+    const state = stateManager.getState();
+    if (state.activeTool === 'pencil') {
+      if (e.button === 0 || e.pointerType === 'pen' || e.pointerType === 'touch') {
+        const rect = this.canvas.getBoundingClientRect();
+        const screenX = e.clientX - rect.left;
+        const screenY = e.clientY - rect.top;
+        const { x: mmX, y: mmY } = this.screenToSpreadMm(screenX, screenY, state);
+        this.handlePencilMouseDown(mmX, mmY, screenX, screenY, e);
+        if (e.cancelable) e.preventDefault();
+      }
+    }
+  }
+
+  private handlePointerMove(e: PointerEvent) {
+    if (e.pointerType) {
+      this.currentPointerType = e.pointerType;
+    }
+    if (e.pressure > 0) {
+      this.currentPointerPressure = e.pressure;
+    }
+    if (this.isPencilDrawing) {
+      this.handlePencilMouseMove(e);
+    }
+  }
+
+  private handlePointerUp(e: PointerEvent) {
+    if (e.pointerId === this.activePenPointerId) {
+      this.activePenPointerId = null;
+    }
+    if (this.isPencilDrawing) {
+      this.handlePencilMouseUp(e);
+    }
+  }
+
+  private handlePointerCancel(e: PointerEvent) {
+    if (e.pointerId === this.activePenPointerId) {
+      this.activePenPointerId = null;
+    }
+    if (this.isPencilDrawing) {
+      this.isPencilDrawing = false;
+      this.pencilStrokePoints = [];
+      this.pencilTargetPage = null;
+      this.scheduleRender();
+    }
+  }
+
+  private handlePencilMouseDown(mmX: number, mmY: number, screenX: number, screenY: number, e: MouseEvent | PointerEvent) {
+    if (this.isPencilDrawing) return;
+    const state = stateManager.getState();
+    const pageHit = this.findPageAtMm(mmX, mmY, state);
+    const spread = stateManager.getActiveSpread();
+    const targetPage = pageHit ? pageHit.page : (spread.pages[0] || null);
+    if (!targetPage) return;
+
+    const pageIdx = Math.max(0, spread.pages.findIndex(p => p.id === targetPage.id));
+    const { pageWidthMm } = this.getSpreadDimensions(state);
+    const pageStartMm = pageIdx * pageWidthMm;
+    const localX = mmX - pageStartMm;
+    const localY = mmY;
+    const pressure = (e as PointerEvent).pressure && (e as PointerEvent).pressure > 0 ? (e as PointerEvent).pressure : 0.5;
+
+    this.isPencilDrawing = true;
+    this.pencilTargetPage = targetPage;
+    this.pencilStrokePoints = [{ x: localX, y: localY, pressure }];
+    this.scheduleRender();
+  }
+
+  private handlePencilMouseMove(e: MouseEvent | PointerEvent) {
+    if (!this.isPencilDrawing || !this.pencilTargetPage) return;
+    const state = stateManager.getState();
+    const rect = this.canvas.getBoundingClientRect();
+    const screenX = e.clientX - rect.left;
+    const screenY = e.clientY - rect.top;
+    const { x: mmX, y: mmY } = this.screenToSpreadMm(screenX, screenY, state);
+
+    const spread = stateManager.getActiveSpread();
+    const pageIdx = Math.max(0, spread.pages.findIndex(p => p.id === this.pencilTargetPage!.id));
+    const { pageWidthMm } = this.getSpreadDimensions(state);
+    const pageStartMm = pageIdx * pageWidthMm;
+    const localX = mmX - pageStartMm;
+    const localY = mmY;
+    const pressure = (e as PointerEvent).pressure && (e as PointerEvent).pressure > 0 ? (e as PointerEvent).pressure : 0.5;
+
+    const lastPt = this.pencilStrokePoints[this.pencilStrokePoints.length - 1];
+    if (!lastPt || Math.hypot(localX - lastPt.x, localY - lastPt.y) >= 0.4) {
+      this.pencilStrokePoints.push({ x: localX, y: localY, pressure });
+      this.scheduleRender();
+    }
+  }
+
+  private handlePencilMouseUp(e?: MouseEvent | PointerEvent) {
+    if (!this.isPencilDrawing) return;
+    this.isPencilDrawing = false;
+    const points = [...this.pencilStrokePoints];
+    const targetPage = this.pencilTargetPage;
+    this.pencilStrokePoints = [];
+    this.pencilTargetPage = null;
+
+    if (points.length >= 2 && targetPage) {
+      const { nodes, minX, minY, width, height } = this.fitPencilToBezierNodes(points);
+      if (nodes.length >= 2) {
+        const strokeWidthMm = 0.5;
+        const strokeColor = '#111111';
+        const newId = `pencil-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+        const pathElement: VectorPathElement = {
+          id: newId,
+          type: 'path',
+          pageId: targetPage.id,
+          x: Math.round(minX * 100) / 100,
+          y: Math.round(minY * 100) / 100,
+          width: Math.round(Math.max(1, width) * 100) / 100,
+          height: Math.round(Math.max(1, height) * 100) / 100,
+          rotation: 0,
+          opacity: 1,
+          zIndex: 10,
+          locked: false,
+          nodes,
+          closed: false,
+          fillColor: 'transparent',
+          strokeColor: strokeColor,
+          strokeWidthMm: strokeWidthMm,
+          strokeCap: 'round',
+          strokeJoin: 'round',
+          strokeDash: 'solid',
+        };
+        stateManager.addElement(pathElement);
+        stateManager.selectElements([newId]);
+
+        if (typeof navigator !== 'undefined' && navigator.vibrate) {
+          try { navigator.vibrate(10); } catch (_) {}
+        }
+      }
+    }
+    this.scheduleRender();
+  }
+
+  private fitPencilToBezierNodes(points: Array<{ x: number; y: number; pressure: number }>): {
+    nodes: BezierNode[];
+    minX: number;
+    minY: number;
+    width: number;
+    height: number;
+  } {
+    if (points.length < 2) {
+      return { nodes: [], minX: 0, minY: 0, width: 0, height: 0 };
+    }
+
+    const simplified: Array<{ x: number; y: number }> = [points[0]];
+    for (let i = 1; i < points.length; i++) {
+      const prev = simplified[simplified.length - 1];
+      const curr = points[i];
+      const d = Math.hypot(curr.x - prev.x, curr.y - prev.y);
+      if (d >= 0.8 || i === points.length - 1) {
+        simplified.push({ x: curr.x, y: curr.y });
+      }
+    }
+
+    if (simplified.length < 2) {
+      simplified.push({ x: points[points.length - 1].x, y: points[points.length - 1].y });
+    }
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const p of simplified) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+    const width = Math.max(1, maxX - minX);
+    const height = Math.max(1, maxY - minY);
+
+    const localPts = simplified.map(p => ({
+      x: p.x - minX,
+      y: p.y - minY,
+    }));
+
+    const nodes: BezierNode[] = [];
+    const n = localPts.length;
+
+    for (let i = 0; i < n; i++) {
+      const curr = localPts[i];
+      if (i === 0) {
+        const next = localPts[1];
+        const hOutX = (next.x - curr.x) / 3;
+        const hOutY = (next.y - curr.y) / 3;
+        nodes.push({
+          x: curr.x,
+          y: curr.y,
+          handleOut: { x: hOutX, y: hOutY },
+        });
+      } else if (i === n - 1) {
+        const prev = localPts[n - 2];
+        const hInX = (prev.x - curr.x) / 3;
+        const hInY = (prev.y - curr.y) / 3;
+        nodes.push({
+          x: curr.x,
+          y: curr.y,
+          handleIn: { x: hInX, y: hInY },
+        });
+      } else {
+        const prev = localPts[i - 1];
+        const next = localPts[i + 1];
+        const tanX = (next.x - prev.x) / 6;
+        const tanY = (next.y - prev.y) / 6;
+        nodes.push({
+          x: curr.x,
+          y: curr.y,
+          handleIn: { x: -tanX, y: -tanY },
+          handleOut: { x: tanX, y: tanY },
+        });
+      }
+    }
+
+    return { nodes, minX, minY, width, height };
   }
 
   private hitTestHandles(screenX: number, screenY: number, state: ProjectState): string | null {
@@ -2362,6 +2650,8 @@ export class SpreadCanvas {
     const elScreenH = el.height * pxPerMm;
 
     const handleRadius = 6;
+    const isTouch = (typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0)) || this.currentPointerType === 'touch';
+    const hitTolerance = isTouch ? 24 : (handleRadius + 2);
     const handles = this._handles;
     handles[0].x = elScreenX; handles[0].y = elScreenY;
     handles[1].x = elScreenX + elScreenW / 2; handles[1].y = elScreenY;
@@ -2375,7 +2665,7 @@ export class SpreadCanvas {
     for (let i = 0; i < 8; i++) {
       const h = handles[i];
       const dist = Math.hypot(screenX - h.x, screenY - h.y);
-      if (dist <= handleRadius + 2) {
+      if (dist <= hitTolerance) {
         return h.name;
       }
     }
@@ -3890,6 +4180,32 @@ export class SpreadCanvas {
         cursorScreenX,
         cursorScreenY
       );
+    }
+
+    // Live Freehand Pencil Stroke Preview
+    if (this.isPencilDrawing && this.pencilStrokePoints.length > 1 && this.pencilTargetPage) {
+      const pageIdx = Math.max(0, spread.pages.findIndex((p) => p.id === this.pencilTargetPage!.id));
+      const pageStartMm = pageIdx * pageWidthMm;
+      ctx.save();
+      ctx.beginPath();
+      const strokeW = Math.max(1, 0.5 * pxPerMm);
+      ctx.lineWidth = strokeW;
+      ctx.strokeStyle = '#111111';
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      const pts = this.pencilStrokePoints;
+      const firstScreenX = origin.x + (pageStartMm + pts[0].x) * pxPerMm;
+      const firstScreenY = origin.y + pts[0].y * pxPerMm;
+      ctx.moveTo(firstScreenX, firstScreenY);
+
+      for (let i = 1; i < pts.length; i++) {
+        const pScreenX = origin.x + (pageStartMm + pts[i].x) * pxPerMm;
+        const pScreenY = origin.y + pts[i].y * pxPerMm;
+        ctx.lineTo(pScreenX, pScreenY);
+      }
+      ctx.stroke();
+      ctx.restore();
     }
 
     // Draw Dynamic Smart Magnetic Guides & Distance Snapping

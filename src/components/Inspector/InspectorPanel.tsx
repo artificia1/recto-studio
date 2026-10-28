@@ -12,9 +12,11 @@ interface InspectorPanelProps {
   state: ProjectState;
   activeTab?: 'properties' | 'styles' | 'pages' | 'layers' | 'links' | 'templates' | 'setup';
   onTabChange?: (tab: 'properties' | 'styles' | 'pages' | 'layers' | 'links' | 'templates' | 'setup') => void;
+  isOpen?: boolean;
+  onClose?: () => void;
 }
 
-export function InspectorPanel({ state, activeTab: propActiveTab, onTabChange }: InspectorPanelProps) {
+export function InspectorPanel({ state, activeTab: propActiveTab, onTabChange, isOpen, onClose }: InspectorPanelProps) {
   const [internalTab, setInternalTab] = useState<'properties' | 'styles' | 'pages' | 'layers' | 'links' | 'templates' | 'setup'>('properties');
   const activeTab = propActiveTab !== undefined ? propActiveTab : internalTab;
 
@@ -34,7 +36,20 @@ export function InspectorPanel({ state, activeTab: propActiveTab, onTabChange }:
   ];
 
   return (
-    <aside className="inspector-panel">
+    <aside className={`inspector-panel ${isOpen ? 'mobile-open' : ''}`}>
+      {onClose && (
+        <div className="inspector-mobile-header">
+          <span className="inspector-mobile-title">Inspector & Settings</span>
+          <button
+            className="inspector-mobile-close-btn"
+            onClick={onClose}
+            aria-label="Close Inspector"
+            title="Close Inspector"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       <div className="inspector-tabs">
         {tabs.map((tab) => (
           <button
