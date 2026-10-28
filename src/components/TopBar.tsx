@@ -1013,6 +1013,17 @@ export function TopBar({
                 <span>Prepress Slug Area & Bars</span>
                 <span className="dropdown-item-shortcut">{state.showSlugBanner ? 'Hide' : 'Show'}</span>
               </button>
+              <button
+                className="top-dropdown-item"
+                onClick={() => {
+                  setShowFileMenu(false);
+                  stateManager.toggleQuickActionsToolbar();
+                }}
+                title="Toggle floating quick actions toolbar for selected elements"
+              >
+                <span>Touch Quick Actions Bar</span>
+                <span className="dropdown-item-shortcut">{state.showQuickActionsToolbar ? 'Hide' : 'Show'}</span>
+              </button>
 
               <div className="dropdown-menu-divider" />
 

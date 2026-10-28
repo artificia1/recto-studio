@@ -323,6 +323,14 @@ describe('Canvas UX & Layout Polish', () => {
       expect(stateManager.getState().tacHeatmap).toBe(false);
     });
 
+    it('toggles quick actions toolbar visibility in state', () => {
+      expect(stateManager.getState().showQuickActionsToolbar).toBeFalsy();
+      stateManager.toggleQuickActionsToolbar();
+      expect(stateManager.getState().showQuickActionsToolbar).toBe(true);
+      stateManager.toggleQuickActionsToolbar();
+      expect(stateManager.getState().showQuickActionsToolbar).toBe(false);
+    });
+
     it('detects straight quotes and double spaces via typographic linter and auto-fixes them', () => {
       const activeSpread = stateManager.getActiveSpread();
       const pageId = activeSpread.pages[0].id;

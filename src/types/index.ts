@@ -469,6 +469,7 @@ export interface ProjectState {
   previewMode?: boolean;
   plateSolo?: 'all' | 'cyan' | 'magenta' | 'yellow' | 'black' | 'spot';
   tacHeatmap?: boolean;
+  showQuickActionsToolbar?: boolean;
   showReadingOrder?: boolean;
   showSlugBanner?: boolean;
   comments?: CommentPin[];

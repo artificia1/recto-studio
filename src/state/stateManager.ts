@@ -1202,6 +1202,11 @@ export class StateManager {
     this.notify();
   }
 
+  public toggleQuickActionsToolbar() {
+    this.state.showQuickActionsToolbar = !this.state.showQuickActionsToolbar;
+    this.notify();
+  }
+
   public setBaselineGrid(partial: Partial<BaselineGridSettings>) {
     this.state.settings.baselineGrid = {
       ...this.state.settings.baselineGrid,

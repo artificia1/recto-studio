@@ -308,7 +308,7 @@ export function App() {
           title="Toggle Inspector"
           aria-label="Toggle Inspector"
         >
-          ⚙ Inspector
+          Inspector
         </button>
 
         <div className="mobile-canvas-zoom-pill">
@@ -339,9 +339,9 @@ export function App() {
           </button>
         </div>
 
-        {/* Floating Touch Action Pill when element is selected */}
-        {state.selectedElementId && (
-          <div className="mobile-touch-actions-pill">
+        {/* Floating Touch Action Pill: only auto on touch devices, or when manually enabled in settings */}
+        {((typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0) || state.showQuickActionsToolbar) && state.selectedElementId) && (
+          <div className={`mobile-touch-actions-pill ${state.showQuickActionsToolbar ? 'force-visible' : ''}`}>
             <button
               className="mobile-action-btn"
               onClick={() => {
@@ -351,7 +351,7 @@ export function App() {
               }}
               title="Duplicate Element"
             >
-              ⧉ Copy
+              Copy
             </button>
             <button
               className="mobile-action-btn"
@@ -362,7 +362,7 @@ export function App() {
               }}
               title="Bring to Front"
             >
-              ↑ Front
+              Front
             </button>
             <button
               className="mobile-action-btn"
@@ -373,7 +373,7 @@ export function App() {
               }}
               title="Send to Back"
             >
-              ↓ Back
+              Back
             </button>
             <button
               className="mobile-action-btn"
@@ -384,7 +384,7 @@ export function App() {
               }}
               title="Toggle Lock"
             >
-              🔒 Lock
+              Lock
             </button>
             <button
               className="mobile-action-btn mobile-action-btn-danger"
@@ -393,7 +393,7 @@ export function App() {
               }}
               title="Delete Element"
             >
-              🗑 Delete
+              Delete
             </button>
           </div>
         )}

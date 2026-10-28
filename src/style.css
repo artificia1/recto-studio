@@ -2484,8 +2484,9 @@ kbd {
   text-align: center;
 }
 
-/* Floating Touch Action Pill when Element is Selected */
+/* Floating Touch Action Pill - Hidden by default on Desktop PC/Windows */
 .mobile-touch-actions-pill {
+  display: none;
   position: fixed;
   top: 76px;
   left: 50%;
@@ -2495,7 +2496,6 @@ kbd {
   border: 1px solid #3f3f46;
   border-radius: 24px;
   padding: 4px 8px;
-  display: flex;
   align-items: center;
   gap: 6px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
@@ -2504,6 +2504,10 @@ kbd {
   user-select: none;
   max-width: 95vw;
   overflow-x: auto;
+}
+
+.mobile-touch-actions-pill.force-visible {
+  display: flex;
 }
 
 .mobile-action-btn {
@@ -2565,6 +2569,10 @@ kbd {
   }
 
   .mobile-canvas-zoom-pill {
+    display: flex;
+  }
+
+  .mobile-touch-actions-pill {
     display: flex;
   }
 
