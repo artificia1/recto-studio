@@ -3708,6 +3708,7 @@ export class StateManager {
     }
 
     // If estimated lines exceed or near capacity (overflow or tight boundary)
+    let fittedFrame = false;
     if (estLines >= totalLineCapacity) {
       // 1. Micro-tracking compression (down to -0.4pt threshold)
       const curTracking = txt.letterSpacingPt || 0;
@@ -3733,11 +3734,20 @@ export class StateManager {
         txt.fontSizePt = newFontSize;
         adjustments.push(`Micro-scaled font size by ${fontSizeAdjustedPt}pt (${newFontSize}pt)`);
       }
+    } else {
+      // Underset or loose frame: Snugly fit frame height to content (Fit Frame to Content)
+      const prevHeight = txt.height;
+      fittedFrame = this.fitFrameToContent(txt.id);
+      if (fittedFrame && Math.abs(txt.height - prevHeight) >= 0.5) {
+        adjustments.push(`Fit frame height to content (${Math.round(prevHeight)}mm to ${Math.round(txt.height)}mm)`);
+      }
     }
 
-    if (adjustments.length > 0) {
+    if (adjustments.length > 0 && !fittedFrame) {
       this.pushHistory();
       this.notify();
+    } else if (adjustments.length === 0) {
+      adjustments.push('Clean fit: frame geometry matches copy with zero overflow');
     }
 
     return {

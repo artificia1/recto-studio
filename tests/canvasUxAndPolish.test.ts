@@ -541,4 +541,84 @@ describe('Canvas UX & Layout Polish', () => {
       expect(clonedEl.nextFrameId).toBeUndefined();
     });
   });
+
+  describe('Auto Copyfit & Frame Fit Intelligence', () => {
+    it('snugly fits frame height to text when text is underset', () => {
+      const activeSpread = stateManager.getActiveSpread();
+      const pageId = activeSpread.pages[0].id;
+
+      const txt: TextElement = {
+        id: 'tf-copyfit-1',
+        type: 'text',
+        pageId,
+        x: 10,
+        y: 10,
+        width: 80,
+        height: 120, // tall frame
+        rotation: 0,
+        opacity: 1,
+        zIndex: 1,
+        locked: false,
+        text: 'Short paragraph for copyfit testing.',
+        fontFamily: 'Inter',
+        fontSizePt: 11,
+        lineHeight: 1.3,
+        letterSpacingPt: 0,
+        color: '#000',
+        alignment: 'left',
+        columns: 1,
+        columnGutterMm: 4,
+        backgroundColor: 'transparent',
+        borderColor: 'transparent',
+        borderWidthMm: 0,
+        paddingMm: 2,
+      };
+
+      stateManager.addElement(txt);
+      const res = stateManager.copyfitTextFrame(txt.id);
+
+      expect(res.success).toBe(true);
+      expect(res.adjustments.length).toBeGreaterThan(0);
+      expect(txt.height).toBeLessThan(120);
+    });
+
+    it('binds orphans and eliminates overflow when text exceeds capacity', () => {
+      const activeSpread = stateManager.getActiveSpread();
+      const pageId = activeSpread.pages[0].id;
+
+      const txt: TextElement = {
+        id: 'tf-copyfit-2',
+        type: 'text',
+        pageId,
+        x: 10,
+        y: 10,
+        width: 40,
+        height: 15, // very shallow frame, causes overflow
+        rotation: 0,
+        opacity: 1,
+        zIndex: 1,
+        locked: false,
+        text: 'This is a long sentence that definitely overflows the shallow text frame box completely.',
+        fontFamily: 'Inter',
+        fontSizePt: 12,
+        lineHeight: 1.3,
+        letterSpacingPt: 0,
+        color: '#000',
+        alignment: 'left',
+        columns: 1,
+        columnGutterMm: 4,
+        backgroundColor: 'transparent',
+        borderColor: 'transparent',
+        borderWidthMm: 0,
+        paddingMm: 2,
+      };
+
+      stateManager.addElement(txt);
+      const res = stateManager.copyfitTextFrame(txt.id);
+
+      expect(res.success).toBe(true);
+      expect(res.adjustments.length).toBeGreaterThan(0);
+      expect(res.trackingAdjustedPt).toBeLessThan(0);
+    });
+  });
 });

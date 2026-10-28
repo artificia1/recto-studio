@@ -21,6 +21,30 @@
   margin: 0;
   padding: 0;
   user-select: none;
+  scrollbar-width: thin;
+  scrollbar-color: #3f3f46 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #3f3f46;
+  border-radius: 3px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #52525b;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 html, body {
@@ -111,11 +135,19 @@ html, body {
   border: 1px solid var(--border-color);
   color: var(--text-primary);
   border-radius: 3px;
-  padding: 1px 5px;
+  padding: 1px 3px;
   font-size: 11px;
   font-family: inherit;
   height: 20px;
   box-sizing: border-box;
+  text-align: center;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.control-bar-input::-webkit-outer-spin-button,
+.control-bar-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 .control-bar-input:focus {
   outline: none;
@@ -178,6 +210,7 @@ html, body {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+  margin-right: 8px;
 }
 
 .brand-logo {
@@ -235,12 +268,13 @@ html, body {
   padding: 4px 6px;
   border-radius: 4px;
   width: auto;
-  min-width: 110px;
-  max-width: 180px;
+  min-width: 80px;
+  max-width: 140px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  flex-shrink: 0;
+  flex-shrink: 1;
+  box-sizing: border-box;
   transition: all 0.15s ease;
 }
 
@@ -351,7 +385,7 @@ html, body {
     display: none !important;
   }
   .doc-title-input {
-    max-width: 140px;
+    max-width: 110px;
   }
 }
 
@@ -364,7 +398,7 @@ html, body {
     font-size: 10px;
   }
   .doc-title-input {
-    max-width: 110px;
+    max-width: 85px;
   }
 }
 

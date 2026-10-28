@@ -4,6 +4,7 @@
  * Licensed under the MIT License.
  */
 
+import { useState } from 'preact/hooks';
 import { ProjectState, TextElement, ImageElement, ShapeElement, TableElement, VectorPathElement, ImageFitMode } from '../types';
 import { stateManager } from '../state';
 
@@ -12,6 +13,7 @@ interface ControlBarProps {
 }
 
 export function ControlBar({ state }: ControlBarProps) {
+  const [copyfitStatus, setCopyfitStatus] = useState<string | null>(null);
   const activeSpread = stateManager.getActiveSpread();
   const selectedId = state.selectedElementId;
   const selectedEl = selectedId ? activeSpread.elements.find((el) => el.id === selectedId) : null;
@@ -184,7 +186,7 @@ export function ControlBar({ state }: ControlBarProps) {
           <input
             type="number"
             className="control-bar-input"
-            style={{ width: '48px' }}
+            style={{ width: '52px' }}
             value={txt.fontSizePt}
             min="4"
             max="144"
@@ -201,7 +203,7 @@ export function ControlBar({ state }: ControlBarProps) {
           <input
             type="number"
             className="control-bar-input"
-            style={{ width: '48px' }}
+            style={{ width: '52px' }}
             value={txt.lineHeight}
             min="0.5"
             max="3"
@@ -217,7 +219,7 @@ export function ControlBar({ state }: ControlBarProps) {
           <input
             type="number"
             className="control-bar-input"
-            style={{ width: '48px' }}
+            style={{ width: '52px' }}
             value={txt.letterSpacingPt || 0}
             step="0.1"
             onInput={(e) =>
@@ -283,7 +285,7 @@ export function ControlBar({ state }: ControlBarProps) {
           <input
             type="number"
             className="control-bar-input"
-            style={{ width: '44px' }}
+            style={{ width: '48px' }}
             value={txt.columnGutterMm || 4}
             min="0"
             step="0.5"
@@ -320,18 +322,15 @@ export function ControlBar({ state }: ControlBarProps) {
             </button>
           )}
           <button
-            className="control-bar-btn"
+            className={`control-bar-btn ${copyfitStatus ? 'active' : ''}`}
             onClick={() => {
               const res = stateManager.copyfitTextFrame(txt.id);
-              if (res.adjustments.length > 0) {
-                alert(`Copyfit applied:\n• ${res.adjustments.join('\n• ')}`);
-              } else {
-                alert('Text frame is already copyfit cleanly.');
-              }
+              setCopyfitStatus(res.adjustments.length > 0 ? 'Fitted' : 'Clean');
+              setTimeout(() => setCopyfitStatus(null), 1400);
             }}
-            title="Auto Copyfit: bind orphan words & micro-adjust tracking to fit frame"
+            title="Auto Copyfit: eliminate overflow, bind orphans, or fit frame to text"
           >
-            Copyfit
+            {copyfitStatus || 'Copyfit'}
           </button>
         </div>
       </div>
@@ -378,7 +377,7 @@ export function ControlBar({ state }: ControlBarProps) {
           <input
             type="number"
             className="control-bar-input"
-            style={{ width: '44px' }}
+            style={{ width: '48px' }}
             value={shp.strokeWidthMm}
             min="0"
             step="0.2"
@@ -410,7 +409,7 @@ export function ControlBar({ state }: ControlBarProps) {
           <input
             type="number"
             className="control-bar-input"
-            style={{ width: '44px' }}
+            style={{ width: '48px' }}
             value={tbl.cellPaddingMm || 1.5}
             min="0"
             step="0.5"
