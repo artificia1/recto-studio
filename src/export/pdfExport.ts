@@ -24,6 +24,45 @@ export interface ExportOptions {
   onWarning?: (warning: string) => void;
 }
 
+function drawBezierSegmentInPdf(
+  doc: any,
+  originX: number,
+  originY: number,
+  p0: { x: number; y: number },
+  p1: { x: number; y: number },
+  p2: { x: number; y: number },
+  p3: { x: number; y: number }
+): void {
+  const isStraight =
+    Math.abs(p1.x - p0.x) < 0.001 &&
+    Math.abs(p1.y - p0.y) < 0.001 &&
+    Math.abs(p2.x - p3.x) < 0.001 &&
+    Math.abs(p2.y - p3.y) < 0.001;
+
+  if (isStraight) {
+    doc.line(originX + p0.x, originY + p0.y, originX + p3.x, originY + p3.y);
+    return;
+  }
+
+  const STEPS = 16;
+  let lastX = originX + p0.x;
+  let lastY = originY + p0.y;
+  for (let s = 1; s <= STEPS; s++) {
+    const t = s / STEPS;
+    const u = 1 - t;
+    const tt = t * t;
+    const uu = u * u;
+    const uuu = uu * u;
+    const ttt = tt * t;
+
+    const curX = originX + (uuu * p0.x + 3 * uu * t * p1.x + 3 * u * tt * p2.x + ttt * p3.x);
+    const curY = originY + (uuu * p0.y + 3 * uu * t * p1.y + 3 * u * tt * p2.y + ttt * p3.y);
+    doc.line(lastX, lastY, curX, curY);
+    lastX = curX;
+    lastY = curY;
+  }
+}
+
 export async function exportDocumentToPdf(
   state: ProjectState,
   options: ExportOptions = {}
@@ -250,12 +289,20 @@ export async function exportDocumentToPdf(
           for (let i = 1; i < pathEl.nodes.length; i++) {
             const prev = pathEl.nodes[i - 1];
             const curr = pathEl.nodes[i];
-            doc.line(elX + prev.x, elY + prev.y, elX + curr.x, elY + curr.y);
+            const p0 = { x: prev.x, y: prev.y };
+            const p1 = { x: prev.x + (prev.handleOut?.x || 0), y: prev.y + (prev.handleOut?.y || 0) };
+            const p2 = { x: curr.x + (curr.handleIn?.x || 0), y: curr.y + (curr.handleIn?.y || 0) };
+            const p3 = { x: curr.x, y: curr.y };
+            drawBezierSegmentInPdf(doc, elX, elY, p0, p1, p2, p3);
           }
           if (pathEl.closed && pathEl.nodes.length >= 3) {
             const first = pathEl.nodes[0];
             const last = pathEl.nodes[pathEl.nodes.length - 1];
-            doc.line(elX + last.x, elY + last.y, elX + first.x, elY + first.y);
+            const p0 = { x: last.x, y: last.y };
+            const p1 = { x: last.x + (last.handleOut?.x || 0), y: last.y + (last.handleOut?.y || 0) };
+            const p2 = { x: first.x + (first.handleIn?.x || 0), y: first.y + (first.handleIn?.y || 0) };
+            const p3 = { x: first.x, y: first.y };
+            drawBezierSegmentInPdf(doc, elX, elY, p0, p1, p2, p3);
           }
         }
       } else if (el.type === 'text') {

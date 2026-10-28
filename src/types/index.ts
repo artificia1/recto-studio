@@ -467,7 +467,8 @@ export interface ProjectState {
   layers: Layer[];
   activeLayerId: string;
   previewMode?: boolean;
-  plateSolo?: 'all' | 'cyan' | 'magenta' | 'yellow' | 'black';
+  plateSolo?: 'all' | 'cyan' | 'magenta' | 'yellow' | 'black' | 'spot';
+  tacHeatmap?: boolean;
   showReadingOrder?: boolean;
   showSlugBanner?: boolean;
   comments?: CommentPin[];
@@ -521,7 +522,10 @@ export type PreflightIssueCode =
   | 'BLEED_ERROR'
   | 'MISSING_ALT_TEXT'
   | 'HEADING_ORDER_HAZARD'
-  | 'TAC_INK_DENSITY';
+  | 'TAC_INK_DENSITY'
+  | 'TYPO_STRAIGHT_QUOTES'
+  | 'TYPO_DOUBLE_SPACES'
+  | 'TYPO_HYPHENATION_LADDER';
 
 export type PreflightSeverity = 'error' | 'warning' | 'info';
 

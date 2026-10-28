@@ -125,6 +125,13 @@ export function App() {
       spreadCanvasRef.current.render();
       console.log('SpreadCanvas 2D render engine connected to Preact TSX shell.');
     }
+
+    return () => {
+      if (spreadCanvasRef.current) {
+        spreadCanvasRef.current.destroy();
+        spreadCanvasRef.current = null;
+      }
+    };
   }, []);
 
   const handleDragOver = (e: DragEvent) => {

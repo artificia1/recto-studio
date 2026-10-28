@@ -412,6 +412,9 @@ export class SpreadCanvas {
   private pencilStrokePoints: Array<{ x: number; y: number; pressure: number }> = [];
   private pencilTargetPage: Page | null = null;
 
+  private windowCleanups: Array<() => void> = [];
+  private unsubState?: () => void;
+
   constructor(
     container: HTMLElement,
     canvas: HTMLCanvasElement,
@@ -430,18 +433,44 @@ export class SpreadCanvas {
     this.initEvents();
     this.resizeCanvas();
 
-    window.addEventListener('resize', () => {
+    this.addWindowListener('resize', () => {
       this.resizeCanvas();
       this.scheduleRender();
     });
 
-    stateManager.subscribe(() => {
+    this.unsubState = stateManager.subscribe(() => {
       this.scheduleRender();
     });
 
     collabSession.onPeersChange(() => {
       this.scheduleRender();
     });
+  }
+
+  public destroy(): void {
+    if (this.renderRafId !== null) {
+      cancelAnimationFrame(this.renderRafId);
+      this.renderRafId = null;
+    }
+    if (this.unsubState) {
+      this.unsubState();
+      this.unsubState = undefined;
+    }
+    for (const cleanup of this.windowCleanups) {
+      try {
+        cleanup();
+      } catch {}
+    }
+    this.windowCleanups = [];
+  }
+
+  private addWindowListener<K extends keyof WindowEventMap>(
+    type: K,
+    listener: (this: Window, ev: WindowEventMap[K]) => any,
+    options?: boolean | AddEventListenerOptions
+  ) {
+    window.addEventListener(type, listener as any, options);
+    this.windowCleanups.push(() => window.removeEventListener(type, listener as any, options));
   }
 
   public scheduleRender() {
@@ -481,16 +510,16 @@ export class SpreadCanvas {
   private initEvents() {
     this.canvas.style.touchAction = 'none';
     this.canvas.addEventListener('mousedown', this.handleMouseDown.bind(this));
-    window.addEventListener('mousemove', this.handleMouseMove.bind(this));
-    window.addEventListener('mouseup', this.handleMouseUp.bind(this));
+    this.addWindowListener('mousemove', this.handleMouseMove.bind(this));
+    this.addWindowListener('mouseup', this.handleMouseUp.bind(this));
     this.canvas.addEventListener('wheel', this.handleWheel.bind(this), { passive: false });
     this.canvas.addEventListener('dblclick', this.handleDoubleClick.bind(this));
 
     // Pointer events for Stylus (Apple Pencil, S-Pen, Surface Pen) and Palm Rejection
     this.canvas.addEventListener('pointerdown', this.handlePointerDown.bind(this));
-    window.addEventListener('pointermove', this.handlePointerMove.bind(this));
-    window.addEventListener('pointerup', this.handlePointerUp.bind(this));
-    window.addEventListener('pointercancel', this.handlePointerCancel.bind(this));
+    this.addWindowListener('pointermove', this.handlePointerMove.bind(this));
+    this.addWindowListener('pointerup', this.handlePointerUp.bind(this));
+    this.addWindowListener('pointercancel', this.handlePointerCancel.bind(this));
 
     // Touch support for tablets & landscape touchscreens
     this.canvas.addEventListener('touchstart', (e: TouchEvent) => {
@@ -502,6 +531,7 @@ export class SpreadCanvas {
       this.currentPointerType = 'touch';
 
       if (e.touches.length === 1) {
+        if (e.cancelable) e.preventDefault();
         const touch = e.touches[0];
         this.lastTouchX = touch.clientX;
         this.lastTouchY = touch.clientY;
@@ -536,7 +566,7 @@ export class SpreadCanvas {
       }
     }, { passive: false });
 
-    window.addEventListener('touchmove', (e: TouchEvent) => {
+    this.addWindowListener('touchmove', (e: TouchEvent) => {
       // Palm Rejection: Ignore touch moves while pen is actively drawing
       if (this.activePenPointerId !== null) {
         if (e.cancelable) e.preventDefault();
@@ -544,7 +574,10 @@ export class SpreadCanvas {
       }
       this.currentPointerType = 'touch';
 
-      if (e.touches.length === 1 && !this.isPanning) {
+      if (e.touches.length === 1) {
+        if (this.isPanning) {
+          this.isPanning = false;
+        }
         const touch = e.touches[0];
         this.lastTouchX = touch.clientX;
         this.lastTouchY = touch.clientY;
@@ -586,8 +619,21 @@ export class SpreadCanvas {
       if (this.activePenPointerId !== null) {
         return;
       }
-      if (this.isPanning && e.touches.length === 0) {
+      if (e.touches.length <= 1) {
         this.isPanning = false;
+      }
+      if (e.touches.length === 0) {
+        const touch = (e.changedTouches && e.changedTouches[0]);
+        const clientX = touch ? touch.clientX : this.lastTouchX;
+        const clientY = touch ? touch.clientY : this.lastTouchY;
+        const fakeMouse = {
+          clientX,
+          clientY,
+          button: 0,
+          preventDefault: () => {},
+          stopPropagation: () => {},
+        } as unknown as MouseEvent;
+        this.handleMouseUp(fakeMouse);
         return;
       }
       const touch = (e.changedTouches && e.changedTouches[0]) || (e.touches && e.touches[0]);
@@ -601,17 +647,14 @@ export class SpreadCanvas {
         stopPropagation: () => {},
       } as unknown as MouseEvent;
       this.handleMouseUp(fakeMouse);
-      if (e.touches.length === 0) {
-        this.isPanning = false;
-      }
     };
-    window.addEventListener('touchend', onTouchEnd);
-    window.addEventListener('touchcancel', onTouchEnd);
+    this.addWindowListener('touchend', onTouchEnd);
+    this.addWindowListener('touchcancel', onTouchEnd);
 
     this.canvas.addEventListener('dragover', (e) => e.preventDefault());
     this.canvas.addEventListener('drop', this.handleFileDrop.bind(this));
 
-    window.addEventListener('keydown', (e: KeyboardEvent) => {
+    this.addWindowListener('keydown', (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable) return;
       const isMod = e.ctrlKey || e.metaKey;
@@ -693,7 +736,7 @@ export class SpreadCanvas {
       }
     });
 
-    window.addEventListener('keyup', (e: KeyboardEvent) => {
+    this.addWindowListener('keyup', (e: KeyboardEvent) => {
       if (e.code === 'Space') {
         this.isSpacePanning = false;
         if (!this.isPanning) {
@@ -4303,39 +4346,71 @@ export class SpreadCanvas {
       const sh = Math.min(this.canvas.height - sy, Math.ceil(spreadH + bleedPx * 2));
 
       if (sw > 0 && sh > 0) {
-        try {
-          const imgData = ctx.getImageData(sx, sy, sw, sh);
-          const d = imgData.data;
-          for (let i = 0; i < d.length; i += 4) {
-            const r = d[i] / 255;
-            const g = d[i + 1] / 255;
-            const b = d[i + 2] / 255;
-            const k = 1 - Math.max(r, g, b);
-            const c = k >= 0.999 ? 0 : (1 - r - k) / (1 - k);
-            const m = k >= 0.999 ? 0 : (1 - g - k) / (1 - k);
-            const y = k >= 0.999 ? 0 : (1 - b - k) / (1 - k);
-
-            if (plate === 'cyan') {
-              d[i] = Math.round(255 * (1 - c));
-              d[i + 1] = Math.round(255 * (1 - c * 0.35));
-              d[i + 2] = 255;
-            } else if (plate === 'magenta') {
-              d[i] = 255;
-              d[i + 1] = Math.round(255 * (1 - m));
-              d[i + 2] = Math.round(255 * (1 - m * 0.45));
-            } else if (plate === 'yellow') {
-              d[i] = 255;
-              d[i + 1] = 255;
-              d[i + 2] = Math.round(255 * (1 - y));
-            } else if (plate === 'black') {
-              const v = Math.round(255 * (1 - k));
-              d[i] = v;
-              d[i + 1] = v;
-              d[i + 2] = v;
+        if (plate === 'spot') {
+          // Spot Plate Soloing:
+          // Wash out background / non-spot elements, highlight spot/varnish elements
+          ctx.save();
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
+          ctx.fillRect(sx, sy, sw, sh);
+          for (const el of spread.elements) {
+            const spotCol = (el as any).spotColor;
+            if (spotCol) {
+              const pageIdx = Math.max(0, spread.pages.findIndex(p => p.id === el.pageId));
+              const elX = origin.x + (pageIdx * pageWidthMm + el.x) * pxPerMm;
+              const elY = origin.y + el.y * pxPerMm;
+              const elW = el.width * pxPerMm;
+              const elH = el.height * pxPerMm;
+              ctx.fillStyle = '#1e1b4b';
+              ctx.fillRect(elX, elY, elW, elH);
+              ctx.strokeStyle = '#6366f1';
+              ctx.lineWidth = 2;
+              ctx.strokeRect(elX, elY, elW, elH);
+              ctx.fillStyle = '#4f46e5';
+              const badgeW = Math.max(90, ctx.measureText(`SPOT: ${spotCol}`).width + 12);
+              ctx.fillRect(elX, elY - 18, badgeW, 16);
+              ctx.fillStyle = '#ffffff';
+              ctx.font = 'bold 10px Inter, sans-serif';
+              ctx.textAlign = 'left';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(`SPOT: ${spotCol}`, elX + 4, elY - 10);
             }
           }
-          ctx.putImageData(imgData, sx, sy);
-        } catch {}
+          ctx.restore();
+        } else {
+          try {
+            const imgData = ctx.getImageData(sx, sy, sw, sh);
+            const d = imgData.data;
+            for (let i = 0; i < d.length; i += 4) {
+              const r = d[i] / 255;
+              const g = d[i + 1] / 255;
+              const b = d[i + 2] / 255;
+              const k = 1 - Math.max(r, g, b);
+              const c = k >= 0.999 ? 0 : (1 - r - k) / (1 - k);
+              const m = k >= 0.999 ? 0 : (1 - g - k) / (1 - k);
+              const y = k >= 0.999 ? 0 : (1 - b - k) / (1 - k);
+
+              if (plate === 'cyan') {
+                d[i] = Math.round(255 * (1 - c));
+                d[i + 1] = Math.round(255 * (1 - c * 0.35));
+                d[i + 2] = 255;
+              } else if (plate === 'magenta') {
+                d[i] = 255;
+                d[i + 1] = Math.round(255 * (1 - m));
+                d[i + 2] = Math.round(255 * (1 - m * 0.45));
+              } else if (plate === 'yellow') {
+                d[i] = 255;
+                d[i + 1] = 255;
+                d[i + 2] = Math.round(255 * (1 - y));
+              } else if (plate === 'black') {
+                const v = Math.round(255 * (1 - k));
+                d[i] = v;
+                d[i + 1] = v;
+                d[i + 2] = v;
+              }
+            }
+            ctx.putImageData(imgData, sx, sy);
+          } catch {}
+        }
       }
     }
 
@@ -4344,7 +4419,85 @@ export class SpreadCanvas {
     this.drawCommentPins(ctx, origin, pxPerMm, state);
     this.drawMeasureTool(ctx, origin, pxPerMm, state);
 
+    if (state.tacHeatmap) {
+      this.drawTacHeatmapOverlay(ctx, origin, pxPerMm, pageWidthMm, spread);
+    }
+
     this.drawRulers();
+  }
+
+  private drawTacHeatmapOverlay(
+    ctx: CanvasRenderingContext2D,
+    origin: { x: number; y: number },
+    pxPerMm: number,
+    pageWidthMm: number,
+    spread: Spread
+  ) {
+    ctx.save();
+    let hasExceedance = false;
+
+    for (const el of spread.elements) {
+      const colorsToCheck = [
+        (el as any).fillColor,
+        (el as any).strokeColor,
+        (el as any).color,
+        (el as any).backgroundColor,
+        (el as any).borderColor,
+      ].filter(Boolean);
+
+      let maxTac = 0;
+      for (const col of colorsToCheck) {
+        const tac = stateManager.calculateTacPercentage(col);
+        if (tac > maxTac) maxTac = tac;
+      }
+
+      if (maxTac > 300) {
+        hasExceedance = true;
+        const pageIdx = Math.max(0, spread.pages.findIndex(p => p.id === el.pageId));
+        const elScreenX = origin.x + (pageIdx * pageWidthMm + el.x) * pxPerMm;
+        const elScreenY = origin.y + el.y * pxPerMm;
+        const elScreenW = el.width * pxPerMm;
+        const elScreenH = el.height * pxPerMm;
+
+        // Translucent ink density heatmap overlay
+        const severityAlpha = Math.min(0.65, 0.35 + (maxTac - 300) / 200);
+        ctx.fillStyle = `rgba(239, 68, 68, ${severityAlpha})`;
+        ctx.fillRect(elScreenX, elScreenY, elScreenW, elScreenH);
+
+        // Warning border
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 2]);
+        ctx.strokeRect(elScreenX, elScreenY, elScreenW, elScreenH);
+        ctx.setLineDash([]);
+
+        // Badge showing exact TAC %
+        const badgeText = `${maxTac}% TAC`;
+        ctx.font = 'bold 10px Inter, system-ui, sans-serif';
+        const textW = ctx.measureText(badgeText).width;
+        const badgeW = textW + 10;
+        const badgeH = 16;
+        const badgeX = elScreenX + elScreenW - badgeW;
+        const badgeY = elScreenY;
+
+        ctx.fillStyle = '#b91c1c';
+        ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(badgeText, badgeX + badgeW / 2, badgeY + badgeH / 2);
+      }
+    }
+
+    // Top status pill
+    ctx.fillStyle = '#7f1d1d';
+    ctx.fillRect(origin.x, origin.y - 24, 220, 20);
+    ctx.fillStyle = '#fecaca';
+    ctx.font = 'bold 10.5px Inter, system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`TAC Heatmap: ${hasExceedance ? 'Exceedances Found (>300%)' : 'All Inks Normal (<=300%)'}`, origin.x + 8, origin.y - 14);
+    ctx.restore();
   }
 
   private drawSlugBanner(

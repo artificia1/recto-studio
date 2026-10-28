@@ -1197,6 +1197,11 @@ export class StateManager {
     this.notify();
   }
 
+  public toggleTacHeatmap() {
+    this.state.tacHeatmap = !this.state.tacHeatmap;
+    this.notify();
+  }
+
   public setBaselineGrid(partial: Partial<BaselineGridSettings>) {
     this.state.settings.baselineGrid = {
       ...this.state.settings.baselineGrid,
@@ -1626,10 +1631,16 @@ export class StateManager {
   }
 
   public deleteElement(id: string) {
-    this.unlinkTextFrame(id);
     const spread = this.getActiveSpread();
     const el = spread.elements.find(item => item.id === id);
-    if (el?.locked) return;
+    if (!el || el.locked) return;
+
+    if (el.type === 'text') {
+      this.unlinkTextFrame(id, true, false);
+    } else if (el.type === 'table') {
+      this.unlinkTableFrame(id, true, false);
+    }
+
     spread.elements = spread.elements.filter(item => item.id !== id);
     this.state.selectedElementIds = this.state.selectedElementIds.filter(item => item !== id);
     if (this.state.selectedElementId === id) {
@@ -1653,6 +1664,10 @@ export class StateManager {
       const textCloned = cloned as TextElement;
       delete textCloned.prevFrameId;
       delete textCloned.nextFrameId;
+    } else if (cloned.type === 'table') {
+      const tableCloned = cloned as TableElement;
+      delete tableCloned.prevFrameId;
+      delete tableCloned.nextFrameId;
     }
     this.addElement(cloned);
     return cloned.id;
@@ -1804,26 +1819,37 @@ export class StateManager {
     return true;
   }
 
-  public unlinkTextFrame(frameId: string) {
+  public unlinkTextFrame(frameId: string, restitch: boolean = false, recordHistory: boolean = true) {
     const found = this.findElementById(frameId);
     if (!found || found.element.type !== 'text') return;
     const frame = found.element as TextElement;
 
-    if (frame.nextFrameId) {
-      const next = this.findElementById(frame.nextFrameId)?.element as TextElement | undefined;
-      if (next) next.prevFrameId = undefined;
+    const prev = frame.prevFrameId ? (this.findElementById(frame.prevFrameId)?.element as TextElement | undefined) : undefined;
+    const next = frame.nextFrameId ? (this.findElementById(frame.nextFrameId)?.element as TextElement | undefined) : undefined;
+
+    if (restitch && prev && next) {
+      prev.nextFrameId = next.id;
+      next.prevFrameId = prev.id;
+      frame.prevFrameId = undefined;
+      frame.nextFrameId = undefined;
+      this.reflowStory(prev.id);
+    } else {
+      if (prev) {
+        prev.nextFrameId = undefined;
+        this.reflowStory(prev.id);
+      }
+      if (next) {
+        next.prevFrameId = undefined;
+      }
+      frame.prevFrameId = undefined;
       frame.nextFrameId = undefined;
     }
 
-    if (frame.prevFrameId) {
-      const prev = this.findElementById(frame.prevFrameId)?.element as TextElement | undefined;
-      if (prev) prev.nextFrameId = undefined;
-      frame.prevFrameId = undefined;
-    }
-
     this.state.linkingFromFrameId = null;
-    this.pushHistory();
-    this.notify();
+    if (recordHistory) {
+      this.pushHistory();
+      this.notify();
+    }
   }
 
   /**
@@ -1858,24 +1884,28 @@ export class StateManager {
   /**
    * Unlinks a table frame from its thread chain.
    */
-  public unlinkTableFrame(frameId: string): boolean {
+  public unlinkTableFrame(frameId: string, restitch: boolean = false, recordHistory: boolean = true): boolean {
     const el = this.getElementById(frameId);
     if (!el || el.type !== 'table') return false;
     const table = el as TableElement;
 
-    if (table.prevFrameId) {
-      const prev = this.getElementById(table.prevFrameId) as TableElement;
+    const prev = table.prevFrameId ? (this.getElementById(table.prevFrameId) as TableElement | undefined) : undefined;
+    const next = table.nextFrameId ? (this.getElementById(table.nextFrameId) as TableElement | undefined) : undefined;
+
+    if (restitch && prev && next) {
+      prev.nextFrameId = next.id;
+      next.prevFrameId = prev.id;
+    } else {
       if (prev) prev.nextFrameId = undefined;
-    }
-    if (table.nextFrameId) {
-      const next = this.getElementById(table.nextFrameId) as TableElement;
       if (next) next.prevFrameId = undefined;
     }
 
     table.prevFrameId = undefined;
     table.nextFrameId = undefined;
-    this.pushHistory();
-    this.notify();
+    if (recordHistory) {
+      this.pushHistory();
+      this.notify();
+    }
     return true;
   }
 
@@ -2118,6 +2148,15 @@ export class StateManager {
     const idsToDelete = this.state.selectedElementIds.filter(id => !lockedIds.has(id));
     if (idsToDelete.length === 0) return;
 
+    for (const id of idsToDelete) {
+      const el = spread.elements.find(e => e.id === id);
+      if (el?.type === 'text') {
+        this.unlinkTextFrame(id, true, false);
+      } else if (el?.type === 'table') {
+        this.unlinkTableFrame(id, true, false);
+      }
+    }
+
     const deleteSet = new Set(idsToDelete);
     spread.elements = spread.elements.filter(el => !deleteSet.has(el.id));
     this.state.selectedElementIds = this.state.selectedElementIds.filter(id => !deleteSet.has(id));
@@ -2334,6 +2373,16 @@ export class StateManager {
 
   public deleteSpread(index: number) {
     if (this.state.spreads.length <= 1) return;
+    const targetSpread = this.state.spreads[index];
+    if (targetSpread) {
+      for (const el of targetSpread.elements) {
+        if (el.type === 'text') {
+          this.unlinkTextFrame(el.id, true, false);
+        } else if (el.type === 'table') {
+          this.unlinkTableFrame(el.id, true, false);
+        }
+      }
+    }
     this.state.spreads.splice(index, 1);
     this.renumberPages();
     this.state.activeSpreadIndex = Math.max(0, Math.min(index, this.state.spreads.length - 1));
@@ -2346,18 +2395,38 @@ export class StateManager {
   public duplicateSpread(index: number) {
     if (index < 0 || index >= this.state.spreads.length) return;
     const src = this.state.spreads[index];
+    const pageIdMap = new Map<string, string>();
+    const newPages = src.pages.map((p, i) => {
+      const newPageId = `page-${Date.now()}-${i}`;
+      pageIdMap.set(p.id, newPageId);
+      return {
+        id: newPageId,
+        pageNumber: 0,
+        side: p.side,
+      };
+    });
+
     const newSpread: Spread = {
       id: `spread-${Date.now()}`,
       spreadIndex: this.state.spreads.length,
-      pages: src.pages.map((p, i) => ({
-        id: `page-${Date.now()}-${i}`,
-        pageNumber: 0,
-        side: p.side,
-      })),
-      elements: JSON.parse(JSON.stringify(src.elements)).map((el: CanvasElement) => ({
-        ...el,
-        id: `el-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
-      })),
+      pages: newPages,
+      elements: JSON.parse(JSON.stringify(src.elements)).map((el: CanvasElement) => {
+        const cloned: CanvasElement = {
+          ...el,
+          id: `el-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+          pageId: pageIdMap.get(el.pageId) || (newPages[0]?.id || el.pageId),
+        };
+        if (cloned.type === 'text') {
+          const textCloned = cloned as TextElement;
+          delete textCloned.prevFrameId;
+          delete textCloned.nextFrameId;
+        } else if (cloned.type === 'table') {
+          const tableCloned = cloned as TableElement;
+          delete tableCloned.prevFrameId;
+          delete tableCloned.nextFrameId;
+        }
+        return cloned;
+      }),
     };
     this.state.spreads.splice(index + 1, 0, newSpread);
     this.renumberPages();
@@ -2888,6 +2957,62 @@ export class StateManager {
             }
           }
         }
+
+        // 8. Typographic Linter: Straight Quotes, Double Spaces, Hyphenation Ladders
+        if (el.type === 'text') {
+          const txt = el as TextElement;
+          const content = txt.text || '';
+          if (content.length > 0) {
+            if (/"|'/.test(content)) {
+              issues.push({
+                id: `preflight-typo-quotes-${spreadIdx}-${el.id}`,
+                severity: 'info',
+                code: 'TYPO_STRAIGHT_QUOTES',
+                message: 'Straight typewriter quote(s) detected. Recommend typographical smart curly quotes (“ ” ‘ ’).',
+                spreadIndex: spreadIdx,
+                pageNumber,
+                elementId: el.id,
+              });
+            }
+            if (/  +/.test(content)) {
+              issues.push({
+                id: `preflight-typo-spaces-${spreadIdx}-${el.id}`,
+                severity: 'info',
+                code: 'TYPO_DOUBLE_SPACES',
+                message: 'Double or consecutive spaces detected. Recommend single word spacing for professional typesetting.',
+                spreadIndex: spreadIdx,
+                pageNumber,
+                elementId: el.id,
+              });
+            }
+            const lines = content.split('\n');
+            let ladderCount = 0;
+            let hasLadder = false;
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (trimmed.endsWith('-') || trimmed.endsWith('‐')) {
+                ladderCount++;
+                if (ladderCount >= 3) {
+                  hasLadder = true;
+                  break;
+                }
+              } else {
+                ladderCount = 0;
+              }
+            }
+            if (hasLadder) {
+              issues.push({
+                id: `preflight-typo-ladder-${spreadIdx}-${el.id}`,
+                severity: 'warning',
+                code: 'TYPO_HYPHENATION_LADDER',
+                message: 'Hyphenation ladder detected: 3 or more consecutive lines end with a hyphen.',
+                spreadIndex: spreadIdx,
+                pageNumber,
+                elementId: el.id,
+              });
+            }
+          }
+        }
       }
     });
 
@@ -3062,6 +3187,31 @@ export class StateManager {
       this.pushHistory();
       this.notify();
       return true;
+    }
+
+    if (issue.code === 'TYPO_STRAIGHT_QUOTES' && el.type === 'text') {
+      const txt = el as TextElement;
+      if (txt.text) {
+        let s = txt.text;
+        s = s.replace(/(^|[\s(\[{<])"/g, '$1\u201C');
+        s = s.replace(/"/g, '\u201D');
+        s = s.replace(/(^|[\s(\[{<])'/g, '$1\u2018');
+        s = s.replace(/'/g, '\u2019');
+        txt.text = s;
+        this.pushHistory();
+        this.notify();
+        return true;
+      }
+    }
+
+    if (issue.code === 'TYPO_DOUBLE_SPACES' && el.type === 'text') {
+      const txt = el as TextElement;
+      if (txt.text) {
+        txt.text = txt.text.replace(/  +/g, ' ');
+        this.pushHistory();
+        this.notify();
+        return true;
+      }
     }
 
     return false;

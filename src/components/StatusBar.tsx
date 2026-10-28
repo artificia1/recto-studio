@@ -108,15 +108,35 @@ export function StatusBar({ state }: StatusBarProps) {
             value={state.plateSolo || 'all'}
             onChange={(e: any) => stateManager.setPlateSolo(e.target.value)}
             className="status-quality-select"
-            title="CMYK Separation Plates: All, Cyan, Magenta, Yellow, Black (K)"
+            title="CMYK Separation Plates: All, Cyan, Magenta, Yellow, Black (K), Spot & Finishing"
           >
             <option value="all">All (CMYK)</option>
             <option value="cyan">Cyan</option>
             <option value="magenta">Magenta</option>
             <option value="yellow">Yellow</option>
             <option value="black">Black (K)</option>
+            <option value="spot">Spot & Finishing</option>
           </select>
         </div>
+        <button
+          type="button"
+          onClick={() => stateManager.toggleTacHeatmap()}
+          className={`status-btn-pill ${state.tacHeatmap ? 'status-btn-pill-active' : ''}`}
+          style={{
+            marginLeft: '6px',
+            padding: '2px 8px',
+            fontSize: '11px',
+            fontWeight: 600,
+            cursor: 'pointer',
+            borderRadius: '4px',
+            border: state.tacHeatmap ? '1px solid #ef4444' : '1px solid #374151',
+            background: state.tacHeatmap ? 'rgba(239, 68, 68, 0.2)' : 'transparent',
+            color: state.tacHeatmap ? '#f87171' : '#9ca3af',
+          }}
+          title="Toggle Visual TAC (Total Area Coverage) Ink Density Heatmap on Canvas"
+        >
+          TAC Heatmap: {state.tacHeatmap ? 'ON' : 'OFF'}
+        </button>
         <span className="status-divider status-meta-telemetry">|</span>
         <span className="status-item status-meta-telemetry">100% Offline • 0 KB Telemetry</span>
         <span className="status-divider">|</span>
