@@ -386,6 +386,7 @@ export class SpreadCanvas {
   // Multi-tier image caches (Full-Res vs Downscaled Viewport Proxy)
   private fullResCache: Map<string, HTMLImageElement> = new Map();
   private proxyCache: Map<string, HTMLCanvasElement> = new Map();
+  private failedImageSrcs: Set<string> = new Set();
 
   // Static layer offscreen canvas caching
   private staticCanvas: HTMLCanvasElement = document.createElement('canvas');
@@ -2854,6 +2855,7 @@ export class SpreadCanvas {
   private getDisplayImage(src: string, quality: DisplayQuality, proxySrc?: string, assetId?: string): HTMLImageElement | HTMLCanvasElement | null {
     if (!src && !proxySrc) return null;
     if (quality === 'fast') return null;
+    if (this.failedImageSrcs.has(src) || (proxySrc && this.failedImageSrcs.has(proxySrc))) return null;
 
     const isInteracting = this.isDragging || this.isPanning || this.isResizing;
     const effectiveQuality = isInteracting ? 'typical' : quality;
@@ -2868,6 +2870,11 @@ export class SpreadCanvas {
         img = new Image();
         img.src = src;
         img.onload = () => this.render();
+        img.onerror = () => {
+          this.failedImageSrcs.add(src);
+          this.fullResCache.delete(src);
+          this.render();
+        };
         this.fullResCache.set(src, img);
       }
       if (img.complete && img.naturalWidth > 0) {
@@ -2889,6 +2896,12 @@ export class SpreadCanvas {
         this.fullResCache.delete(effectiveSrc);
         this.render();
       };
+      img.onerror = () => {
+        this.failedImageSrcs.add(effectiveSrc);
+        this.failedImageSrcs.add(src);
+        this.fullResCache.delete(effectiveSrc);
+        this.render();
+      };
       this.fullResCache.set(effectiveSrc, img);
       return null;
     }
@@ -2900,6 +2913,38 @@ export class SpreadCanvas {
       return createdProxy;
     }
     return null;
+  }
+
+  private renderMissingImagePlaceholder(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    name: string,
+    zoom: number
+  ): void {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + w, y + h);
+    ctx.moveTo(x + w, y);
+    ctx.lineTo(x, y + h);
+    ctx.stroke();
+
+    const fontSize = Math.max(10, Math.min(13, 11 * zoom));
+    ctx.fillStyle = '#dc2626';
+    ctx.font = `600 ${fontSize}px Inter, -apple-system, BlinkMacSystemFont, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`[Missing Link: ${name}]`, x + w / 2, y + h / 2 - (fontSize * 0.7));
+
+    ctx.fillStyle = '#78716c';
+    ctx.font = `400 ${Math.max(9, fontSize - 2)}px Inter, -apple-system, BlinkMacSystemFont, sans-serif`;
+    ctx.fillText('Relink in Links panel or drop file here', x + w / 2, y + h / 2 + (fontSize * 0.8));
+    ctx.restore();
   }
 
   private createImageProxy(src: string, img: HTMLImageElement): HTMLCanvasElement {
@@ -3228,12 +3273,14 @@ export class SpreadCanvas {
               ctx.clip();
               ctx.drawImage(displayBitmap, fit.drawX, fit.drawY, fit.drawW, fit.drawH);
               ctx.restore();
+            } else if (this.failedImageSrcs.has(img.src) || (img.proxySrc && this.failedImageSrcs.has(img.proxySrc))) {
+              this.renderMissingImagePlaceholder(ctx, elScreenX, elScreenY, elScreenW, elScreenH, img.name || img.caption || 'Missing Image', state.zoom);
             } else {
               ctx.fillStyle = '#888888';
               ctx.font = `${Math.max(10, 11 * state.zoom)}px Inter, sans-serif`;
               ctx.textAlign = 'center';
               ctx.textBaseline = 'middle';
-              ctx.fillText('Loading display proxy...', elScreenX + elScreenW / 2, elScreenY + elScreenH / 2);
+              ctx.fillText('Loading image...', elScreenX + elScreenW / 2, elScreenY + elScreenH / 2);
             }
           } else {
             ctx.strokeStyle = '#d0d0d0';
@@ -3249,7 +3296,8 @@ export class SpreadCanvas {
             ctx.font = `${Math.max(10, 11 * state.zoom)}px Inter, sans-serif`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(img.caption || 'Image Frame (Drop photo here)', elScreenX + elScreenW / 2, elScreenY + elScreenH / 2);
+            const label = img.name ? `[Missing Link: ${img.name}]` : (img.caption || 'Image Frame (Drop photo here)');
+            ctx.fillText(label, elScreenX + elScreenW / 2, elScreenY + elScreenH / 2);
           }
         }
 
@@ -3734,13 +3782,25 @@ export class SpreadCanvas {
 
           for (let c = 0; c < colCount; c++) {
             const colX = elScreenX + paddingPx + (c * (singleColWidthPx + colGutterPx));
-            let currentY = elScreenY + paddingPx;
+            let vOffsetPx = 0;
+            if (text.verticalAlign && (text.verticalAlign === 'middle' || text.verticalAlign === 'bottom')) {
+              const maxLinesInCol = Math.floor((bottomLimit - (elScreenY + paddingPx)) / (lineSpacingPx || 1));
+              const linesInThisCol = Math.min(totalLines, maxLinesInCol);
+              const textHeightPx = Math.max(0, (linesInThisCol - 1) * lineSpacingPx + fontSizePx);
+              const remainingSpace = Math.max(0, (bottomLimit - (elScreenY + paddingPx)) - textHeightPx);
+              if (text.verticalAlign === 'middle') {
+                vOffsetPx = Math.floor(remainingSpace / 2);
+              } else if (text.verticalAlign === 'bottom') {
+                vOffsetPx = Math.floor(remainingSpace);
+              }
+            }
+            let currentY = elScreenY + paddingPx + vOffsetPx;
             const targetColLines = isBalanced
               ? (c < extraLines ? baseLinesPerCol + 1 : baseLinesPerCol)
               : Infinity;
             let linesInCol = 0;
 
-            if (useBaselineGrid) {
+            if (useBaselineGrid && !text.verticalAlign) {
               if (currentY < gridStartY) {
                 currentY = gridStartY;
               } else {
@@ -4001,6 +4061,15 @@ export class SpreadCanvas {
             ctx.fillText(isThreaded ? '➔' : '+', outPortX + 7, outPortY + 7);
           }
         }
+      } else if (!state.previewMode && el.type !== 'path') {
+        const elLayer = layerMap.get(el.layerId || 'layer-1') || state.layers?.[0];
+        const layerColor = elLayer?.colorHex || '#0d99ff';
+        ctx.save();
+        ctx.strokeStyle = layerColor;
+        ctx.globalAlpha = 0.45;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(elScreenX, elScreenY, elScreenW, elScreenH);
+        ctx.restore();
       }
     }
 

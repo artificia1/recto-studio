@@ -279,6 +279,7 @@ export interface TextElement extends BaseElement {
   storyId?: string;
   rawStoryText?: string;
   verticalAlign?: 'top' | 'middle' | 'bottom';
+  grepStyles?: GrepStyleRule[];
   columnRule?: {
     enabled: boolean;
     widthPt?: number;

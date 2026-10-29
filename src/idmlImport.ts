@@ -295,12 +295,143 @@ function distributeStoryAcrossFrames(chain: TextElement[], fullStoryText: string
   }
 }
 
+function isDarkColor(hex: string): boolean {
+  if (!hex || hex === 'transparent') return false;
+  const clean = hex.replace('#', '');
+  if (clean.length !== 6) return false;
+  const num = parseInt(clean, 16);
+  if (isNaN(num)) return false;
+  const r = (num >> 16) & 255;
+  const g = (num >> 8) & 255;
+  const b = num & 255;
+  return (r * 0.299 + g * 0.587 + b * 0.114) < 135;
+}
+
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+export function parseIdmlColors(files: Map<string, Uint8Array>): Map<string, string> {
+  const colorsMap = new Map<string, string>();
+  colorsMap.set('Color/Black', '#000000');
+  colorsMap.set('Color/Paper', '#ffffff');
+  colorsMap.set('Color/None', 'transparent');
+  colorsMap.set('Swatch/None', 'transparent');
+  colorsMap.set('None', 'transparent');
+  colorsMap.set('n', 'transparent');
+  colorsMap.set('kInvalidRef', 'transparent');
+
+  for (const [filename, content] of files.entries()) {
+    if (filename.toLowerCase().includes('graphic.xml') || filename.toLowerCase().includes('colors.xml')) {
+      const xml = new TextDecoder().decode(content);
+      const colorTags = extractXmlTags(xml, 'Color');
+      for (const cTag of colorTags) {
+        const self = extractXmlAttr(cTag, 'Self');
+        const space = (extractXmlAttr(cTag, 'Space') || 'CMYK').toUpperCase();
+        const valStr = extractXmlAttr(cTag, 'ColorValue') || '';
+        let vals = valStr.trim().split(/\s+/).map(Number).filter((n) => !isNaN(n));
+        if (vals.length < 3) {
+          const itemMatches = cTag.match(/<ListItem\b[^>]*>([\d\.\-]+)<\/ListItem>/gi);
+          if (itemMatches) {
+            vals = itemMatches.map((m) => parseFloat(m.replace(/<[^>]+>/g, '').trim())).filter((n) => !isNaN(n));
+          }
+        }
+        if (self && vals.length >= 3) {
+          if (space === 'RGB') {
+            const r = Math.min(255, Math.max(0, Math.round(vals[0])));
+            const g = Math.min(255, Math.max(0, Math.round(vals[1])));
+            const b = Math.min(255, Math.max(0, Math.round(vals[2])));
+            const hex = '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+            colorsMap.set(self, hex);
+            colorsMap.set(self.replace(/^(Color|Swatch)\//, ''), hex);
+          } else {
+            const c = (vals[0] || 0) / 100;
+            const m = (vals[1] || 0) / 100;
+            const y = (vals[2] || 0) / 100;
+            const k = (vals[3] || 0) / 100;
+            const r = Math.round(255 * (1 - c) * (1 - k));
+            const g = Math.round(255 * (1 - m) * (1 - k));
+            const b = Math.round(255 * (1 - y) * (1 - k));
+            const hex = '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+            colorsMap.set(self, hex);
+            colorsMap.set(self.replace(/^(Color|Swatch)\//, ''), hex);
+          }
+        }
+      }
+
+      const tintTags = extractXmlTags(xml, 'Tint');
+      for (const tTag of tintTags) {
+        const self = extractXmlAttr(tTag, 'Self');
+        const baseColor = extractXmlAttr(tTag, 'BaseColor');
+        const tintVal = parseFloat(extractXmlAttr(tTag, 'TintValue') || '100');
+        if (self && baseColor) {
+          const baseHex = colorsMap.get(baseColor) || colorsMap.get(baseColor.replace(/^(Color|Swatch)\//, ''));
+          if (baseHex && baseHex !== 'transparent') {
+            const tinted = resolveIdmlColor(baseColor, tintVal, colorsMap);
+            colorsMap.set(self, tinted);
+            colorsMap.set(self.replace(/^(Color|Swatch)\//, ''), tinted);
+          }
+        }
+      }
+    }
+  }
+  return colorsMap;
+}
+
+export function resolveIdmlColor(
+  colorRef: string | null | undefined,
+  tint: number | null | undefined,
+  colorsMap: Map<string, string>
+): string {
+  if (!colorRef || colorRef === 'n' || colorRef === 'None' || colorRef === 'Swatch/None' || colorRef === 'Color/None' || colorRef === 'kInvalidRef') {
+    return 'transparent';
+  }
+  const cleanRef = colorRef.replace(/^(Color|Swatch)\//, '');
+  let hex = colorsMap.get(colorRef) || colorsMap.get(cleanRef) || colorsMap.get(`Color/${cleanRef}`) || colorsMap.get(`Swatch/${cleanRef}`);
+  if (!hex) {
+    if (cleanRef.toLowerCase() === 'paper') return '#ffffff';
+    if (cleanRef.toLowerCase() === 'black') return '#000000';
+    const cmykMatch = colorRef.match(/C=(\d+)\s*M=(\d+)\s*Y=(\d+)\s*K=(\d+)/i);
+    if (cmykMatch) {
+      const c = Number(cmykMatch[1]) / 100;
+      const m = Number(cmykMatch[2]) / 100;
+      const y = Number(cmykMatch[3]) / 100;
+      const k = Number(cmykMatch[4]) / 100;
+      const r = Math.round(255 * (1 - c) * (1 - k));
+      const g = Math.round(255 * (1 - m) * (1 - k));
+      const b = Math.round(255 * (1 - y) * (1 - k));
+      hex = '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+    } else {
+      hex = '#1a1a1a';
+    }
+  }
+
+  if (hex === 'transparent') return 'transparent';
+
+  if (tint !== undefined && tint !== null && tint >= 0 && tint < 100) {
+    const cleanHex = hex.replace('#', '');
+    const num = parseInt(cleanHex, 16);
+    if (!isNaN(num) && cleanHex.length === 6) {
+      const r = (num >> 16) & 255;
+      const g = (num >> 8) & 255;
+      const b = num & 255;
+      const t = Math.max(0, Math.min(100, tint)) / 100;
+      const tr = Math.round(255 - (255 - r) * t);
+      const tg = Math.round(255 - (255 - g) * t);
+      const tb = Math.round(255 - (255 - b) * t);
+      return '#' + ((1 << 24) + (tr << 16) + (tg << 8) + tb).toString(16).slice(1);
+    }
+  }
+  return hex;
+}
+
 export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fileName?: string): Promise<ProjectState> {
   if (isInddBuffer(idmlBuffer)) {
     return parseInddToProjectState(idmlBuffer, fileName);
   }
   const files = await readZip(idmlBuffer);
   const textDecoder = new TextDecoder();
+  const colorsMap = parseIdmlColors(files);
 
   // 1. Parse Preferences & Document Settings
   let pageWidthMm = 210; // Default A4
@@ -394,6 +525,8 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
       fontFamily?: string;
       lineHeight?: number;
       alignment?: 'left' | 'center' | 'right' | 'justify';
+      color?: string;
+      grepStyles?: { pattern: string; color: string; bold?: boolean; italic?: boolean }[];
     }
   >();
 
@@ -409,6 +542,8 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
       let detectedFontFamily: string | undefined;
       let detectedLineHeight: number | undefined;
       let detectedAlignment: 'left' | 'center' | 'right' | 'justify' | undefined;
+      let detectedColor: string | undefined;
+      const storyGrepRules: { pattern: string; color: string; bold?: boolean; italic?: boolean }[] = [];
 
       for (const pr of pRanges) {
         const applied = extractXmlAttr(pr, 'AppliedParagraphStyle');
@@ -440,15 +575,40 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
             detectedLineHeight = Math.round((leading / detectedFontSize) * 100) / 100;
           }
 
+          const crFillColorAttr = extractXmlAttr(cr, 'FillColor');
+          const crFillTintAttr = parseFloat(extractXmlAttr(cr, 'FillTint') || '100');
+          let crResolvedColor: string | undefined = undefined;
+          if (crFillColorAttr) {
+            crResolvedColor = resolveIdmlColor(crFillColorAttr, isNaN(crFillTintAttr) ? undefined : crFillTintAttr, colorsMap);
+          }
+
+          if (crResolvedColor && crResolvedColor !== 'transparent' && !detectedColor) {
+            detectedColor = crResolvedColor;
+          }
+
           // Read Content and Br
           const tokens = cr.match(/<Content[^>]*>([\s\S]*?)<\/Content>|<Br\s*\/?>/gi) || [];
+          const rangeTokens: string[] = [];
           for (const tok of tokens) {
             if (tok.toLowerCase().startsWith('<br')) {
               paraTokens.push('\n');
+              rangeTokens.push('\n');
             } else {
               const textContent = tok.replace(/<Content[^>]*>/, '').replace(/<\/Content>/, '');
               paraTokens.push(textContent);
+              rangeTokens.push(textContent);
             }
+          }
+
+          const rangeText = rangeTokens.join('').trim();
+          if (crResolvedColor && crResolvedColor !== 'transparent' && rangeText.length > 0 && rangeText.length <= 80 && !/[\r\n]/.test(rangeText)) {
+            const fontStyle = (extractXmlAttr(cr, 'FontStyle') || '').toLowerCase();
+            storyGrepRules.push({
+              pattern: escapeRegex(rangeText),
+              color: crResolvedColor,
+              bold: fontStyle.includes('bold'),
+              italic: fontStyle.includes('italic'),
+            });
           }
         }
 
@@ -471,6 +631,16 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
         fullText = 'Imported text frame content';
       }
 
+      const uniqueGrepRules: { pattern: string; color: string; bold?: boolean; italic?: boolean }[] = [];
+      const seenPatterns = new Set<string>();
+      for (const rule of storyGrepRules) {
+        const key = `${rule.pattern}:${rule.color}:${rule.bold}:${rule.italic}`;
+        if (!seenPatterns.has(key)) {
+          seenPatterns.add(key);
+          uniqueGrepRules.push(rule);
+        }
+      }
+
       storiesMap.set(storyId, {
         text: fullText,
         styleId: detectedStyleId,
@@ -478,6 +648,8 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
         fontFamily: detectedFontFamily,
         lineHeight: detectedLineHeight,
         alignment: detectedAlignment,
+        color: detectedColor,
+        grepStyles: uniqueGrepRules.length > 0 ? uniqueGrepRules : undefined,
       });
     }
   }
@@ -570,6 +742,41 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
         }
       }
 
+      const tfFillColorAttr = extractXmlAttr(tfXml, 'FillColor');
+      const tfFillTintAttr = parseFloat(extractXmlAttr(tfXml, 'FillTint') || '100');
+      const tfBgColor = tfFillColorAttr
+        ? resolveIdmlColor(tfFillColorAttr, isNaN(tfFillTintAttr) ? undefined : tfFillTintAttr, colorsMap)
+        : 'transparent';
+
+      const tfStrokeColorAttr = extractXmlAttr(tfXml, 'StrokeColor');
+      const tfStrokeTintAttr = parseFloat(extractXmlAttr(tfXml, 'StrokeTint') || '100');
+      const tfStrokeWeightPt = parseFloat(extractXmlAttr(tfXml, 'StrokeWeight') || '0');
+      const tfBorderColor = (!isNaN(tfStrokeWeightPt) && tfStrokeWeightPt > 0 && tfStrokeColorAttr)
+        ? resolveIdmlColor(tfStrokeColorAttr, isNaN(tfStrokeTintAttr) ? undefined : tfStrokeTintAttr, colorsMap)
+        : 'transparent';
+      const tfBorderWidthMm = (!isNaN(tfStrokeWeightPt) && tfStrokeWeightPt > 0 && tfBorderColor !== 'transparent')
+        ? Math.round(tfStrokeWeightPt * PT_TO_MM * 10) / 10
+        : 0;
+
+      let vj = extractXmlAttr(tfXml, 'VerticalJustification');
+      if (!vj) {
+        const tfPrefMatch = tfXml.match(/<TextFramePreference\b[^>]*>/i);
+        if (tfPrefMatch) {
+          vj = extractXmlAttr(tfPrefMatch[0], 'VerticalJustification');
+        }
+      }
+      let verticalAlign: 'top' | 'middle' | 'bottom' | undefined = undefined;
+      if (vj?.includes('Center')) verticalAlign = 'middle';
+      else if (vj?.includes('Bottom')) verticalAlign = 'bottom';
+      else if (vj?.includes('Top')) verticalAlign = 'top';
+
+      let textColor = storyData?.color || '#1a1a1a';
+      if (!storyData?.color || storyData.color === '#1a1a1a' || storyData.color === '#000000') {
+        if (tfBgColor !== 'transparent' && isDarkColor(tfBgColor)) {
+          textColor = '#ffffff';
+        }
+      }
+
       const textEl: TextElement & { parentStoryId?: string } = {
         id: elId,
         type: 'text',
@@ -587,16 +794,21 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
         fontSizePt: storyData?.fontSizePt || 10,
         lineHeight: storyData?.lineHeight || 1.3,
         letterSpacingPt: 0,
-        color: '#1a1a1a',
+        color: textColor,
         alignment: storyData?.alignment || 'left',
         columns: cols,
         columnGutterMm,
-        backgroundColor: 'transparent',
-        borderColor: 'transparent',
-        borderWidthMm: 0,
+        backgroundColor: tfBgColor,
+        borderColor: tfBorderColor,
+        borderWidthMm: tfBorderWidthMm,
+        verticalAlign,
         paddingMm,
         paragraphStyleId: storyData?.styleId,
       };
+
+      if (storyData?.grepStyles && storyData.grepStyles.length > 0) {
+        (textEl as any).grepStyles = storyData.grepStyles;
+      }
 
       if (parentStory) {
         (textEl as any).parentStoryId = parentStory;
@@ -619,6 +831,22 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
 
       const widthMm = Math.max(5, Math.round(b.widthPt * PT_TO_MM * 10) / 10);
       const heightMm = Math.max(5, Math.round(b.heightPt * PT_TO_MM * 10) / 10);
+
+      const rFillColorAttr = extractXmlAttr(rXml, 'FillColor');
+      const rFillTintAttr = parseFloat(extractXmlAttr(rXml, 'FillTint') || '100');
+      const rFillColor = rFillColorAttr
+        ? resolveIdmlColor(rFillColorAttr, isNaN(rFillTintAttr) ? undefined : rFillTintAttr, colorsMap)
+        : 'transparent';
+
+      const rStrokeColorAttr = extractXmlAttr(rXml, 'StrokeColor');
+      const rStrokeTintAttr = parseFloat(extractXmlAttr(rXml, 'StrokeTint') || '100');
+      const rStrokeWeightPt = parseFloat(extractXmlAttr(rXml, 'StrokeWeight') || '0');
+      const rStrokeColor = (!isNaN(rStrokeWeightPt) && rStrokeWeightPt > 0 && rStrokeColorAttr)
+        ? resolveIdmlColor(rStrokeColorAttr, isNaN(rStrokeTintAttr) ? undefined : rStrokeTintAttr, colorsMap)
+        : 'transparent';
+      const rStrokeWidthMm = (!isNaN(rStrokeWeightPt) && rStrokeWeightPt > 0 && rStrokeColor !== 'transparent')
+        ? Math.round(rStrokeWeightPt * PT_TO_MM * 10) / 10
+        : 0;
 
       const isImage = rXml.includes('<Image') || rXml.includes('Image/');
       if (isImage) {
@@ -673,8 +901,8 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
           locked: false,
           src: imageSrc,
           fitMode: 'fill',
-          borderColor: '#111111',
-          borderWidthMm: 0,
+          borderColor: rStrokeColor !== 'transparent' ? rStrokeColor : '#111111',
+          borderWidthMm: rStrokeWidthMm,
           name: baseName || undefined,
           caption: baseName || (imageSrc ? 'Photo Frame' : 'Imported InDesign Photo Frame'),
         };
@@ -693,9 +921,9 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
           zIndex: 4 + rIdx,
           locked: false,
           shapeKind: 'rectangle',
-          fillColor: '#e5e5e5',
-          strokeColor: '#111111',
-          strokeWidthMm: 0.3,
+          fillColor: rFillColor === 'transparent' ? '#f0f0f0' : rFillColor,
+          strokeColor: rStrokeColor === 'transparent' ? '#111111' : rStrokeColor,
+          strokeWidthMm: rStrokeWidthMm || 0.3,
           strokeDash: 'solid',
         };
         spreadElements.push(shapeEl);
@@ -712,6 +940,22 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
       const widthMm = Math.max(5, Math.round(b.widthPt * PT_TO_MM * 10) / 10);
       const heightMm = Math.max(5, Math.round(b.heightPt * PT_TO_MM * 10) / 10);
 
+      const oFillColorAttr = extractXmlAttr(oXml, 'FillColor');
+      const oFillTintAttr = parseFloat(extractXmlAttr(oXml, 'FillTint') || '100');
+      const oFillColor = oFillColorAttr
+        ? resolveIdmlColor(oFillColorAttr, isNaN(oFillTintAttr) ? undefined : oFillTintAttr, colorsMap)
+        : 'transparent';
+
+      const oStrokeColorAttr = extractXmlAttr(oXml, 'StrokeColor');
+      const oStrokeTintAttr = parseFloat(extractXmlAttr(oXml, 'StrokeTint') || '100');
+      const oStrokeWeightPt = parseFloat(extractXmlAttr(oXml, 'StrokeWeight') || '0');
+      const oStrokeColor = (!isNaN(oStrokeWeightPt) && oStrokeWeightPt > 0 && oStrokeColorAttr)
+        ? resolveIdmlColor(oStrokeColorAttr, isNaN(oStrokeTintAttr) ? undefined : oStrokeTintAttr, colorsMap)
+        : 'transparent';
+      const oStrokeWidthMm = (!isNaN(oStrokeWeightPt) && oStrokeWeightPt > 0 && oStrokeColor !== 'transparent')
+        ? Math.round(oStrokeWeightPt * PT_TO_MM * 10) / 10
+        : 0;
+
       const ovalEl: ShapeElement = {
         id: `idml-oval-${sIdx}-${oIdx}`,
         type: 'shape',
@@ -725,9 +969,9 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
         zIndex: 4 + oIdx,
         locked: false,
         shapeKind: 'ellipse',
-        fillColor: '#e5e5e5',
-        strokeColor: '#111111',
-        strokeWidthMm: 0.3,
+        fillColor: oFillColor === 'transparent' ? '#f0f0f0' : oFillColor,
+        strokeColor: oStrokeColor === 'transparent' ? '#111111' : oStrokeColor,
+        strokeWidthMm: oStrokeWidthMm || 0.3,
         strokeDash: 'solid',
       };
       spreadElements.push(ovalEl);
