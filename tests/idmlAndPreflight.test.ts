@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { stateManager } from '../src/state';
 import { exportDocumentToIdml } from '../src/export/idmlExport';
+import { parseIdmlPackage, parseIdmlTextVariables } from '../src/idmlImport';
+import { createZipArchive } from '../src/zip';
 import { ShapeElement, TextElement } from '../src/types';
 
 describe('IDML Package Export & Prepress Preflight Intelligence', () => {
@@ -177,6 +179,86 @@ describe('IDML Package Export & Prepress Preflight Intelligence', () => {
 
     // Clean up
     stateManager.deleteElement(testOversetId);
+  });
+});
+
+describe('IDML Text Variable Resolution', () => {
+  it('resolves Custom Text variable definitions from designmap.xml, keyed by Self id', () => {
+    const designmapXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Document xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+	<TextVariable Self="dTextVariablenUI_quit" Name="UI_quit" VariableType="CustomTextType">
+		<CustomTextVariablePreference>
+			<Properties>
+				<Contents type="string">Quitter</Contents>
+			</Properties>
+		</CustomTextVariablePreference>
+	</TextVariable>
+	<TextVariable Self="dTextVariablenTV_ChapNum" Name="&lt;?AID 001b?&gt;TV XRefChapterNumber" VariableType="XrefChapterNumberType" />
+</Document>`;
+    const files = new Map<string, Uint8Array>([['designmap.xml', new TextEncoder().encode(designmapXml)]]);
+
+    const vars = parseIdmlTextVariables(files);
+
+    expect(vars.get('dTextVariablenUI_quit')).toBe('Quitter');
+    // Non-Custom-Text types (page/chapter numbers, running headers, …) depend on live
+    // layout this importer doesn't compute, so they're intentionally left unresolved.
+    expect(vars.has('dTextVariablenTV_ChapNum')).toBe(false);
+  });
+
+  it('inserts a variable\'s current value in place of its instance when importing a Story, leaving untagged occurrences of the same word untouched', async () => {
+    const designmapXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Document xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="21.4">
+	<TextVariable Self="dTextVariablenUI_quit" Name="UI_quit" VariableType="CustomTextType">
+		<CustomTextVariablePreference>
+			<Properties>
+				<Contents type="string">Quitter</Contents>
+			</Properties>
+		</CustomTextVariablePreference>
+	</TextVariable>
+	<idPkg:Spread src="Spreads/Spread_test.xml" />
+</Document>`;
+
+    const spreadXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="21.4">
+	<Spread Self="sp1">
+		<Page Self="p1" GeometricBounds="0 0 841.89 595.276" />
+		<TextFrame Self="tf1" ParentStory="story1" ItemTransform="1 0 0 1 0 0" GeometricBounds="0 0 200 400" />
+	</Spread>
+</idPkg:Spread>`;
+
+    // Mirrors what InDesign actually writes for Type > Text Variables > Insert Variable:
+    // a <TextVariableInstance> self-closing tag inside the styled CharacterStyleRange, with
+    // ResultText holding InDesign's last-cached value (deliberately stale here, "quit", to
+    // prove the importer prefers the live designmap.xml definition, "Quitter").
+    const storyXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<idPkg:Story xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="21.4">
+	<Story Self="story1">
+		<ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/$ID/NormalParagraphStyle">
+			<CharacterStyleRange AppliedCharacterStyle="CharacterStyle/Text variable">
+				<TextVariableInstance Self="tvi1" Name="UI_quit" ResultText="quit" AssociatedTextVariable="dTextVariablenUI_quit" />
+			</CharacterStyleRange>
+			<CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]">
+				<Content> to quit, press Esc.</Content>
+			</CharacterStyleRange>
+		</ParagraphStyleRange>
+	</Story>
+</idPkg:Story>`;
+
+    const idmlBytes = createZipArchive({
+      'designmap.xml': designmapXml,
+      'Spreads/Spread_test.xml': spreadXml,
+      'Stories/Story_story1.xml': storyXml,
+    });
+
+    const state = await parseIdmlPackage(idmlBytes, 'variable-test.idml');
+    const textEl = state.spreads[0]?.elements.find((el) => el.type === 'text') as TextElement | undefined;
+
+    expect(textEl).toBeDefined();
+    // The tagged instance resolves to the variable's current value...
+    expect(textEl!.text).toContain('Quitter to quit, press Esc.');
+    // ...while the untagged word "quit" later in the same sentence is left as plain text,
+    // and the stale cached ResultText ("quit") is not used in place of "Quitter".
+    expect(textEl!.text).not.toContain('quit to quit');
   });
 });
 

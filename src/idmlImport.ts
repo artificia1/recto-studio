@@ -311,6 +311,42 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * Resolves InDesign Text Variables (Type > Text Variables) to their current text value.
+ *
+ * Definitions live in designmap.xml as <TextVariable Self="..." Name="..." VariableType="...">.
+ * Custom Text variables carry their value in <CustomTextVariablePreference><Properties><Contents>.
+ * Usage sites in story XML are <TextVariableInstance AssociatedTextVariable="<Self>" ResultText="..."/>,
+ * where ResultText is the value InDesign last computed and cached for that instance.
+ *
+ * Returned map is keyed by the TextVariable's Self id (what AssociatedTextVariable points to),
+ * not by its Name, since Self is what instances actually reference.
+ */
+export function parseIdmlTextVariables(files: Map<string, Uint8Array>): Map<string, string> {
+  const variablesMap = new Map<string, string>();
+  const designmapFile = files.get('designmap.xml');
+  if (!designmapFile) return variablesMap;
+
+  const xml = new TextDecoder().decode(designmapFile);
+  const varTags = extractXmlTags(xml, 'TextVariable');
+
+  for (const tag of varTags) {
+    const selfId = extractXmlAttr(tag, 'Self');
+    if (!selfId) continue;
+
+    // Custom Text is the common case and the only type with a static, pre-known value.
+    // Other types (chapter/page number, running header, dates, …) depend on live layout
+    // or the current date, which this importer doesn't compute — those are left unresolved
+    // here so callers fall back to the instance's cached ResultText instead.
+    const contentsMatch = tag.match(/<Contents[^>]*>([\s\S]*?)<\/Contents>/i);
+    if (contentsMatch) {
+      variablesMap.set(selfId, contentsMatch[1]);
+    }
+  }
+
+  return variablesMap;
+}
+
 export function parseIdmlColors(files: Map<string, Uint8Array>): Map<string, string> {
   const colorsMap = new Map<string, string>();
   colorsMap.set('Color/Black', '#000000');
@@ -432,6 +468,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
   const files = await readZip(idmlBuffer);
   const textDecoder = new TextDecoder();
   const colorsMap = parseIdmlColors(files);
+  const textVariablesMap = parseIdmlTextVariables(files);
 
   // 1. Parse Preferences & Document Settings
   let pageWidthMm = 210; // Default A4
@@ -586,13 +623,24 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
             detectedColor = crResolvedColor;
           }
 
-          // Read Content and Br
-          const tokens = cr.match(/<Content[^>]*>([\s\S]*?)<\/Content>|<Br\s*\/?>/gi) || [];
+          // Read Content, Br, and Text Variable instances (Type > Text Variables > Insert Variable)
+          const tokens =
+            cr.match(/<Content[^>]*>([\s\S]*?)<\/Content>|<Br\s*\/?>|<TextVariableInstance\b[^>]*\/?>/gi) || [];
           const rangeTokens: string[] = [];
           for (const tok of tokens) {
-            if (tok.toLowerCase().startsWith('<br')) {
+            const lowerTok = tok.toLowerCase();
+            if (lowerTok.startsWith('<br')) {
               paraTokens.push('\n');
               rangeTokens.push('\n');
+            } else if (lowerTok.startsWith('<textvariableinstance')) {
+              // Prefer the live definition from designmap.xml (reflects Define > Edit changes);
+              // fall back to the instance's own cached ResultText for variable types we don't
+              // resolve (page/chapter numbers, running headers, dates, etc.).
+              const associated = extractXmlAttr(tok, 'AssociatedTextVariable');
+              const resultText = extractXmlAttr(tok, 'ResultText') || '';
+              const resolved = (associated && textVariablesMap.get(associated)) ?? resultText;
+              paraTokens.push(resolved);
+              rangeTokens.push(resolved);
             } else {
               const textContent = tok.replace(/<Content[^>]*>/, '').replace(/<\/Content>/, '');
               paraTokens.push(textContent);
