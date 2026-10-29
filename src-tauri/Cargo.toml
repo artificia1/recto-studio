@@ -1,6 +1,6 @@
 [package]
 name = "recto-studio"
-version = "1.0.0"
+version = "1.1.0"
 description = "Recto Autonomous Desktop Publishing Studio"
 authors = ["Abhinav <artificia1@users.noreply.github.com>"]
 license = "MIT"

@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.0] - 2026-10-29
+
+### Added
+- **ISO/IEC 18004 Model 2 Native Vector QR Code Engine**:
+  - Standards-compliant QR matrix generation engine replacing pseudo-random fallback.
+  - Multi-tier Reed-Solomon Error Correction Codewords (Low, Medium, Quartile, High).
+  - Valid version and format information string encoding with ISO-standard 4-module quiet zones for instant mobile scanner acquisition.
+  - Pure SVG vector and print-ready DeviceCMYK/RGB stream outputs.
+- **Adobe InDesign IDML Graphic & Swatch Fidelity Engine**:
+  - Full swatch extraction from `Resources/Graphic.xml` supporting CMYK, RGB, Process, Spot, and Tint definitions.
+  - Preserves container background fill colors (`FillColor`, `FillTint`) and border strokes (`StrokeColor`, `StrokeWeight`, `StrokeTint`) for text frames, rectangles, and ovals.
+  - Story character-level formatting extraction (`<CharacterStyleRange>`) mapped to story colors and `grepStyles` runs, rendering multi-colored words (pink, cyan, green) on the same line.
+  - InDesign vertical frame alignment (`VerticalJustification="CenterAlign"` -> `middle`, `BottomAlign` -> `bottom`) with automatic canvas centering.
+  - Contrast-aware dark background detection (`isDarkColor`) automatically inverting text color to white (`#ffffff`) over dark containers.
+- **Asset Intelligence & Broken Link Recovery**:
+  - Robust broken/missing image detection (`failedImageSrcs`) replacing perpetual "Loading display proxy..." canvas freeze.
+  - Renders InDesign-style crossed diagonal frames with prominent `[Missing Link: <filename>]` badges and relink drop prompts when linked raster files are unbundled.
+- **Mobile, Tablet & Stylus Touch Superpowers**:
+  - Pressure-sensitive stylus pencil tool with quadratic Bézier smoothing and hardware palm rejection (`pointerType === 'pen'`).
+  - Two-finger pinch-to-zoom, pan gesture inertia, and multi-touch shape drawing.
+  - Responsive UI adaptation: touch quick actions toolbar automatically hidden on desktop/mouse configurations for zero UI clutter, with manual toggle in View menu.
+  - Optimized `requestAnimationFrame` render pipeline eliminating touch latency and frame drops.
+- **Visual Prepress Intelligence & Plate Control**:
+  - Total Area Coverage (TAC) heatmap overlay highlighting over-inked press zones (>300% TAC).
+  - Typographic linter detecting loose lines, tight lines, double spaces, and repeated words.
+  - Single-click spot color plate soloing and ink separation preview.
+  - Thread vector restitching and InDesign-style empty-space outport click-to-link workflow.
+- **InDesign Parity & Document Preferences**:
+  - Native Adobe InDesign `.indd` binary document ingestion with deep XMP stream metadata extraction.
+  - Document Setup & Preferences modal (`Alt+Ctrl+P`) with live spread geometry and margin adjustments.
+  - Live GREP style automation, contour alpha channel text wrapping, and Tauri desktop file associations (`.recto`, `.idml`, `.indd`).
+  - Dynamic Anchored Objects, Split Columns, Scripting Panel, and Conditional Text.
+
+### Changed & Fixed
+- **UI Aesthetics & Typography Polish**:
+  - Resolved topbar title overlap and control bar input clipping across all viewport widths.
+  - Replaced ugly native browser scrollbars with custom sleek dark scrollbars matching Recto Studio aesthetics.
+  - Functional Typographic Copyfit Optimizer ("Orphan Buster") button directly integrated into the Contextual Control Bar with live feedback.
+  - Purged all informal emojis across the interface in favor of clean, accessible typography and vector icons.
+  - Cleaned canvas viewport by removing non-selected frame edge outlines; bounding outlines and handles only appear upon active selection.
+
+---
+
 ## [1.0.0] - 2026-10-16
 
 ### Added

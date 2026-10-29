@@ -140,7 +140,7 @@ export function StatusBar({ state }: StatusBarProps) {
         <span className="status-divider status-meta-telemetry">|</span>
         <span className="status-item status-meta-telemetry">100% Offline • 0 KB Telemetry</span>
         <span className="status-divider">|</span>
-        <span className="status-item status-version">Recto Studio v1.0.0</span>
+        <span className="status-item status-version">Recto Studio v1.1.0</span>
       </div>
 
       {drawerOpen && (

@@ -1,7 +1,7 @@
 {
   "name": "recto-studio",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "The open-source, web-first desktop publishing alternative to Adobe InDesign. Zero subscriptions, zero cloud telemetry, locked 60 FPS canvas, with InDesign shortcuts, IDML import, and print-ready PDF/X export.",
   "repository": {
     "type": "git",
