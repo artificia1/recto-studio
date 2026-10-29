@@ -4061,15 +4061,6 @@ export class SpreadCanvas {
             ctx.fillText(isThreaded ? '➔' : '+', outPortX + 7, outPortY + 7);
           }
         }
-      } else if (!state.previewMode && el.type !== 'path') {
-        const elLayer = layerMap.get(el.layerId || 'layer-1') || state.layers?.[0];
-        const layerColor = elLayer?.colorHex || '#0d99ff';
-        ctx.save();
-        ctx.strokeStyle = layerColor;
-        ctx.globalAlpha = 0.45;
-        ctx.lineWidth = 1;
-        ctx.strokeRect(elScreenX, elScreenY, elScreenW, elScreenH);
-        ctx.restore();
       }
     }
 
