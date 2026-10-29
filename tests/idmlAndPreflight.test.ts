@@ -262,4 +262,130 @@ describe('IDML Text Variable Resolution', () => {
   });
 });
 
+describe('IDML Text Variable Resolution — edge cases', () => {
+  const header = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+
+  // A Custom Text variable definition. Pass null for `value` to emit a self-closing
+  // <Contents/> — InDesign's encoding of a variable whose text has been cleared to empty.
+  function customTextVar(self: string, value: string | null): string {
+    const contents = value === null ? '<Contents type="string" />' : `<Contents type="string">${value}</Contents>`;
+    return `<TextVariable Self="${self}" Name="${self}" VariableType="CustomTextType">
+      <CustomTextVariablePreference><Properties>${contents}</Properties></CustomTextVariablePreference>
+    </TextVariable>`;
+  }
+
+  function designmap(defs: string): string {
+    return `${header}
+<Document xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="21.4">
+  ${defs}
+  <idPkg:Spread src="Spreads/Spread_test.xml" />
+</Document>`;
+  }
+
+  // Imports a story whose single paragraph is `storyBody` (a run of CharacterStyleRanges)
+  // and returns the resulting text frame's plain text.
+  async function importStoryText(defs: string, storyBody: string): Promise<string> {
+    const spreadXml = `${header}
+<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="21.4">
+  <Spread Self="sp1">
+    <Page Self="p1" GeometricBounds="0 0 841.89 595.276" />
+    <TextFrame Self="tf1" ParentStory="story1" ItemTransform="1 0 0 1 0 0" GeometricBounds="0 0 200 400" />
+  </Spread>
+</idPkg:Spread>`;
+    const storyXml = `${header}
+<idPkg:Story xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="21.4">
+  <Story Self="story1">
+    <ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/$ID/NormalParagraphStyle">
+      ${storyBody}
+    </ParagraphStyleRange>
+  </Story>
+</idPkg:Story>`;
+    const bytes = createZipArchive({
+      'designmap.xml': designmap(defs),
+      'Spreads/Spread_test.xml': spreadXml,
+      'Stories/Story_story1.xml': storyXml,
+    });
+    const state = await parseIdmlPackage(bytes, 'variable-test.idml');
+    const textEl = state.spreads[0]?.elements.find((el) => el.type === 'text') as TextElement | undefined;
+    return textEl?.text ?? '';
+  }
+
+  it('records a self-closing <Contents/> as an explicitly empty value, not as unresolved', () => {
+    const files = new Map<string, Uint8Array>([
+      ['designmap.xml', new TextEncoder().encode(designmap(customTextVar('dv_empty', null)))],
+    ]);
+    const vars = parseIdmlTextVariables(files);
+    expect(vars.has('dv_empty')).toBe(true);
+    expect(vars.get('dv_empty')).toBe('');
+  });
+
+  it('only resolves CustomTextType, ignoring a <Contents> on another variable type', () => {
+    const otherType = `<TextVariable Self="dv_page" Name="PG" VariableType="XrefPageNumberType">
+      <CustomTextVariablePreference><Properties><Contents>should-not-read</Contents></Properties></CustomTextVariablePreference>
+    </TextVariable>`;
+    const files = new Map<string, Uint8Array>([
+      ['designmap.xml', new TextEncoder().encode(designmap(otherType))],
+    ]);
+    const vars = parseIdmlTextVariables(files);
+    expect(vars.has('dv_page')).toBe(false);
+  });
+
+  it('ignores a <Contents> that is not inside a CustomTextVariablePreference', () => {
+    const strayContents = `<TextVariable Self="dv_stray" Name="S" VariableType="CustomTextType">
+      <SomeOtherPreference><Properties><Contents>stray</Contents></Properties></SomeOtherPreference>
+    </TextVariable>`;
+    const files = new Map<string, Uint8Array>([
+      ['designmap.xml', new TextEncoder().encode(designmap(strayContents))],
+    ]);
+    const vars = parseIdmlTextVariables(files);
+    expect(vars.has('dv_stray')).toBe(false);
+  });
+
+  it('renders a cleared variable as empty, not as its stale cached ResultText', async () => {
+    const text = await importStoryText(
+      customTextVar('dv_empty', null),
+      `<CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]">
+        <TextVariableInstance Self="tvi1" ResultText="STALE" AssociatedTextVariable="dv_empty" />
+        <Content>DONE</Content>
+      </CharacterStyleRange>`,
+    );
+    expect(text).toContain('DONE');
+    expect(text).not.toContain('STALE');
+  });
+
+  it('falls back to cached ResultText when AssociatedTextVariable is empty', async () => {
+    const text = await importStoryText(
+      customTextVar('dv_used', 'ignored'),
+      `<CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]">
+        <TextVariableInstance Self="tvi1" ResultText="CACHED" AssociatedTextVariable="" />
+      </CharacterStyleRange>`,
+    );
+    expect(text).toContain('CACHED');
+  });
+
+  it('falls back to cached ResultText for an unresolved (unknown) reference', async () => {
+    const text = await importStoryText(
+      customTextVar('dv_known', 'known-value'),
+      `<CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]">
+        <TextVariableInstance Self="tvi1" ResultText="PAGE-7" AssociatedTextVariable="dv_missing" />
+      </CharacterStyleRange>`,
+    );
+    expect(text).toContain('PAGE-7');
+    expect(text).not.toContain('known-value');
+  });
+
+  it('preserves the order of mixed Content, Br and variable tokens', async () => {
+    const text = await importStoryText(
+      customTextVar('dv_b', 'B'),
+      `<CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]">
+        <Content>A</Content>
+        <TextVariableInstance Self="tvi1" ResultText="x" AssociatedTextVariable="dv_b" />
+        <Br />
+        <Content>C</Content>
+      </CharacterStyleRange>`,
+    );
+    expect(text).toContain('AB\nC');
+  });
+});
+
 

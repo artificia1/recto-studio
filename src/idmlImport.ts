@@ -334,13 +334,26 @@ export function parseIdmlTextVariables(files: Map<string, Uint8Array>): Map<stri
     const selfId = extractXmlAttr(tag, 'Self');
     if (!selfId) continue;
 
-    // Custom Text is the common case and the only type with a static, pre-known value.
-    // Other types (chapter/page number, running header, dates, …) depend on live layout
-    // or the current date, which this importer doesn't compute — those are left unresolved
-    // here so callers fall back to the instance's cached ResultText instead.
-    const contentsMatch = tag.match(/<Contents[^>]*>([\s\S]*?)<\/Contents>/i);
+    // Custom Text is the only type with a static, pre-known value. Other types
+    // (chapter/page number, running header, dates, …) depend on live layout or the current
+    // date, which this importer doesn't compute — those are left unresolved here so callers
+    // fall back to the instance's cached ResultText instead.
+    if (extractXmlAttr(tag, 'VariableType') !== 'CustomTextType') continue;
+
+    // The value lives specifically in <CustomTextVariablePreference>…<Contents>; don't read
+    // a <Contents> that might belong to some other preference block.
+    const prefMatch = tag.match(/<CustomTextVariablePreference\b[^>]*>([\s\S]*?)<\/CustomTextVariablePreference>/i);
+    if (!prefMatch) continue;
+    const pref = prefMatch[1];
+
+    // <Contents>value</Contents> → that value; self-closing <Contents/> → an explicitly empty
+    // value. Both are recorded (empty string included) so a cleared variable overrides the
+    // instance's stale cached ResultText rather than falling back to it.
+    const contentsMatch = pref.match(/<Contents\b[^>]*>([\s\S]*?)<\/Contents>/i);
     if (contentsMatch) {
       variablesMap.set(selfId, contentsMatch[1]);
+    } else if (/<Contents\b[^>]*\/>/i.test(pref)) {
+      variablesMap.set(selfId, '');
     }
   }
 
@@ -633,12 +646,18 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
               paraTokens.push('\n');
               rangeTokens.push('\n');
             } else if (lowerTok.startsWith('<textvariableinstance')) {
-              // Prefer the live definition from designmap.xml (reflects Define > Edit changes);
-              // fall back to the instance's own cached ResultText for variable types we don't
-              // resolve (page/chapter numbers, running headers, dates, etc.).
+              // Prefer the live definition from designmap.xml (reflects Define > Edit changes),
+              // including a variable deliberately cleared to an empty string. Fall back to the
+              // instance's own cached ResultText only when there is no resolved definition —
+              // an empty/missing AssociatedTextVariable, or a variable type we don't resolve
+              // (page/chapter numbers, running headers, dates, etc.). `has` is used so that a
+              // resolved-but-empty value is not mistaken for "unresolved".
               const associated = extractXmlAttr(tok, 'AssociatedTextVariable');
-              const resultText = extractXmlAttr(tok, 'ResultText') || '';
-              const resolved = (associated && textVariablesMap.get(associated)) ?? resultText;
+              const resultText = extractXmlAttr(tok, 'ResultText') ?? '';
+              const resolved =
+                associated && textVariablesMap.has(associated)
+                  ? textVariablesMap.get(associated)!
+                  : resultText;
               paraTokens.push(resolved);
               rangeTokens.push(resolved);
             } else {
