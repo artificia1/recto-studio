@@ -23,3 +23,15 @@ yarn-error.log*
 /.planning/
 /STABILITY_ROADMAP.md
 /PR2_REVIEW.md
+/config.json
+/PROJECT.md
+/REQUIREMENTS.md
+/ROADMAP.md
+/STATE.md
+/STACK.md
+/ARCHITECTURE.md
+/STRUCTURE.md
+/CONVENTIONS.md
+/TESTING.md
+/INTEGRATIONS.md
+/CONCERNS.md

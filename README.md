@@ -135,7 +135,6 @@ recto-studio/
 │   ├── pdfGeometry.test.ts  # Prepress points & bleed math tests
 │   └── integration.test.ts  # Comprehensive engine integration suite
 ├── dist/                    # Production bundle outputs
-├── ARCHITECTURE.md          # In-depth systems architecture document
 └── vite.config.ts           # Bundler configuration
 ```
 
