@@ -353,6 +353,20 @@ describe('IDML Text Variable Resolution — edge cases', () => {
     expect(text).not.toContain('STALE');
   });
 
+  it('keeps an all-variable story empty when its only variable resolves to empty (no placeholder)', async () => {
+    const text = await importStoryText(
+      customTextVar('dv_empty', null),
+      `<CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]">
+        <TextVariableInstance Self="tvi1" ResultText="STALE" AssociatedTextVariable="dv_empty" />
+      </CharacterStyleRange>`,
+    );
+    // The resolved-empty result must survive: no stale cache, and no "Imported text frame
+    // content" placeholder that the empty-story fallback would otherwise inject.
+    expect(text).toBe('');
+    expect(text).not.toContain('Imported text frame content');
+    expect(text).not.toContain('STALE');
+  });
+
   it('falls back to cached ResultText when AssociatedTextVariable is empty', async () => {
     const text = await importStoryText(
       customTextVar('dv_used', 'ignored'),

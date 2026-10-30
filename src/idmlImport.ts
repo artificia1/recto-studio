@@ -585,6 +585,11 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
       const xml = textDecoder.decode(content);
       const storyId = extractXmlAttr(xml, 'Self') || filename.replace('Stories/', '').replace('.xml', '');
 
+      // Whether the story carries any real text markup. If it does, an empty result is
+      // intentional (e.g. a custom text variable cleared to an empty string) and must be
+      // kept as-is; the placeholder below is only for stories with no content at all.
+      const hasRenderableContent = /<Content\b|<TextVariableInstance\b/i.test(xml);
+
       const pRanges = extractXmlTags(xml, 'ParagraphStyleRange');
       const paragraphs: string[] = [];
       let detectedStyleId: string | undefined;
@@ -694,7 +699,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
         .replace(/&quot;/g, '"')
         .replace(/&apos;/g, "'");
 
-      if (!fullText.trim()) {
+      if (!fullText.trim() && !hasRenderableContent) {
         fullText = 'Imported text frame content';
       }
 
