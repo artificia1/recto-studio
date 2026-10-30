@@ -41,7 +41,18 @@ jobs:
           key: windows-2022-rust-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml', 'src-tauri/src/**', 'src-tauri/tauri.conf.json') }}
           restore-keys: windows-2022-rust-
       - name: Build Windows app and installer
-        run: npm run tauri:build -- --bundles nsis -- --locked
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if ($env:TAURI_SIGNING_PRIVATE_KEY) {
+            npm run tauri:build -- --bundles nsis -- --locked
+          } else {
+            '{"bundle":{"createUpdaterArtifacts":false}}' | Set-Content -Encoding ascii updater-local-signing.json
+            npm run tauri:build -- --config updater-local-signing.json --bundles nsis -- --locked
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Windows build failed.' }
       - name: Verify native file I/O
         working-directory: src-tauri
         run: cargo test --release --locked
@@ -59,6 +70,14 @@ jobs:
           $installer = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
           if (!$installer) { throw 'Windows installer was not generated.' }
           Copy-Item $installer.FullName "release-artifacts/Recto-Studio-$version-Windows-x64-setup.exe"
+          $signature = "$($installer.FullName).sig"
+          if (Test-Path $signature) {
+            Copy-Item $signature "release-artifacts/Recto-Studio-$version-Windows-x64-setup.exe.sig"
+            node scripts/updater-manifest.mjs $signature
+            if ($LASTEXITCODE -ne 0) { throw 'Could not create updater manifest.' }
+          } else {
+            Write-Output 'Draft requires local installer signing and latest.json before publication.'
+          }
           $hashes = Get-ChildItem release-artifacts -File | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)" }
           $hashes | Set-Content -Encoding ascii release-artifacts/SHA256SUMS.txt
           "RELEASE_VERSION=$version" >> $env:GITHUB_ENV

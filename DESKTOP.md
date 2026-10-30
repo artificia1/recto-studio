@@ -26,5 +26,35 @@ This release is not code-signed. Windows may show a publisher or reputation
 warning. Download from the official repository and compare the SHA-256 checksum
 with `SHA256SUMS.txt` on the release page if you need to verify the file.
 
-The application does not yet register document file associations or an automatic
-updater. Open documents from inside Recto and download future releases from GitHub.
+## In-app updates
+
+Desktop builds with updater support offer **Check for updates** in the top bar.
+If a newer release is available, choose **Install update**. Recto downloads the
+package, verifies its signature, saves pending publication edits, and starts the
+installer. Windows restarts the app afterwards. A failed download or save leaves
+the editor open so you can retry. Updates require an internet connection.
+
+Version 1.2.1 and earlier need one manual installation of an updater-enabled
+release. Browser users receive the deployed website instead. Portable users who
+choose Install update move to the installed edition in their Windows user profile.
+
+### Release maintenance
+
+The release workflow can use the `TAURI_SIGNING_PRIVATE_KEY` repository secret
+and, for encrypted keys, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Its private key
+must match the public key in `src-tauri/tauri.conf.json`. Keep a secure backup of
+the key: existing installations rely on it to trust future updates. Never commit
+private keys. The local development key is stored in the ignored `.release.local`
+directory. Alternatively, leave the key local: the workflow builds a draft
+without updater metadata; download its installer, sign it locally with
+`tauri signer sign --private-key-path <key-file> --app-version <version> <installer>`,
+then upload its public `.sig` and matching `latest.json` before publication.
+Never publish an updater release without these verified files.
+
+Increase the application version before building a new release. The workflow
+uploads the signed installer, its signature, and `latest.json` to a draft release.
+Publishing that release makes it available through the in-app checker. Test a
+real older-to-newer installation before the first updater-enabled public release.
+Updater signatures are separate from Windows publisher code signing.
+
+The application does not yet register document file associations.

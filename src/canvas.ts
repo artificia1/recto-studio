@@ -1,4 +1,5 @@
 import { handleCanvasKeyDown } from './engine/interaction/keyboard';
+import { masterTargetPage } from './engine/pageLabels';
 import {
   ProjectState,
   Spread,
@@ -3043,9 +3044,7 @@ export class SpreadCanvas {
           const mLayer = layerMap.get(mEl.layerId || 'layer-1');
           if (mLayer && mLayer.visible === false) continue;
 
-          const masterPage = master.pages.find(p => p.id === mEl.pageId);
-          let targetPage = spread.pages.find(p => masterPage && p.side === masterPage.side);
-          if (!targetPage) targetPage = spread.pages[0];
+          const targetPage = masterTargetPage(master.pages, spread.pages, mEl.pageId);
           if (!targetPage) continue;
 
           const pageIdx = spread.pages.findIndex(p => p.id === targetPage!.id);

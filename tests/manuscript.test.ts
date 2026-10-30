@@ -83,6 +83,39 @@ describe('Story lifecycle', () => {
   const current = (id: string) => stateManager.getElementById(id) as TextElement;
   const fullText = () => storyText(stateManager.getStoryContent('head'));
 
+  it('retains leading and trailing whitespace when paginating a legacy frame', () => {
+    const copy = '  ' + 'Legacy manuscript. '.repeat(400) + '\n\n';
+    current('head').text = copy;
+    expect(stateManager.paginateStory('head')).toBeGreaterThan(0);
+    expect(fullText()).toBe(copy);
+  });
+
+  it('paginates overflow without losing formatting and restores the publication with one undo', () => {
+    const content = parseMarkdownContent(manuscript.repeat(25)).content!;
+    stateManager.setStoryContent('head', content);
+    const before = JSON.stringify(stateManager.getState().spreads);
+    const added = stateManager.paginateStory('head');
+    expect(added).toBeGreaterThan(0);
+    expect(fullText()).toBe(storyText(content));
+    let frame = current('head');
+    let copy = frame.text;
+    while (frame.nextFrameId) { frame = current(frame.nextFrameId); copy += frame.text; }
+    expect(copy).toBe(storyText(content));
+    expect(layoutStory(frame.textContent!, frame, stateManager.getState().paragraphStyles).overset).toBe(false);
+    expect(stateManager.paginateStory('head')).toBe(0);
+    stateManager.undo();
+    expect(JSON.stringify(stateManager.getState().spreads)).toBe(before);
+  });
+
+  it('rolls back page generation when its limit is exceeded and rejects locked frames', () => {
+    stateManager.setStoryContent('head', plainStory('Long manuscript. '.repeat(10000)));
+    const before = JSON.stringify(stateManager.getState().spreads);
+    expect(() => stateManager.paginateStory('head', 1)).toThrow('more than');
+    expect(JSON.stringify(stateManager.getState().spreads)).toBe(before);
+    current('head').locked = true;
+    expect(() => stateManager.paginateStory('head')).toThrow('Unlock');
+  });
+
   it('merges existing copy and conserves exact text and formatting across frames', () => {
     stateManager.linkTextFrames('head', 'middle');
     stateManager.linkTextFrames('middle', 'tail');

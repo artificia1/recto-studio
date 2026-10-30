@@ -14,6 +14,8 @@ import type { IngestedStory } from '../contentImport';
 import type { TextElement } from '../types';
 import { BookletImpositionModal, CoverSpineModal } from './LazyPrintDialogs';
 
+import { AppUpdater } from './AppUpdater';
+
 interface TopBarProps {
   state: ProjectState;
   onImportManuscript: (story: IngestedStory, fileName: string, frame: TextElement) => void;
@@ -540,6 +542,7 @@ export function TopBar({
           >
             ↻
           </button>
+          {isDesktop() && <AppUpdater />}
           {onOpenShortcuts && (
             <button
               className="icon-btn"
@@ -846,6 +849,15 @@ export function TopBar({
                 <span className="dropdown-item-shortcut">Alt+Ctrl+P</span>
               </button>
 
+              <button className="top-dropdown-item" onClick={() => {
+                setShowFileMenu(false);
+                try {
+                  const count = stateManager.paginateStory(state.selectedElementId || '');
+                  alert(count ? `Added ${count} linked page${count === 1 ? '' : 's'}. You can undo this change.` : 'The story already fits its frames.');
+                } catch (error) {
+                  alert(error instanceof Error ? error.message : String(error));
+                }
+              }}><span>Auto-paginate selected story</span></button>
               <div className="dropdown-menu-divider" />
 
               <button

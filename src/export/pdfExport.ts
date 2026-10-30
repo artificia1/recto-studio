@@ -5,6 +5,7 @@
  */
 
 import { jsPDF } from 'jspdf';
+import { masterTargetPage } from '../engine/pageLabels';
 import { colorToCmyk, applyCmykTextColor, applyCmykFillColor, applyCmykDrawColor, applySpotColor } from './pdfColors';
 export { colorToCmyk, applyCmykTextColor, applyCmykFillColor, applyCmykDrawColor, applySpotColor } from './pdfColors';
 import { fontManager } from '../fontManager';
@@ -225,8 +226,7 @@ export async function exportDocumentToPdf(
           if (spread.elements.some(e => e.masterSourceId === mEl.id && e.pageId === page.id)) {
             continue;
           }
-          const masterPage = master.pages.find(p => p.id === mEl.pageId);
-          if (masterPage && masterPage.side !== page.side && spread.pages.length > 1) {
+          if (masterTargetPage(master.pages, spread.pages, mEl.pageId)?.id !== page.id) {
             continue;
           }
 

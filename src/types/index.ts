@@ -288,6 +288,8 @@ export interface StoryContent {
 }
 
 export interface TextElement extends BaseElement {
+  autoExtendStory?: boolean;
+  autoPaginationError?: string;
   type: 'text';
   text: string;
   fontFamily: string;
@@ -455,6 +457,7 @@ export interface Page {
   id: string;
   pageNumber: number;
   side: 'left' | 'right' | 'single';
+  section?: import('../engine/pageLabels').PublicationSection;
 }
 
 export interface MasterSpread {

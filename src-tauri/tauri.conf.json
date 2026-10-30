@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Recto Studio",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "identifier": "com.recto.studio",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -29,7 +29,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -41,8 +43,27 @@
     "shortDescription": "Desktop publishing for books, magazines, and print design",
     "longDescription": "High-fidelity, offline-first editorial layout and typography studio designed for independent publishers and zine creators.",
     "windows": {
-      "webviewInstallMode": { "type": "embedBootstrapper", "silent": true },
-      "nsis": { "installMode": "currentUser", "displayLanguageSelector": false, "startMenuFolder": "Recto Studio" }
+      "webviewInstallMode": {
+        "type": "embedBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false,
+        "startMenuFolder": "Recto Studio"
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMwNTA5Q0NCRUJGRTY3OTUKUldTVlovN3J5NXhRd0VuelVwUTBqdERqZVcvQVNOUU9KNW0rSjc5Z2pRQlhvY3EzN1RrRGpCcXoK",
+      "endpoints": [
+        "https://github.com/artificia1/recto-studio/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

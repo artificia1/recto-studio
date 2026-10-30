@@ -91,6 +91,7 @@ const elementSchemas: Record<string, Schema> = {
     backgroundColor: text, borderColor: text, borderWidthMm: nonnegative, paddingMm: optional(nonnegative),
     rawStoryText: optional(text), nextFrameId: optional(identifier), prevFrameId: optional(identifier),
     storyContent: optional(storyContent), textContent: optional(storyContent),
+    autoExtendStory: optional(boolean), autoPaginationError: optional(text),
     storyStart: optional(integer), storyEnd: optional(integer),
     grepStyles: optional(array(grepRule)),
   },
@@ -145,7 +146,8 @@ const element: Validator = (value, path) => {
   }
 };
 
-const page = object({ id: identifier, pageNumber: count, side: choice('left', 'right', 'single') });
+const page = object({ id: identifier, pageNumber: count, side: choice('left', 'right', 'single'),
+  section: optional(object({ title: text, startNumber: count, numbering: choice('arabic', 'roman-lower', 'roman-upper'), prefix: text })) });
 const spread = object({ id: identifier, spreadIndex: integer, pages: array(page), elements: array(element) });
 const master = object({ id: identifier, name: text, prefix: text, pages: array(page), elements: array(element) });
 const layer = object({ id: identifier, name: text, colorHex: text, visible: boolean, locked: boolean, order: number });

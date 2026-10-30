@@ -1,5 +1,7 @@
 import { stateManager } from '../../state';
 import { ProjectState } from '../../types';
+import { PublicationPanel } from './PublicationPanel';
+import { pageLabel } from '../../engine/pageLabels';
 
 interface PagesTabProps {
   state: ProjectState;
@@ -24,6 +26,7 @@ export function PagesTab({ state }: PagesTabProps) {
 
   return (
     <div className="pages-manager">
+      <PublicationPanel key={spreads[state.activeSpreadIndex].id} spread={spreads[state.activeSpreadIndex]} />
       {/* MASTER PAGES SECTION */}
       <div className="pages-header" style={{ marginBottom: '8px' }}>
         <span>MASTER PAGES ({masterSpreads.length})</span>
@@ -120,7 +123,7 @@ export function PagesTab({ state }: PagesTabProps) {
       <div className="spread-list">
         {spreads.map((spread, idx) => {
           const isCurrent = idx === state.activeSpreadIndex;
-          const pageNames = spread.pages.map((p) => `p.${p.pageNumber}`).join(' - ');
+          const pageNames = spread.pages.map((p) => `p.${pageLabel(spreads.flatMap(spread => spread.pages), p.id).label}`).join(' - ');
           const elementCount = spread.elements.length;
           const assignedMaster = masterSpreads.find((m) => m.id === spread.masterSpreadId);
 
@@ -133,7 +136,7 @@ export function PagesTab({ state }: PagesTabProps) {
               <div className="spread-preview-mini">
                 {spread.pages.map((p) => (
                   <div key={p.id} className="mini-page">
-                    {p.pageNumber}
+                    {pageLabel(spreads.flatMap(spread => spread.pages), p.id).label}
                   </div>
                 ))}
               </div>

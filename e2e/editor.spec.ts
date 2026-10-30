@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
-import { importProject, menuCommand, savedProject } from './fixtures';
+import { importProject, menuCommand, savedProject, projectFixture } from './fixtures';
 import { createZipArchive } from '../src/zip';
 const runtimeErrors = new WeakMap<Page, string[]>();
 
@@ -25,6 +25,99 @@ test('loads and opens the editor without uncaught errors', async ({ page }) => {
   await expect(page.getByTitle('Click to rename document')).toBeVisible();
   await page.screenshot({ path: 'test-results/editor-initial.png', fullPage: true });
   expect(errors).toEqual([]);
+});
+
+test('keeps footer tool and display controls separate at desktop and narrow widths', async ({ page }) => {
+  for (const width of [1440, 1366, 1024, 750]) {
+    await page.setViewportSize({ width, height: 900 });
+    const tool = page.locator('.status-active-tool');
+    const display = page.locator('.status-display-group').first();
+    await expect(tool).toBeVisible();
+    await expect(display).toBeVisible();
+    const a = (await tool.boundingBox())!;
+    const b = (await display.boundingBox())!;
+    expect(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y).toBe(true);
+    expect(await tool.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    expect(await page.locator('.status-bar').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    const footer = (await page.locator('.status-bar').boundingBox())!;
+    for (const selector of ['.mobile-canvas-zoom-pill', '.mobile-inspector-toggle-btn']) {
+      const control = page.locator(selector);
+      if (await control.isVisible()) {
+        const box = (await control.boundingBox())!;
+        expect(box.y + box.height).toBeLessThanOrEqual(footer.y);
+      }
+    }
+  }
+  await page.screenshot({ path: 'test-results/footer-responsive.png', fullPage: true });
+});
+
+test('automatically extends an opted-in story into facing spreads and undoes the edit', async ({ page }) => {
+  await importProject(page);
+  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  await page.getByText('Story pagination', { exact: true }).click();
+  await page.getByLabel('Automatically add pages for selected story').check();
+  await page.getByRole('button', { name: 'Properties', exact: true }).click();
+  const text = 'New manuscript content flows to linked pages. '.repeat(150);
+  await page.locator('.inspector-panel textarea').first().fill(text);
+  const saved = await savedProject(page);
+  expect(saved.spreads.length).toBeGreaterThan(1);
+  expect(saved.spreads[0].elements[0].autoExtendStory).toBe(true);
+  for (const spread of saved.spreads.slice(1)) {
+    expect(spread.pages.map((page: any) => page.side)).toEqual(['left', 'right']);
+  }
+  expect(saved.spreads.flatMap((spread: any) => spread.elements).map((frame: any) => frame.text).join('')).toBe(text);
+  await page.getByTitle('Undo (Ctrl+Z)', { exact: true }).click();
+  const restored = await savedProject(page);
+  expect(restored.spreads.length).toBe(1);
+  expect(restored.spreads[0].elements[0].text).toBe('Browser workflow sample');
+});
+
+test('configures publication sections, chapter openings and running headers through Pages', async ({ page }) => {
+  await importProject(page);
+  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  await page.getByText('Sections & numbering', { exact: true }).click();
+  await page.getByLabel('Section title', { exact: true }).fill('Front matter');
+  await page.getByLabel('Numbering', { exact: true }).selectOption('roman-lower');
+  await page.getByRole('button', { name: 'Apply section', exact: true }).click();
+  let saved = await savedProject(page);
+  expect(saved.spreads[0].pages[0].section.title).toBe('Front matter');
+  expect(saved.spreads[0].pages[0].section.numbering).toBe('roman-lower');
+  await page.getByText('Running header & page number', { exact: true }).click();
+  await page.getByRole('button', { name: 'Apply to this spread', exact: true }).click();
+  saved = await savedProject(page);
+  const master = saved.masterSpreads.find((master: any) => master.id === saved.spreads[0].masterSpreadId);
+  expect(master.elements.some((element: any) => element.text === '{{chapterTitle}}')).toBe(true);
+  await page.getByText('New chapter opening', { exact: true }).click();
+  await page.getByLabel('Chapter title', { exact: true }).fill('The next chapter');
+  await page.getByRole('button', { name: 'Add chapter', exact: true }).click();
+  saved = await savedProject(page);
+  expect(saved.spreads.at(-1).elements[0].storyContent.paragraphs[0].runs[0].text).toBe('The next chapter');
+  await page.reload();
+  await expect(page.getByTitle('Click to rename document')).toHaveValue('Browser QA document');
+  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  await expect(page.getByText('Sections & numbering', { exact: true })).toBeVisible();
+  await page.screenshot({ path: 'test-results/publication-pages.png', fullPage: true });
+});
+
+test('paginates a manuscript through the menu and undoes the generated pages', async ({ page }) => {
+  const project = projectFixture();
+  project.spreads[0].elements[0].text = 'A long manuscript for automatic pagination. '.repeat(500);
+  await importProject(page, project);
+  await page.getByTitle('File Management, Project IO, and Document Imports').click();
+  const dialog = page.waitForEvent('dialog');
+  const paginate = page.getByRole('button', { name: 'Auto-paginate selected story', exact: true }).click();
+  const message = await dialog;
+  expect(message.message()).toContain('Added');
+  await message.accept();
+  await paginate;
+  const saved = await savedProject(page);
+  expect(saved.spreads.length).toBeGreaterThan(1);
+  const frames = saved.spreads.flatMap((spread: any) => spread.elements);
+  expect(frames.map((frame: any) => frame.text).join('')).toBe(project.spreads[0].elements[0].text);
+  await page.getByTitle('Undo (Ctrl+Z)', { exact: true }).click();
+  const restored = await savedProject(page);
+  expect(restored.spreads.length).toBe(1);
+  expect(restored.spreads[0].elements[0].text).toBe(project.spreads[0].elements[0].text);
 });
 
 test('imports, edits, undoes and redoes a real project through the UI', async ({ page }) => {

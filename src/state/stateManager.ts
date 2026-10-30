@@ -4,6 +4,7 @@
  * Licensed under the MIT License.
  */
 
+import { pageLabel, type PublicationSection } from '../engine/pageLabels';
 import {
   ProjectState,
   PagePreset,
@@ -314,6 +315,19 @@ export class StateManager {
       this.reflowStory(id);
     }
     this.reflowFormattedStories();
+    const autoHeads = this.state.spreads.flatMap(spread => spread.elements)
+      .filter((element): element is TextElement => element.type === 'text' && !element.prevFrameId && !!element.autoExtendStory)
+      .map(element => element.id);
+    for (const id of autoHeads) {
+      try {
+        this.paginateStory(id, 200, false);
+        const head = this.getStoryHead(id);
+        if (head) delete head.autoPaginationError;
+      } catch (error) {
+        const head = this.getStoryHead(id);
+        if (head) head.autoPaginationError = error instanceof Error ? error.message : String(error);
+      }
+    }
     this.history.push(this.state);
   }
 
@@ -1166,6 +1180,107 @@ export class StateManager {
     }
   }
 
+  /** Append publication pages for overflow, preserving one undo boundary. */
+  public setStoryAutoExtend(frameId: string, enabled: boolean) {
+    const head = this.getStoryHead(frameId);
+    if (!head) throw new Error('Select a text frame first.');
+    if (head.locked || this.state.layers.find(layer => layer.id === head.layerId)?.locked) throw new Error('Unlock the story before changing automatic pagination.');
+    head.autoExtendStory = enabled;
+    delete head.autoPaginationError;
+    this.pushHistory();
+    this.notify();
+  }
+
+  public paginateStory(frameId: string, maxPages = 200, recordHistory = true): number {
+    const head = this.getStoryHead(frameId);
+    if (!head) throw new Error('Select a text frame to paginate.');
+    if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > 500) throw new Error('Choose a page limit between 1 and 500.');
+    const chain: TextElement[] = [];
+    const seen = new Set<string>();
+    let frame: TextElement | null = head;
+    while (frame) {
+      if (seen.has(frame.id)) throw new Error('Repair the circular text thread before paginating.');
+      if (frame.locked || this.state.layers.find(layer => layer.id === frame!.layerId)?.locked) throw new Error('Unlock the story before paginating.');
+      seen.add(frame.id);
+      chain.push(frame);
+      frame = frame.nextFrameId ? this.getElementById(frame.nextFrameId) as TextElement | null : null;
+      if (frame && frame.type !== 'text') throw new Error('The story links to an invalid frame.');
+    }
+    const backup = JSON.parse(JSON.stringify(this.state)) as ProjectState;
+    const activeSpreadId = this.getActiveSpread().id;
+    let added = 0;
+    try {
+      // Capture legacy copy verbatim before entering the formatted reflow path.
+      head.storyContent = this.getStoryContent(head.id);
+      head.rawStoryText = storyText(head.storyContent);
+      this.reflowStory(head.id);
+      let tail = chain[chain.length - 1];
+      const { widthMm, heightMm, margins, facingPages } = this.state.settings;
+      const width = widthMm - margins.insideMm - margins.outsideMm;
+      const height = heightMm - margins.topMm - margins.bottomMm;
+      if (width <= 0 || height <= 0) throw new Error('Page margins leave no room for text.');
+      while (true) {
+        const found = this.findElementById(tail.id)!;
+        const notes = this.getFootnotesForElement(tail.id);
+        const layout = layoutStory(tail.textContent!, tail, this.state.paragraphStyles, this.state.characterStyles,
+          undefined, notes.length ? notes.length * 4 + 3 : 0,
+          { obstacles: found.spread.elements, baselineGrid: this.state.settings.baselineGrid });
+        if (!layout.overset) break;
+        if (added >= maxPages) throw new Error(`This story needs more than ${maxPages} additional pages. No pages were added.`);
+        const insertionIndex = this.state.spreads.indexOf(found.spread) + 1;
+        const pageNumber = found.spread.pages[found.spread.pages.length - 1].pageNumber + 1;
+        const pageCount = facingPages && pageNumber % 2 === 0 ? 2 : 1;
+        if (added + pageCount > maxPages) throw new Error(`This story needs more than ${maxPages} additional pages. No pages were added.`);
+        const newSpread: Spread = { id: `spread-${crypto.randomUUID()}`, spreadIndex: insertionIndex,
+          pages: [], elements: [], masterSpreadId: found.spread.masterSpreadId };
+        const previousStart = tail.storyStart || 0;
+        for (let index = 0; index < pageCount; index++) {
+          const number = pageNumber + index;
+          const id = crypto.randomUUID();
+          const pageId = `page-${id}`;
+          const next: TextElement = {
+            ...JSON.parse(JSON.stringify(tail)), id: `text-${id}`, pageId,
+            x: facingPages && number % 2 === 0 ? margins.outsideMm : margins.insideMm,
+            y: margins.topMm, width, height, text: '', prevFrameId: tail.id,
+          };
+          delete next.nextFrameId;
+          delete next.storyContent;
+          delete next.rawStoryText;
+          delete next.textContent;
+          delete next.storyStart;
+          delete next.storyEnd;
+          delete next.autoExtendStory;
+          delete next.autoPaginationError;
+          delete next.masterSourceId;
+          delete next.isOverridden;
+          tail.nextFrameId = next.id;
+          newSpread.pages.push({ id: pageId, pageNumber: number, side: facingPages ? (number % 2 ? 'right' : 'left') : 'single' });
+          newSpread.elements.push(next);
+          added++;
+          tail = next;
+        }
+        this.state.spreads.splice(insertionIndex, 0, newSpread);
+        this.reflowStory(head.id);
+        if ((tail.storyStart || 0) <= previousStart && added > 1) throw new Error('The page cannot fit a line of this story. Increase the page size or reduce its text size.');
+      }
+      if (added) {
+        this.renumberPages();
+        this.state.activeSpreadIndex = this.state.spreads.findIndex(spread => spread.id === activeSpreadId);
+        if (recordHistory) {
+          this.pushHistory();
+          this.notify();
+        }
+      } else {
+        if (recordHistory) { this.state = backup; this.notify(false); }
+      }
+      return added;
+    } catch (error) {
+      this.state = backup;
+      if (recordHistory) this.notify(false);
+      throw error;
+    }
+  }
+
   public getStoryHead(frameId: string): TextElement | null {
     let frame = this.getElementById(frameId);
     const seen = new Set<string>();
@@ -1643,13 +1758,32 @@ export class StateManager {
       totalPages += sp.pages.length;
     }
 
-    // Resolve chapterTitle / sectionTitle by locating the most recent Heading 1 on or prior to pageNum
+    const pages = this.state.spreads.flatMap(spread => spread.pages);
+    const target = pages.find(page => page.pageNumber === pageNum);
+    const labels = target ? pageLabel(pages, target.id) : { label: String(pageNum), sectionTitle: '' };
+    // Walk physical pages, so a later heading on the same spread cannot leak backwards.
     let chapterTitle = '';
-    for (const spread of this.state.spreads) {
-      const pageMatch = spread.pages.some((p) => p.pageNumber === pageNum);
-      for (const el of spread.elements) {
+    for (const page of pages) {
+      if (page.pageNumber > pageNum) break;
+      if (page.section?.title) chapterTitle = page.section.title;
+      const spread = this.state.spreads.find(spread => spread.pages.some(candidate => candidate.id === page.id))!;
+      for (const el of spread.elements.filter(element => element.pageId === page.id).sort((a,b) => a.y - b.y || a.x - b.x)) {
         if (el.type === 'text') {
           const txt = el as TextElement;
+          const paragraphs = txt.textContent?.paragraphs || txt.storyContent?.paragraphs;
+          if (paragraphs) {
+            for (const [paragraphIndex, paragraph] of paragraphs.entries()) {
+              // A heading continued from an earlier frame must not replace its full title.
+              if (paragraphIndex === 0 && txt.storyStart && storyText(this.getStoryContent(txt.id))[txt.storyStart - 1] !== '\n') continue;
+              const styleId = paragraph.styleId || txt.paragraphStyleId;
+              const style = this.state.paragraphStyles.find(style => style.id === styleId);
+              if (styleId === 'style-h1' || (style && /head(ing|line)\s*1/i.test(style.name))) {
+                const title = paragraph.runs.map(run => run.text).join('').trim();
+                if (title) chapterTitle = title;
+              }
+            }
+            continue;
+          }
           const style = this.state.paragraphStyles.find((s) => s.id === txt.paragraphStyleId);
           const isH1 = txt.paragraphStyleId === 'style-h1' || (style && /head(ing|line)\s*1/i.test(style.name));
           if (isH1 && txt.text.trim()) {
@@ -1657,17 +1791,115 @@ export class StateManager {
           }
         }
       }
-      if (pageMatch) break;
     }
     if (!chapterTitle) {
       chapterTitle = this.state.settings.title;
     }
     return text
-      .replace(/\{\{page\}\}/gi, String(pageNum))
+      .replace(/\{\{page\}\}/gi, labels.label)
+      .replace(/\{\{physicalPage\}\}/gi, String(pageNum))
       .replace(/\{\{totalPages\}\}/gi, String(Math.max(1, totalPages)))
       .replace(/\{\{docTitle\}\}/gi, this.state.settings.title)
       .replace(/\{\{chapterTitle\}\}/gi, chapterTitle)
-      .replace(/\{\{sectionTitle\}\}/gi, chapterTitle);
+      .replace(/\{\{sectionTitle\}\}/gi, labels.sectionTitle || chapterTitle);
+  }
+
+  public setPageSection(pageId: string, section: PublicationSection | null) {
+    const page = this.state.spreads.flatMap(spread => spread.pages).find(page => page.id === pageId);
+    if (!page) throw new Error('Choose a publication page.');
+    if (section && (!Number.isSafeInteger(section.startNumber) || section.startNumber < 1 || section.startNumber > 1000000 ||
+      !['arabic', 'roman-lower', 'roman-upper'].includes(section.numbering))) throw new Error('Choose a valid section number and numbering style.');
+    if (section) page.section = { ...section };
+    else delete page.section;
+    this.pushHistory();
+    this.notify();
+  }
+
+  public appendChapter(title: string, rightHand = true, openingInsetMm = 25) {
+    if (!title.trim()) throw new Error('Enter a chapter title.');
+    const settings = this.state.settings;
+    const width = settings.widthMm - settings.margins.insideMm - settings.margins.outsideMm;
+    const height = settings.heightMm - settings.margins.topMm - settings.margins.bottomMm - openingInsetMm;
+    if (!Number.isFinite(openingInsetMm) || openingInsetMm < 0 || width <= 0 || height < 15) throw new Error('The opening inset leaves too little room for chapter text.');
+    let nextNumber = this.state.spreads.reduce((n, spread) => n + spread.pages.length, 0) + 1;
+    const masterSpreadId = this.getActiveSpread().masterSpreadId;
+    if (settings.facingPages && rightHand && nextNumber % 2 === 0) {
+      const id = crypto.randomUUID();
+      this.state.spreads.push({ id: `blank-${id}`, spreadIndex: this.state.spreads.length,
+        pages: [{ id: `page-${id}`, pageNumber: nextNumber++, side: 'left' }], elements: [] });
+    }
+    const id = crypto.randomUUID();
+    const pageId = `page-${id}`;
+    const content: StoryContent = { version: 1, paragraphs: [
+      { styleId: 'style-h1', runs: [{ text: title.trim() }] },
+      { styleId: 'style-body', runs: [{ text: '' }] },
+    ] };
+    const frame: TextElement = { id: `text-${id}`, pageId, type: 'text',
+      x: settings.facingPages && nextNumber % 2 === 0 ? settings.margins.outsideMm : settings.margins.insideMm,
+      y: settings.margins.topMm + openingInsetMm, width, height, rotation: 0, opacity: 1,
+      zIndex: 1, locked: false, text: storyText(content), storyContent: content,
+      fontFamily: 'Georgia, serif', fontSizePt: 11, lineHeight: 1.4, letterSpacingPt: 0,
+      color: '#111111', alignment: 'left', columns: settings.columnCount,
+      columnGutterMm: settings.columnGutterMm, paddingMm: 0, backgroundColor: 'transparent',
+      borderColor: 'transparent', borderWidthMm: 0, paragraphStyleId: 'style-body' };
+    this.state.spreads.push({ id: `chapter-${id}`, spreadIndex: this.state.spreads.length,
+      pages: [{ id: pageId, pageNumber: nextNumber, side: settings.facingPages ? (nextNumber % 2 ? 'right' : 'left') : 'single' }],
+      elements: [frame], masterSpreadId });
+    this.state.activeSpreadIndex = this.state.spreads.length - 1;
+    this.state.selectedElementId = frame.id;
+    this.state.selectedElementIds = [frame.id];
+    this.renumberPages();
+    this.reflowStory(frame.id);
+    this.pushHistory();
+    this.notify();
+    return frame.id;
+  }
+
+  public setRunningHeader(spreadId: string, header: string) {
+    const spread = this.state.spreads.find(spread => spread.id === spreadId);
+    if (!spread) throw new Error('Choose a spread.');
+    const settings = this.state.settings;
+    if (settings.margins.topMm < 10 || settings.margins.bottomMm < 10) throw new Error('Running headers need top and bottom margins of at least 10 mm.');
+    const existing = this.state.masterSpreads.find(master => master.id === spread.masterSpreadId);
+    const id = `running-${crypto.randomUUID()}`;
+    const master: MasterSpread = existing ? JSON.parse(JSON.stringify(existing)) : {
+      id, name: 'Running headers', prefix: 'R', elements: [],
+      pages: settings.facingPages ? [{ id: `${id}-left`, pageNumber: 1, side: 'left' }, { id: `${id}-right`, pageNumber: 2, side: 'right' }] : [{ id: `${id}-single`, pageNumber: 1, side: 'single' }],
+    };
+    master.id = id;
+    master.name = 'Running headers';
+    master.elements = master.elements.filter(element => !element.id.startsWith('running-header-') && !element.id.startsWith('running-footer-'));
+    const pageIds = new Map(master.pages.map(page => [page.id, `master-page-${crypto.randomUUID()}`]));
+    const elementIds = new Map(master.elements.map(element => [element.id, `master-item-${crypto.randomUUID()}`]));
+    master.pages.forEach(page => { page.id = pageIds.get(page.id)!; });
+    master.elements.forEach(element => {
+      element.id = elementIds.get(element.id)!;
+      element.pageId = pageIds.get(element.pageId)!;
+      if (element.type === 'text' || element.type === 'table') {
+        if (element.prevFrameId) element.prevFrameId = elementIds.get(element.prevFrameId);
+        if (element.nextFrameId) element.nextFrameId = elementIds.get(element.nextFrameId);
+      }
+    });
+    spread.detachedMasterElementIds = spread.detachedMasterElementIds?.map(id => elementIds.get(id) || id);
+    spread.elements.forEach(element => {
+      if (element.masterSourceId && elementIds.has(element.masterSourceId)) element.masterSourceId = elementIds.get(element.masterSourceId);
+    });
+    for (const page of master.pages) {
+      const base: TextElement = { id: `running-header-${crypto.randomUUID()}`, pageId: page.id, type: 'text',
+        x: page.side === 'left' ? settings.margins.outsideMm : settings.margins.insideMm,
+        y: Math.max(2, settings.margins.topMm / 2 - 3), width: settings.widthMm - settings.margins.insideMm - settings.margins.outsideMm,
+        height: 6, rotation: 0, opacity: 1, zIndex: 1, locked: true, text: header,
+        fontFamily: 'Georgia, serif', fontSizePt: 9, lineHeight: 1, letterSpacingPt: 0,
+        color: '#555555', alignment: page.side === 'left' ? 'left' : 'right', columns: 1,
+        columnGutterMm: 0, paddingMm: 0, borderColor: 'transparent', borderWidthMm: 0, backgroundColor: 'transparent' };
+      master.elements.push(base, { ...base, id: `running-footer-${crypto.randomUUID()}`, text: '{{page}}',
+        y: settings.heightMm - settings.margins.bottomMm / 2 - 3 });
+    }
+    if (!this.state.masterSpreads) this.state.masterSpreads = [];
+    this.state.masterSpreads.push(master);
+    spread.masterSpreadId = id;
+    this.pushHistory();
+    this.notify();
   }
 
   public deleteSelectedElements() {
@@ -1928,6 +2160,7 @@ export class StateManager {
       const newPageId = `page-${Date.now()}-${i}`;
       pageIdMap.set(p.id, newPageId);
       return {
+        ...JSON.parse(JSON.stringify(p)),
         id: newPageId,
         pageNumber: 0,
         side: p.side,

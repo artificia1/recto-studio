@@ -46,8 +46,44 @@ supported. Preview displays up to 150 paragraphs; placement retains everything.
 
 The shared formatted layout supports columns, alignment, baseline grids, and
 object wrapping. Legacy drop caps, GREP styling, optical margins, and Knuth-Plass
-composition are not yet integrated into this formatted path. Automatic page
-creation, keep rules, and widow/orphan control are follow-up work.
+composition are not yet integrated into this formatted path.
+
+Select a story frame and choose **File → Auto-paginate selected story** to append
+linked pages using the document margins. Formatting is retained, and the whole
+operation is one undo step. Existing pages and independent frames are retained.
+This command runs on request. In a facing-page document it appends left/right
+page pairs, with mirrored inside/outside margins; a right-hand singleton is used
+when that is the next physical position. Its 200-page limit prevents runaway
+generation; a failure rolls back the whole operation.
+
+New pages are inserted after the story's last spread, before subsequent chapters.
+For ongoing flow, select a frame and enable **Pages → Story pagination →
+Automatically add pages for selected story**. Text edits and typography changes
+then extend that story when it overflows, as part of the edit's undo step. The
+setting survives save/reopen. Other stories remain manual. Shortening copy keeps
+existing pages and frames so intentional layouts are not deleted. A failure
+retains the edited manuscript and shows a message in Story pagination.
+In **Pages → New chapter opening**, append a chapter with a styled heading and
+body paragraph, an opening inset, and optional right-hand opening. Facing-page
+documents get a blank page when needed. The entire addition is one undo step.
+This does not split an imported manuscript into chapters automatically.
+
+**Pages → Sections & numbering** starts a section at a selected page with a title,
+prefix, and Arabic or Roman numbering. Printed labels can restart; physical page
+positions remain unique. Roman labels above 3999 use Arabic digits. Removing a
+section restores the preceding section's numbering. Settings survive save/reopen.
+
+**Pages → Running header & page number** creates a reusable master based on the
+spread's existing master and adds header text plus a bottom-margin page number.
+Other spreads retain their own masters. Assign the generated master to another
+spread to reuse it. Top and bottom margins must each be at least 10 mm.
+Supported tokens include `{{chapterTitle}}`, `{{sectionTitle}}`, `{{docTitle}}`,
+`{{page}}` (printed label), `{{physicalPage}}`, and `{{totalPages}}`.
+Canvas and PDF resolve headings from formatted stories in physical page order.
+Master headers are not currently included in EPUB or flipbook output.
+
+Automatic removal of empty pages, keep rules, and widow/orphan controls remain
+follow-up work.
 
 ## Output and compatibility
 
