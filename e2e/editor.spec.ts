@@ -257,6 +257,37 @@ test('loads manuscript tools on demand and places text', async ({ page }) => {
   await expect(page.locator('.inspector-panel textarea').first()).toHaveValue('Manuscript loaded on demand');
 });
 
+test('clicking empty canvas clears a selected text frame with selection or text tool', async ({ page }) => {
+  await importProject(page);
+  const canvas = page.locator('#spread-canvas');
+  const box = (await canvas.boundingBox())!;
+  for (const tool of ['Selection Tool (V)', 'Type Tool (T)']) {
+    await page.evaluate(() => (window as any).recto.stateManager.selectElement('text-qa'));
+    await page.getByTitle(tool, { exact: true }).click();
+    await page.mouse.click(box.x + 15, box.y + 15);
+    await expect.poll(() => page.evaluate(() => (window as any).recto.stateManager.getState().selectedElementId)).toBeNull();
+  }
+});
+
+test('fitting a long frame leaves its text visible in the canvas renderer', async ({ page }) => {
+  await importProject(page);
+  await page.evaluate(() => {
+    const { stateManager, spreadCanvas } = (window as any).recto;
+    stateManager.updateElement('text-qa', { text: ('For three decades desktop publishing has been held hostage behind proprietary walls. ' +
+      'A designer arranges long text into carefully shaped lines.\n\n').repeat(5), height: 180, fontSizePt: 10, lineHeight: 1.5 });
+    stateManager.fitFrameToContent('text-qa');
+    spreadCanvas.render();
+  });
+  const overset = await page.evaluate(() => (window as any).recto.spreadCanvas.overflownTextFrameIds.has('text-qa'));
+  expect(overset).toBe(false);
+  await page.evaluate(() => {
+    const { stateManager, spreadCanvas } = (window as any).recto;
+    stateManager.copyfitTextFrame('text-qa');
+    spreadCanvas.render();
+  });
+  expect(await page.evaluate(() => (window as any).recto.spreadCanvas.overflownTextFrameIds.has('text-qa'))).toBe(false);
+});
+
 test('previews mixed manuscript styles, cancels safely and preserves rich formatting through editing and reopen', async ({ page }) => {
   await importProject(page);
   const upload = () => page.locator('input[accept=".md,.markdown,.txt,.docx"]').setInputFiles({

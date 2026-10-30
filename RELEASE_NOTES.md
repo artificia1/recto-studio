@@ -1,10 +1,16 @@
+## Bug fixes
+
+- Clicking empty canvas with the text tool clears the previous text-frame selection.
+- Fit Frame to Content and Auto Copyfit use measured text layout to avoid clipping content.
+- Formatted stories retain their text and linked frames are protected from accidental resizing.
+
 ## Windows desktop app
 
 Recto Studio now runs as a standalone Windows application with its own window,
 app icon, and Start menu entry. End users do not need Node.js, npm, or a terminal.
 
-- **Recommended:** download `Recto-Studio-1.2.0-Windows-x64-setup.exe`, install it, and open Recto Studio from the Start menu.
-- **Portable:** extract `Recto-Studio-1.2.0-Windows-x64-portable.zip` and open `Recto Studio.exe`. Requires an existing WebView2 runtime.
+- **Recommended:** download `Recto-Studio-1.2.1-Windows-x64-setup.exe`, install it, and open Recto Studio from the Start menu.
+- **Portable:** extract `Recto-Studio-1.2.1-Windows-x64-portable.zip` and open `Recto Studio.exe`. Requires an existing WebView2 runtime.
 - Native Open/Save dialogs for publications and exports, with safe replacement of saved files.
 - Local autosave and bundled editor assets; no local server or browser tab is required.
 

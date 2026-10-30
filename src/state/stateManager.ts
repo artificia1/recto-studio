@@ -546,26 +546,25 @@ export class StateManager {
 
     if (el.type === 'text') {
       const textEl = el as TextElement;
-      const textContent = textEl.text || '';
-      const padding = textEl.paddingMm ?? 2;
-      const cols = Math.max(1, textEl.columns || 1);
-      const gutter = textEl.columnGutterMm ?? 4;
-      const fontPt = textEl.fontSizePt || 10;
-      const lineH = textEl.lineHeight || 1.3;
-      const lineSpacingMm = (fontPt * lineH * 25.4) / 72;
-      const availW = Math.max(10, (textEl.width - (padding * 2) - ((cols - 1) * gutter)) / cols);
-      const avgCharWidthMm = (fontPt * 0.45 * 25.4) / 72;
-      const charsPerLine = Math.max(10, Math.floor(availW / avgCharWidthMm));
-
-      const explicitLines = textContent.split('\n');
-      let approxRenderedLines = 0;
-      for (const line of explicitLines) {
-        approxRenderedLines += Math.max(1, Math.ceil(line.length / charsPerLine));
+      if (textEl.locked || textEl.nextFrameId || textEl.prevFrameId) return false;
+      const content = textEl.textContent || plainStory(textEl.text, textEl.paragraphStyleId);
+      const spread = this.findElementById(textEl.id)?.spread;
+      const notes = this.getFootnotesForElement(textEl.id);
+      const reserve = notes.length ? notes.length * (this.state.settings.footnoteSettings?.fontSizePt || 8) * 25.4 / 72 * 1.35 + 3 : 0;
+      const fits = (height: number) => !layoutStory(content, { ...textEl, height }, this.state.paragraphStyles,
+        this.state.characterStyles, undefined, reserve, { obstacles: spread?.elements, baselineGrid: this.state.settings.baselineGrid }).overset;
+      let high = Math.max(15, textEl.height);
+      while (!fits(high) && high < 10000) high *= 2;
+      if (!fits(high)) return false;
+      let low = 0;
+      for (let i = 0; i < 18; i++) {
+        const middle = (low + high) / 2;
+        if (fits(middle)) high = middle; else low = middle;
       }
-      const requiredTotalLines = Math.max(approxRenderedLines, Math.ceil(textContent.length / (charsPerLine * 1.15)));
-      const requiredLinesPerCol = Math.ceil(requiredTotalLines / cols);
-      const requiredHeightMm = Math.ceil((requiredLinesPerCol * lineSpacingMm + (padding * 2) + 2) * 10) / 10;
-      textEl.height = Math.max(15, requiredHeightMm);
+      // Legacy frames use a different composer, so retain additional space for its
+      // line-breaking, drop caps and font-metric differences.
+      const required = textEl.textContent ? high + 1 : high * 1.5 + 4;
+      textEl.height = Math.ceil(Math.max(15, required) * 10) / 10;
       this.pushHistory();
       this.notify();
       return true;
@@ -3280,6 +3279,14 @@ export class StateManager {
       fittedFrame = this.fitFrameToContent(txt.id);
       if (fittedFrame && Math.abs(txt.height - prevHeight) >= 0.5) {
         adjustments.push(`Fit frame height to content (${Math.round(prevHeight)}mm to ${Math.round(txt.height)}mm)`);
+      }
+    }
+
+    if (!fittedFrame && !txt.prevFrameId && !txt.nextFrameId) {
+      const previousHeight = txt.height;
+      fittedFrame = this.fitFrameToContent(txt.id);
+      if (fittedFrame && Math.abs(txt.height - previousHeight) >= 0.5) {
+        adjustments.push(`Fit frame height to content (${Math.round(previousHeight)}mm to ${Math.round(txt.height)}mm)`);
       }
     }
 

@@ -173,6 +173,26 @@ describe('Story lifecycle', () => {
     expect(layout.lines.some(l => l.segments.some(s => s.style.fontSizePt > head.fontSizePt))).toBe(true);
   });
 
+  it('leaves measured headroom when fitting legacy text', () => {
+    const copy = 'Widest letters and long words '.repeat(40);
+    stateManager.updateElement('head', { text: copy, height: 90 });
+    expect(stateManager.fitFrameToContent('head')).toBe(true);
+    expect(layoutStory(plainStory(copy), current('head'), stateManager.getState().paragraphStyles).overset).toBe(false);
+    expect(current('head').text).toBe(copy);
+  });
+
+  it('fits formatted stories without losing text and refuses to resize linked frames', () => {
+    const content = parseMarkdownContent(manuscript.repeat(3)).content!;
+    stateManager.setStoryContent('head', content);
+    expect(stateManager.fitFrameToContent('head')).toBe(true);
+    expect(layoutStory(current('head').textContent!, current('head'), stateManager.getState().paragraphStyles).overset).toBe(false);
+    expect(storyText(stateManager.getStoryContent('head'))).toBe(storyText(content));
+    stateManager.linkTextFrames('head', 'middle');
+    const height = current('head').height;
+    expect(stateManager.fitFrameToContent('head')).toBe(false);
+    expect(current('head').height).toBe(height);
+  });
+
   it('exports rich PDF text and semantic EPUB once per story with escaped content', async () => {
     stateManager.linkTextFrames('head', 'middle');
     const content = parseMarkdownContent('# Heading\n\nText **bold** and *italic* <unsafe>.').content!;

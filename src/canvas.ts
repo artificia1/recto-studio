@@ -815,6 +815,9 @@ export class SpreadCanvas {
           this.openInlineTextEditor(hit.id);
           return;
         }
+        if (!hit && state.selectedElementIds.length > 0 && !e.shiftKey) {
+          stateManager.selectElements([]);
+        }
       }
       const pageHit = this.findPageAtMm(mmX, mmY, state);
       if (pageHit) {

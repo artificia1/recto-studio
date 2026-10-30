@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.1] - 2026-10-30
+
+### Fixed
+- Clear text-frame selection when clicking empty canvas with the text tool.
+- Fit text frames using measured layout instead of character-count estimates, preserving space for legacy typography.
+- Expand standalone text frames after auto copyfit when necessary to avoid clipping.
+
 ## [1.2.0] - 2026-10-30
 
 ### Added
