@@ -9,6 +9,7 @@ export default defineConfig({
     open: false,
   },
   build: {
+    manifest: true,
     rollupOptions: {
       external: [/^core-js/, 'canvg', 'html2canvas', 'dompurify'],
     },

@@ -496,7 +496,7 @@ export async function exportWrapCoverPdf(
   doc.rect(originX + metrics.spineX, originY, metrics.spineWidthMm, metrics.totalWrapHeightMm, 'F');
 
   // 3. Draw Spine Fold / Score Lines (Hairline Dashes above and below trim)
-  (doc as any).setDrawColor(255, 255, 255, 80);
+  doc.setDrawColor(255, 255, 255);
   doc.setLineWidth(0.12);
   (doc as any).setLineDashPattern([2, 2], 0);
 
@@ -512,7 +512,7 @@ export async function exportWrapCoverPdf(
   (doc as any).setLineDashPattern([], 0); // reset to solid
 
   // 4. Outer Sheet Crop Marks
-  (doc as any).setDrawColor(255, 255, 255, 100);
+  doc.setDrawColor(255, 255, 255);
   doc.setLineWidth(0.15);
   const mLen = 5;
 

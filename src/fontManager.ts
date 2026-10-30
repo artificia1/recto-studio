@@ -78,18 +78,17 @@ export const SYSTEM_FONTS: FontMetadata[] = [
   { family: 'Impact', category: 'display', source: 'system', fallback: 'sans-serif' },
 ];
 
-class FontManager {
+export class FontManager {
+  private fontAssets = new Map<string, { family: string; fileName: string; data: string }>();
+  private parsedFonts = new Map<string, import('fontkit').Font>();
+  private activeFaces = new Map<string, FontFace>();
+  private googleRequests = new Map<string, Promise<boolean>>();
   private customFonts: Map<string, FontMetadata> = new Map();
   private loadedGoogleFonts: Set<string> = new Set();
   private listeners: Set<() => void> = new Set();
 
   constructor() {
-    // Pre-mark default loaded Google fonts
-    this.loadedGoogleFonts.add('Playfair Display');
-    this.loadedGoogleFonts.add('Merriweather');
-    this.loadedGoogleFonts.add('Inter');
-    this.loadedGoogleFonts.add('Space Grotesk');
-    this.loadedGoogleFonts.add('JetBrains Mono');
+    // A font is cached only after its actual bytes or stylesheet have loaded.
   }
 
   public subscribe(listener: () => void): () => void {
@@ -134,8 +133,18 @@ class FontManager {
   }
 
   public async loadGoogleFont(family: string): Promise<boolean> {
+    const key = family.split(',')[0].trim().replace(/['"]/g, '');
+    const pending = this.googleRequests.get(key);
+    if (pending) return pending;
+    const request = this.loadGoogleFontOnce(family).finally(() => this.googleRequests.delete(key));
+    this.googleRequests.set(key, request);
+    return request;
+  }
+
+  private async loadGoogleFontOnce(family: string): Promise<boolean> {
     const cleanFamily = family.split(',')[0].trim().replace(/['"]/g, '');
     if (!cleanFamily) return false;
+    if (this.isCustomFont(cleanFamily)) return true;
 
     // Cache hit short-circuit
     if (this.loadedGoogleFonts.has(cleanFamily)) return true;
@@ -157,8 +166,17 @@ class FontManager {
         link.id = linkId;
         link.rel = 'stylesheet';
         link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(cleanFamily)}:ital,wght@0,400;0,700;1,400;1,700&display=swap`;
-        document.head.appendChild(link);
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            link.remove();
+            reject(new Error('Font download timed out'));
+          }, 15000);
+          link.onload = () => { clearTimeout(timer); resolve(); };
+          link.onerror = () => { clearTimeout(timer); link.remove(); reject(new Error('Font download failed')); };
+          document.head.appendChild(link);
+        });
       }
+      await document.fonts.load(`16px "${cleanFamily}"`);
       this.loadedGoogleFonts.add(cleanFamily);
       this.notify();
       return true;
@@ -171,9 +189,21 @@ class FontManager {
     fileName: string,
     buffer: ArrayBuffer | Uint8Array
   ): Promise<string> {
-    // Strip extension (.woff2, .ttf, .otf, .woff)
-    const baseName = fileName.replace(/\.(woff2?|ttf|otf)$/i, '').replace(/[-_]/g, ' ').trim();
-    const familyName = baseName || `CustomFont-${Date.now()}`;
+    const bytes = buffer instanceof Uint8Array ? new Uint8Array(buffer) : new Uint8Array(buffer.slice(0));
+    if (!bytes.length || bytes.length > 32 * 1024 * 1024) {
+      throw new Error('Choose a font file smaller than 32 MB.');
+    }
+    const { create } = await import('fontkit');
+    let parsed: import('fontkit').Font;
+    try {
+      const result = create(bytes as Parameters<typeof create>[0]);
+      if ('fonts' in result) throw new Error('collection');
+      parsed = result;
+      if (!parsed.unitsPerEm || !parsed.numGlyphs) throw new Error('empty font');
+    } catch {
+      throw new Error('This font could not be read. Choose a valid TTF, OTF, WOFF, or WOFF2 file. For collections, export an individual font first.');
+    }
+    const familyName = parsed.fullName || parsed.familyName || fileName.replace(/\.[^.]+$/, '');
 
     const metadata: FontMetadata = {
       family: familyName,
@@ -183,24 +213,52 @@ class FontManager {
       loaded: true,
     };
 
+    if (typeof document !== 'undefined' && typeof FontFace === 'undefined') {
+      throw new Error('This browser does not support custom fonts. Try a current browser.');
+    }
     if (typeof document !== 'undefined' && typeof FontFace !== 'undefined') {
       try {
-        const arrayBuffer = buffer instanceof Uint8Array ? buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) : buffer;
+        const arrayBuffer = bytes.buffer;
         const fontFace = new FontFace(familyName, arrayBuffer as unknown as BufferSource);
         await fontFace.load();
+        const previous = this.activeFaces.get(familyName);
+        if (previous) document.fonts.delete(previous);
         document.fonts.add(fontFace);
+        this.activeFaces.set(familyName, fontFace);
       } catch (err) {
-        console.warn('FontFace API registration failed, recording font in registry:', err);
+        throw new Error(`Your browser could not activate "${familyName}". Try the TTF or OTF version of this font.`);
       }
     }
 
     this.customFonts.set(familyName, metadata);
+    this.parsedFonts.set(familyName, parsed);
+    let binary = '';
+    for (let offset = 0; offset < bytes.length; offset += 8192) {
+      binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
+    }
+    this.fontAssets.set(familyName, { family: familyName, fileName, data: btoa(binary) });
     this.notify();
     return familyName;
   }
 
   public getCustomFonts(): FontMetadata[] {
     return Array.from(this.customFonts.values());
+  }
+
+  public getFont(family = '') {
+    return this.parsedFonts.get(family.split(',')[0].trim().replace(/['"]/g, ''));
+  }
+
+  public getFontAssets() {
+    return Array.from(this.fontAssets.values());
+  }
+
+  public async restoreFonts(assets: { family: string; fileName: string; data: string }[] = []) {
+    for (const asset of assets) {
+      if (this.fontAssets.get(asset.family)?.data === asset.data) continue;
+      const bytes = Uint8Array.from(atob(asset.data), character => character.charCodeAt(0));
+      await this.registerFontBuffer(asset.fileName, bytes);
+    }
   }
 }
 

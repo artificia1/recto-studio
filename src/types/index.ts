@@ -448,6 +448,7 @@ export interface CommentPin {
 export type DisplayQuality = 'fast' | 'typical' | 'high';
 
 export interface ProjectState {
+  embeddedFonts?: { family: string; fileName: string; data: string }[];
   settings: DocumentSettings;
   spreads: Spread[];
   activeSpreadIndex: number;
@@ -509,13 +510,22 @@ export interface PeerPresence {
   lastActive: number;
 }
 
-export type CollabMessage =
+type CollabPayload =
   | { type: 'presence'; peer: PeerPresence; authHash?: string }
-  | { type: 'op_update'; peerId: string; elementId: string; updates: Partial<CanvasElement>; timestamp: number; authHash?: string }
+  | { type: 'op_update'; peerId: string; elementId: string; updates: Partial<CanvasElement>; element?: CanvasElement; timestamp: number; authHash?: string }
   | { type: 'op_add'; peerId: string; element: CanvasElement; timestamp: number; authHash?: string }
   | { type: 'op_delete'; peerId: string; elementId: string; timestamp: number; authHash?: string }
   | { type: 'sync_request'; peerId: string; authHash?: string }
   | { type: 'sync_response'; peerId: string; state: ProjectState; authHash?: string };
+
+export type CollabMessage = CollabPayload & {
+  sessionId?: string;
+  spreadId?: string;
+  clock?: number;
+  targetPeerId?: string;
+  requestId?: string;
+  versions?: Record<string, { clock: number; peerId: string }>;
+};
 
 export type PreflightIssueCode =
   | 'OVERSET_TEXT'

@@ -238,7 +238,7 @@ export function drawImpositionSheetMarks(
   const halfW = plan.pageWidthMm;
 
   // 1. Center Fold Guide Line (dashed line along spine)
-  (doc as any).setDrawColor(0, 0, 0, 80);
+  (doc as any).setDrawColor(0, 0, 0, 0.8);
   doc.setLineWidth(0.12);
   (doc as any).setLineDashPattern([2, 2], 0);
   doc.line(originX + halfW, originY - 4, originX + halfW, originY + sheetH + 4);
@@ -246,7 +246,7 @@ export function drawImpositionSheetMarks(
 
   // 2. Corner Sheet Trim Marks
   const markLen = 5;
-  (doc as any).setDrawColor(0, 0, 0, 100);
+  (doc as any).setDrawColor(0, 0, 0, 1);
   doc.setLineWidth(0.1);
 
   // Top-Left

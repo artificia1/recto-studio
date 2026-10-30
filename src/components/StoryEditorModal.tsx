@@ -1,5 +1,5 @@
 /**
- * Recto Studio — Story Focus / Distraction-Free Typewriter Editor (Ctrl+Y)
+ * Recto Studio — Story Focus / Distraction-Free Typewriter Editor (Ctrl+Alt+Y)
  * Copyright (c) 2022-2026 Abhinav. All rights reserved.
  * Licensed under the MIT License.
  */
@@ -15,8 +15,6 @@ interface StoryEditorModalProps {
 }
 
 export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalProps) {
-  if (!isOpen) return null;
-
   const spread = stateManager.getActiveSpread();
   const textElements = spread.elements.filter((el): el is TextElement => el.type === 'text');
   const selectedTextEl = textElements.find((el) => el.id === state.selectedElementId) || textElements[0];
@@ -27,11 +25,12 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
   const [fontSize, setFontSize] = useState<number>(16);
 
   useEffect(() => {
-    if (activeEl) {
+    if (isOpen && activeEl) {
       setEditorText(activeEl.text || '');
       setCurrentElementId(activeEl.id);
     }
-  }, [activeEl?.id]);
+  }, [isOpen, activeEl?.id, activeEl?.text]);
+  if (!isOpen) return null;
 
   const words = editorText.trim() ? editorText.trim().split(/\s+/).filter(Boolean).length : 0;
   const chars = editorText.length;
@@ -48,6 +47,16 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
   return (
     <div
       className="modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Story Editor"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          onClose();
+        }
+      }}
       onClick={onClose}
       style={{
         position: 'fixed',

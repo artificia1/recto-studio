@@ -1007,7 +1007,7 @@ const testTableId = 'test-table-1';
 const testTable: TableElement = {
   id: testTableId,
   type: 'table',
-  pageId: 'page-1',
+  pageId: stateManager.getActiveSpread().pages[0].id,
   x: 20,
   y: 40,
   width: 150,
@@ -1063,7 +1063,7 @@ const templateTextId = 'template-token-text';
 stateManager.addElement({
   id: templateTextId,
   type: 'text',
-  pageId: 'page-1',
+  pageId: stateManager.getActiveSpread().pages[0].id,
   x: 20,
   y: 110,
   width: 150,
@@ -1132,7 +1132,7 @@ const initialNodes: BezierNode[] = [
 const testPathElement: VectorPathElement = {
   id: pathElementId,
   type: 'path',
-  pageId: 'page-1',
+  pageId: stateManager.getActiveSpread().pages[0].id,
   x: 30,
   y: 60,
   width: 80,
@@ -1516,7 +1516,7 @@ assert(activePeers.some((p) => p.name === 'Remote Co-Designer'), 'Active peers l
 const remoteAddedElem: TextElement = {
   id: 'remote-elem-sync-1',
   type: 'text',
-  pageId: 'page-1',
+  pageId: stateManager.getActiveSpread().pages[0].id,
   x: 35,
   y: 45,
   width: 70,
@@ -1538,8 +1538,7 @@ const remoteAddedElem: TextElement = {
   borderColor: 'transparent',
   borderWidthMm: 0,
   paddingMm: 0,
-  textWrap: 'none',
-  standoffMm: 0,
+  textWrap: { mode: 'none', standoffMm: 0 },
 };
 
 collabSession.handleMessage({
@@ -1593,7 +1592,7 @@ assert(validAuthHash.length > 0, 'Password hash must be generated');
 const unauthorizedElem: TextElement = {
   id: 'intruder-text-elem',
   type: 'text',
-  pageId: 'page-1',
+  pageId: stateManager.getActiveSpread().pages[0].id,
   x: 10,
   y: 10,
   width: 50,
@@ -2014,7 +2013,8 @@ assert(instructionsText.includes('DOCUMENT SPECIFICATIONS'), 'Instructions must 
 assert(instructionsText.includes('FONTS SUMMARY'), 'Instructions must include fonts summary');
 assert(instructionsText.includes('PLACED ASSETS ROSTER'), 'Instructions must include placed assets roster');
 assert(instructionsText.includes('PREFLIGHT VERIFICATION STATUS'), 'Instructions must include preflight status');
-assert(instructionsText.includes('CMYK Coated FOGRA39'), 'Instructions must declare CMYK Coated FOGRA39 profile');
+assert(instructionsText.includes('Color Setting:'), 'Instructions must report the selected color setting');
+assert(instructionsText.includes('not certified PDF/X'), 'Instructions must disclose conformance limits');
 
 stateManager.deleteElement('package-test-img-1');
 
@@ -2033,12 +2033,11 @@ assert(monoFonts.some((f) => f.family === 'JetBrains Mono'), 'Must include JetBr
 
 // Custom Font Drop Buffer Registration
 const dummyFontBuffer = new Uint8Array([0x00, 0x01, 0x00, 0x00, 0x00, 0x0a]); // Dummy TrueType header
-const registeredFamily = await fontManager.registerFontBuffer('Futura-Custom-Bold.otf', dummyFontBuffer);
-assert.strictEqual(registeredFamily, 'Futura Custom Bold', 'Font manager must normalize file name into family title');
-assert.strictEqual(fontManager.isCustomFont('Futura Custom Bold'), true, 'Registered font must be recognized as custom');
+await assert.rejects(() => fontManager.registerFontBuffer('Futura-Custom-Bold.otf', dummyFontBuffer), /could not be read/);
+assert.strictEqual(fontManager.isCustomFont('Futura Custom Bold'), false, 'Corrupt fonts must not be registered');
 
 const customList = fontManager.getCustomFonts();
-assert(customList.some((f) => f.family === 'Futura Custom Bold'), 'Custom font must be indexed in custom list');
+assert(!customList.some((f) => f.family === 'Futura Custom Bold'), 'Failed fonts must not appear as installed');
 
 console.log('✓ One-Click Print Package (PDF, Project, Assets, Instructions) and Font Drop Engine verified.');
 
@@ -2423,14 +2422,9 @@ const exportedPdf = await exportDocumentToPdf(stateManager.getState(), {
 });
 
 const pdfRawOutput = exportedPdf.output();
-assert(pdfRawOutput.includes('/MarkInfo << /Marked true >>'), 'Exported PDF must include /MarkInfo tagged flag');
-assert(pdfRawOutput.includes('/Lang (en-US)'), 'Exported PDF must include document primary language tag');
-assert(pdfRawOutput.includes('/StructTreeRoot'), 'Exported PDF must include /StructTreeRoot dictionary');
-assert(pdfRawOutput.includes('/StructElem'), 'Exported PDF must contain /StructElem structure elements');
-assert(
-  pdfRawOutput.includes('Fine art lithographic printing press in vintage workshop'),
-  'Exported PDF structure tree must contain image /Alt description text'
-);
+assert(!pdfRawOutput.includes('/MarkInfo'), 'Untagged content must not advertise marked content');
+assert(pdfRawOutput.includes('/Lang (en-US)'), 'PDF must include document language');
+assert(!pdfRawOutput.includes('/StructTreeRoot'), 'Incomplete accessibility tree must not be advertised');
 
 // Clean up generated test file
 const a11yFilename = `${stateManager.getState().settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'recto-document'}.pdf`;
@@ -2442,7 +2436,7 @@ if (fs.existsSync(a11yFilename)) {
 stateManager.deleteElement(a11yImgElem.id);
 stateManager.deleteElement(uncaptionedImg.id);
 
-console.log('✓ PDF/UA Universal Accessibility & Tagged PDF Pipeline verified.');
+console.log('✓ Reading order preflight and honest PDF metadata verified.');
 
 // --- Suite 34: GREP Styles Automation Engine ---
 console.log('\n--- Suite 34: GREP Styles Automation Engine ---');
@@ -2512,16 +2506,15 @@ const cmykPdf = await exportDocumentToPdf(stateManager.getState(), {
   spreadRange: 'current',
 });
 const cmykPdfOutput = cmykPdf.output();
-assert(cmykPdfOutput.includes('/OutputIntents'), 'Exported PDF must include /OutputIntents dictionary');
-assert(cmykPdfOutput.includes('/GTS_PDFX'), 'OutputIntent must be GTS_PDFX compliant');
-assert(cmykPdfOutput.includes('FOGRA39'), 'OutputIntent must specify FOGRA39 ICC profile');
-assert(cmykPdfOutput.includes('CMYK FOGRA39 Output Intent'), 'OutputIntent must describe color profile intent');
+assert(!cmykPdfOutput.includes('/GTS_PDFX'), 'PDF must not claim unsupported PDF/X conformance');
+assert(cmykPdfOutput.includes('/TrimBox'), 'Print PDF must contain trim geometry');
+assert(cmykPdfOutput.includes('/BleedBox'), 'Print PDF must contain bleed geometry');
 
 const cmykFilename = `${stateManager.getState().settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'recto-document'}.pdf`;
 if (fs.existsSync(cmykFilename)) {
   fs.unlinkSync(cmykFilename);
 }
-console.log('✓ Prepress CMYK Color Modes & PDF/X Output Intent verified.');
+console.log('✓ Print settings and PDF page boxes verified.');
 
 // --- Suite 37: Multi-Line Paragraph Composer & Knuth-Plass Balancer ---
 console.log('\n--- Suite 37: Multi-Line Paragraph Composer & Knuth-Plass Balancer ---');
@@ -2656,7 +2649,7 @@ const cmykTestDoc = await exportDocumentToPdf(stateManager.getState(), {
 const cmykOut = cmykTestDoc.output();
 assert(/\s+k(\r?\n|\s)/.test(cmykOut), 'PDF stream must include DeviceCMYK non-stroking (k) operators');
 assert(/\s+K(\r?\n|\s)/.test(cmykOut), 'PDF stream must include DeviceCMYK stroking (K) operators');
-assert(cmykOut.includes('0. 0. 0. 100. k') || cmykOut.includes('0 0 0 100 k') || cmykOut.includes('0 0 0 1 k'), 'PDF stream must contain 100% K pure black text operators');
+assert(/0\.?0* 0\.?0* 0\.?0* 1\.?0* k/.test(cmykOut), 'PDF stream must contain normalized 100% K pure black operators');
 console.log('✓ Pure PostScript DeviceCMYK Operators & 100% K Black Plate verified.');
 
 // --- Suite 42: Headless Publishing CLI Engine (recto build) ---

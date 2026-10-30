@@ -57,6 +57,8 @@ describe('Pure Vector DeviceCMYK Operators & 100% K Black Plate', () => {
       includeRegistrationMarks: true,
       includeColorBars: true,
       spreadRange: 'current',
+      compress: false,
+      download: false,
     });
 
     const pdfOutput = doc.output();
@@ -64,7 +66,7 @@ describe('Pure Vector DeviceCMYK Operators & 100% K Black Plate', () => {
     // Verify presence of DeviceCMYK operators
     const hasCmykFill = pdfOutput.includes(' k\n') || pdfOutput.includes(' k ');
     const hasCmykStroke = pdfOutput.includes(' K\n') || pdfOutput.includes(' K ');
-    const hasPureKText = pdfOutput.includes('0. 0. 0. 100. k') || pdfOutput.includes('0 0 0 100 k') || pdfOutput.includes('0 0 0 1 k');
+    const hasPureKText = /0\.?0* 0\.?0* 0\.?0* 1\.?0* k/.test(pdfOutput);
 
     expect(hasCmykFill).toBe(true);
     expect(hasCmykStroke).toBe(true);

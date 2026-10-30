@@ -14,10 +14,9 @@ interface BarcodeModalProps {
 }
 
 export function BarcodeModal({ isOpen, onClose }: BarcodeModalProps) {
-  if (!isOpen) return null;
-
   const [rawDigits, setRawDigits] = useState('9780132350884');
   const [showText, setShowText] = useState(true);
+  if (!isOpen) return null;
 
   const previewSvg = generateEan13Svg(rawDigits, { showText });
 

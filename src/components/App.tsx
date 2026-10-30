@@ -7,8 +7,7 @@ import { InspectorPanel } from './Inspector/InspectorPanel';
 import { StatusBar } from './StatusBar';
 import { FindChangeModal } from './FindChangeModal';
 import { QuickApply } from './QuickApply';
-import { BookletImpositionModal } from './BookletImpositionModal';
-import { CoverSpineModal } from './CoverSpineModal';
+import { BookletImpositionModal, CoverSpineModal } from './LazyPrintDialogs';
 import { ShortcutsModal } from './ShortcutsModal';
 import { StoryEditorModal } from './StoryEditorModal';
 import { BarcodeModal } from './BarcodeModal';
@@ -16,7 +15,7 @@ import { QrCodeModal } from './QrCodeModal';
 import { ScriptsModal } from './ScriptsModal';
 import { SpreadCanvas } from '../canvas';
 import { stateManager } from '../state';
-import { ingestManuscript } from '../contentImport';
+import { fontManager } from '../fontManager';
 
 export function App() {
   const state = useProjectState();
@@ -36,6 +35,20 @@ export function App() {
   const rulerTopRef = useRef<HTMLCanvasElement>(null);
   const rulerLeftRef = useRef<HTMLCanvasElement>(null);
   const spreadCanvasRef = useRef<SpreadCanvas | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = fontManager.subscribe(() => spreadCanvasRef.current?.render());
+    const families = new Set(state.paragraphStyles.map(style => style.fontFamily));
+    for (const spread of state.spreads) {
+      for (const element of spread.elements) {
+        if (element.type === 'text') families.add(element.fontFamily);
+      }
+    }
+    families.forEach(family => {
+      if (fontManager.isGoogleFont(family)) void fontManager.loadGoogleFont(family);
+    });
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     const handleGlobalShortcuts = (e: KeyboardEvent) => {
@@ -67,7 +80,7 @@ export function App() {
       } else if (isMod && (e.key === '/' || e.key === 'Enter')) {
         e.preventDefault();
         setShowQuickApply((prev) => !prev);
-      } else if (isMod && (e.key === 'y' || e.key === 'Y')) {
+      } else if (isMod && e.altKey && !e.shiftKey && (e.key === 'y' || e.key === 'Y')) {
         e.preventDefault();
         setShowStoryEditor((prev) => !prev);
       } else if (isMod && e.altKey && (e.key === 'c' || e.key === 'C')) {
@@ -139,6 +152,14 @@ export function App() {
   };
 
   const handleDrop = async (e: DragEvent) => {
+    try {
+      await handleDroppedFile(e);
+    } catch (error) {
+      alert(`Could not import this file. ${error instanceof Error ? error.message : 'Please try again.'}`);
+    }
+  };
+
+  const handleDroppedFile = async (e: DragEvent) => {
     e.preventDefault();
     const files = e.dataTransfer?.files;
     if (!files || files.length === 0) return;
@@ -157,13 +178,17 @@ export function App() {
     }
 
     if (name.endsWith('.recto') || name.endsWith('.papercut') || name.endsWith('.json')) {
-      const text = await file.text();
-      stateManager.loadFromJson(text);
+      try {
+        await stateManager.importProjectFile(file);
+      } catch (error) {
+        alert(`Could not open this project. ${error instanceof Error ? error.message : 'Please check the file.'}`);
+      }
       return;
     }
 
     if (name.endsWith('.md') || name.endsWith('.markdown') || name.endsWith('.txt') || name.endsWith('.docx')) {
       const buffer = await file.arrayBuffer();
+      const { ingestManuscript } = await import('../contentImport');
       const ingested = await ingestManuscript(file.name, buffer);
 
       const activeSpread = stateManager.getActiveSpread();

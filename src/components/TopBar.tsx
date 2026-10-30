@@ -7,16 +7,9 @@
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { stateManager } from '../state';
 import { PAGE_PRESETS, PagePreset, ProjectState, VersionSnapshot, PeerPresence } from '../types';
-import { exportDocumentToPdf } from '../pdfExport';
-import { exportDocumentToEpub } from '../epubExport';
-import { exportDocumentToFlipbook } from '../flipbookExport';
-import { packageDocument } from '../packageExport';
-import { exportDocumentToIdml } from '../export/idmlExport';
-import { ingestManuscript } from '../contentImport';
 import { parseCsv } from '../dataMerge';
 import { collabSession } from '../collab';
-import { BookletImpositionModal } from './BookletImpositionModal';
-import { CoverSpineModal } from './CoverSpineModal';
+import { BookletImpositionModal, CoverSpineModal } from './LazyPrintDialogs';
 
 interface TopBarProps {
   state: ProjectState;
@@ -241,15 +234,10 @@ export function TopBar({
           }
           return;
         }
-        const reader = new FileReader();
-        reader.onload = (re) => {
-          if (typeof re.target?.result === 'string') {
-            stateManager.loadFromJson(re.target.result);
-          }
-        };
-        reader.readAsText(file);
+        await stateManager.importProjectFile(file);
       } catch (err) {
         console.error('Failed to load project file:', err);
+        alert(`Could not open this project. ${err instanceof Error ? err.message : 'Please check the file.'}`);
       } finally {
         target.value = '';
       }
@@ -308,6 +296,7 @@ export function TopBar({
     if (file && textEl) {
       try {
         const buffer = await file.arrayBuffer();
+        const { ingestManuscript } = await import('../contentImport');
         const ingested = await ingestManuscript(file.name, buffer);
         stateManager.placeTextContent(textEl.id, ingested);
       } catch (err) {
@@ -318,37 +307,49 @@ export function TopBar({
     }
   };
 
-  const handleExportPdfClean = () => {
-    exportDocumentToPdf(state, {
+  const runExport = async (action: () => Promise<unknown>) => {
+    try {
+      await action();
+    } catch (error) {
+      alert(`Export failed. ${error instanceof Error ? error.message : 'Please try again.'}`);
+    }
+  };
+
+  const handleExportPdfClean = () => runExport(async () => {
+    const { exportDocumentToPdf } = await import('../pdfExport');
+    await exportDocumentToPdf(state, {
       includeCropMarks: false,
       includeBleed: false,
       includeRegistrationMarks: false,
       includeColorBars: false,
       exportFormat: 'pages',
     });
-  };
+  });
 
-  const handleExportPdfPress = () => {
-    exportDocumentToPdf(state, {
+  const handleExportPdfPress = () => runExport(async () => {
+    const { exportDocumentToPdf } = await import('../pdfExport');
+    await exportDocumentToPdf(state, {
       includeCropMarks: true,
       includeBleed: true,
       includeRegistrationMarks: true,
       includeColorBars: true,
       exportFormat: 'pages',
     });
-  };
+  });
 
   const handleExportPdf = () => {
     handleExportPdfClean();
   };
 
-  const handleExportEpub = () => {
-    exportDocumentToEpub(state, { download: true });
-  };
+  const handleExportEpub = () => runExport(async () => {
+    const { exportDocumentToEpub } = await import('../epubExport');
+    await exportDocumentToEpub(state, { download: true });
+  });
 
-  const handleExportFlipbook = () => {
-    exportDocumentToFlipbook(state, { download: true });
-  };
+  const handleExportFlipbook = () => runExport(async () => {
+    const { exportDocumentToFlipbook } = await import('../flipbookExport');
+    await exportDocumentToFlipbook(state, { download: true });
+  });
 
   const handleExportSpreadPng = () => {
     setShowExportMenu(false);
@@ -366,11 +367,13 @@ export function TopBar({
     }
   };
 
-  const handlePackageDocument = () => {
-    packageDocument(state, { download: true });
-  };
+  const handlePackageDocument = () => runExport(async () => {
+    const { packageDocument } = await import('../packageExport');
+    await packageDocument(state, { download: true });
+  });
 
-  const handleExportIdml = () => {
+  const handleExportIdml = () => runExport(async () => {
+    const { exportDocumentToIdml } = await import('../export/idmlExport');
     const idmlBytes = exportDocumentToIdml(state);
     const blob = new Blob([idmlBytes as any], { type: 'application/vnd.adobe.indesign-idml-package' });
     const url = URL.createObjectURL(blob);
@@ -380,7 +383,7 @@ export function TopBar({
     a.download = `${safeTitle}.idml`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-  };
+  });
 
   const handleCsvUpload = async (e: Event) => {
     const file = (e.target as HTMLInputElement).files?.[0];
@@ -942,7 +945,7 @@ export function TopBar({
                   setShowFileMenu(false);
                   onOpenStoryEditor?.();
                 }}
-                title="Open distraction-free Story Focus typewriter editor (Ctrl+Y)"
+                title="Open distraction-free Story Focus typewriter editor (Ctrl+Alt+Y)"
               >
                 <span>Story Focus Editor...</span>
                 <span className="dropdown-item-shortcut">Ctrl+Y</span>
@@ -997,9 +1000,9 @@ export function TopBar({
                   setShowFileMenu(false);
                   stateManager.toggleReadingOrder();
                 }}
-                title="Toggle visual reading order inspection badges (PDF/UA a11y)"
+                title="Toggle visual reading order inspection badges"
               >
-                <span>Reading Order Overlay (PDF/UA)</span>
+                <span>Reading Order Overlay</span>
                 <span className="dropdown-item-shortcut">{state.showReadingOrder ? 'Hide' : 'Show'}</span>
               </button>
               <button
@@ -1144,7 +1147,7 @@ export function TopBar({
                 setShowFileMenu(false);
                 setShowNewMenu(false);
               }}
-              title="Export Clean PDF, PDF/X-1a Prepress, EPUB 3, Web Flipbook, or Package"
+              title="Export Clean PDF, Print PDF, EPUB 3, Web Flipbook, or Package"
             >
               ▾
             </button>
@@ -1171,7 +1174,7 @@ export function TopBar({
                 }}
               >
                 <div>
-                  <div className="dropdown-item-title">Print PDF (PDF/X-1a Prepress)</div>
+                  <div className="dropdown-item-title">Print PDF (Bleed & Marks)</div>
                   <div className="dropdown-item-sub">CMYK, 3mm Bleed, Crop Marks, Color Bars, Registration</div>
                 </div>
               </button>

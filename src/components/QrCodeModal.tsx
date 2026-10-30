@@ -14,11 +14,10 @@ interface QrCodeModalProps {
 }
 
 export function QrCodeModal({ isOpen, onClose }: QrCodeModalProps) {
-  if (!isOpen) return null;
-
   const [qrType, setQrType] = useState<'url' | 'text' | 'email' | 'wifi'>('url');
   const [content, setContent] = useState('https://recto.studio');
   const [sizeMm, setSizeMm] = useState(30);
+  if (!isOpen) return null;
 
   const previewSvg = generateQrSvg(content || 'https://recto.studio', sizeMm);
 

@@ -9,18 +9,19 @@ This document provides a technical overview of Recto Studio's internal graphics 
 ```mermaid
 flowchart TD
     subgraph UI ["User Interface Layer"]
-        Toolbar["src/ui/toolbar.ts"]
-        TopBar["src/ui/topBar.ts"]
-        Inspector["src/ui/inspector.ts"]
-        Layers["src/ui/layersPanel.ts"]
-        Assets["src/ui/assetManager.ts"]
+        Toolbar["src/components/Toolbar.tsx"]
+        TopBar["src/components/TopBar.tsx"]
+        Inspector["src/components/Inspector/InspectorPanel.tsx"]
+        Layers["src/components/Inspector/LayersTab.tsx"]
+        Assets["src/engine/assetStore.ts"]
     end
 
     subgraph Core ["State & Core Engine"]
         StateManager["src/state/stateManager.ts"]
         Persistence["src/state/persistence.ts"]
-        CRDT["src/collab/crdtAdapter.ts"]
-        History["Undo / Redo Stack (30 steps)"]
+        CRDT["src/collab.ts (element-level collaboration)"]
+        History["src/state/history.ts (30-state history)"]
+        Defaults["src/state/defaults.ts"]
     end
 
     subgraph GraphicsEngine ["2D Graphics & Canvas Pipeline"]
@@ -29,10 +30,11 @@ flowchart TD
         HitTest["src/engine/hitTest.ts (Spatial Bounding)"]
         Guides["src/engine/guides.ts (Magnetic Snapping)"]
         CanvasView["src/canvas.ts (Master Canvas)"]
+        Keyboard["src/engine/interaction/keyboard.ts"]
     end
 
     subgraph Compilers ["Export & Output Pipeline"]
-        PDFX["src/export/pdfExport.ts (PDF/X-1a & Tagged PDF)"]
+        PDFX["src/export/pdfExport.ts (PDF export)"]
         EPUB["src/epubExport.ts (EPUB 3 Packages)"]
         Flipbook["src/flipbookExport.ts (3D HTML Flipbook)"]
         Package["src/packageExport.ts (Print Zip Bundle)"]
@@ -42,8 +44,10 @@ flowchart TD
     StateManager <--> Persistence
     StateManager <--> CRDT
     StateManager --> History
+    StateManager --> Defaults
     StateManager --> GraphicsEngine
     GraphicsEngine --> CanvasView
+    CanvasView --> Keyboard
     StateManager --> Compilers
 ```
 
@@ -127,12 +131,12 @@ Each element contains a `layerId` and `zIndex`. If an element's parent layer is 
 ```mermaid
 sequenceDiagram
     participant State as StateManager
-    participant PDF as PDF/X & UA Compiler
+    participant PDF as PDF Exporter
     participant EPUB as EPUB 3 Packager
     participant Flip as HTML Flipbook Packager
 
     State->>PDF: compileDocumentToPdf(doc, options)
-    Note over PDF: Tagged PDF/UA Structure Tree<br/>AltText injection & Color CMYK conversion
+    Note over PDF: Page boxes and marks<br/>Custom font outlines and color helpers
     PDF-->>State: Blob (application/pdf)
 
     State->>EPUB: exportDocumentToEpub(doc)
@@ -176,7 +180,7 @@ This section formalizes the architectural decisions and execution strategy for c
 ### 7.2 Color Management & True CMYK Separation (LittleCMS LCMS2)
 - **Challenge**: Standard browser displays operate in sRGB or Display-P3. High-volume commercial offset printing requires true DeviceCMYK raster separation and ICC profile color conversions (FOGRA39, GRACoL 2006, SWOP) to prevent rich black ink buildup and ensure strict ISO 12647 compliance.
 - **Architecture**:
-  - Pure JS color math provides high-precision CMYK translation, dynamic density calibration bars, and PDF/X `/OutputIntents` profile embedding.
+  - Current PDF export uses arithmetic process-color helpers and calibration bars. Profile names do not embed ICC data or certify output; see PUBLISHING.md.
   - For full-raster 4-plate color separation (Cyan, Magenta, Yellow, Key) and spot color plates (Pantone PMS), Recto binds LittleCMS (`lcms2`) via WebAssembly/Tauri Rust backend.
 
 ### 7.3 Advanced Text Automation: GREP Styles & Dynamic Table of Contents (TOC)
@@ -195,6 +199,6 @@ This section formalizes the architectural decisions and execution strategy for c
   - Decouples text flow measurement into dedicated background Web Workers (`layout.worker.ts`).
   - Virtualized spread rendering guarantees $O(1)$ canvas rendering overhead by only drawing spreads within the viewport frustum plus a 1-spread predictive buffer.
 
-### 7.6 Layered Asset Ecosystem (.psd, .ai)
-- Direct binary parsing of linked layered Photoshop (`.psd`) and Illustrator (`.ai`) files via WASM parser, enabling layer visibility toggles, clipping path extraction, and spot channel preservation directly on the page layout.
+### 7.6 Layered Photoshop Assets
+- Current Photoshop support uses the JavaScript ag-psd parser and synchronous layer operations. Additional asset formats and color preservation need dedicated validation.
 

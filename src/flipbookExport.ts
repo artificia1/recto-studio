@@ -16,6 +16,8 @@ export interface FlipbookExportOptions {
   download?: boolean;
 }
 
+import { embeddedFontCss } from './export/fontAssets';
+
 export function generateFlipbookHtml(state: ProjectState): string {
   const widthMm = state.settings.widthMm || 210;
   const heightMm = state.settings.heightMm || 297;
@@ -266,6 +268,7 @@ export function generateFlipbookHtml(state: ProjectState): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
   <title>${title} — Interactive Web Flipbook</title>
   <style>
+    ${embeddedFontCss(state.embeddedFonts)}
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       background: #111113;

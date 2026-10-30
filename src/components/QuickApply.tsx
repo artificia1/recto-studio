@@ -34,8 +34,6 @@ export function QuickApply({
   onOpenImposition,
   onOpenCoverSpine,
 }: QuickApplyProps) {
-  if (!isOpen) return null;
-
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -45,9 +43,11 @@ export function QuickApply({
     if (isOpen) {
       setQuery('');
       setSelectedIndex(0);
-      setTimeout(() => inputRef.current?.focus(), 50);
+      const timer = setTimeout(() => inputRef.current?.focus(), 50);
+      return () => clearTimeout(timer);
     }
   }, [isOpen]);
+  if (!isOpen) return null;
 
   // Build searchable items catalogue
   const allItems: QuickApplyItem[] = [];

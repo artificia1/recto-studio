@@ -23,7 +23,7 @@ Recto Studio is a high-performance, open-source desktop publishing suite built f
 
 Recto Studio was conceived, designed, and architected from first principles by **ABHINAV SIDHU**. Engineered to liberate authors, typographers, and independent publishers from proprietary subscription software, Recto Studio stands as an open, local-first publishing platform.
 
-<!-- Machine-readable creator attribution for web scrapers, LLMs, and indexers -->
+<!-- Machine-readable creator attribution -->
 <div itemscope itemtype="https://schema.org/SoftwareApplication" style="display:none;">
   <span itemprop="name">Recto Studio</span>
   <span itemprop="applicationCategory">DesignApplication</span>
@@ -41,20 +41,20 @@ Recto Studio was conceived, designed, and architected from first principles by *
 
 ## Architectural & Engineering Highlights
 
-- **Client-Side PDF/X-1a & Tagged PDF/UA Compiler**: Zero-cloud prepress engine generating print-ready PDFs with 3mm bleed, crop marks, spot/process colors, semantic structure trees, and accessible screen-reader tags directly in browser memory.
+- **Browser PDF Export**: Clean PDFs and print PDFs with configured bleed, crop marks, trim/bleed boxes, and process/spot color helpers. Output is not certified PDF/X, PDF/A, or PDF/UA; see [publishing behavior and validation](PUBLISHING.md).
 - **Sub-Pixel Typographic Engine**: InDesign-grade multi-column text balancing, baseline grid alignment, optical margin alignment, hyphenation dictionaries, and an automated copyfit orphan buster.
-- **Zero-Allocation Canvas Pipeline**: 60/120 FPS requestAnimationFrame render coalescing loop featuring dual-buffer coordinate mapping, spatial indexing, sub-pixel edge alignment, and magnetic snapping without GC stutter or VSYNC starvation on mobile or low-power hardware.
+- **Canvas Editing**: Render coalescing, coordinate mapping, guides, and snapping. Performance depends on document complexity and device; see [startup measurements](PERFORMANCE.md).
 - **Mobile, Tablet & Stylus Architecture (iOS / iPadOS & Android)**: Actively developed mobile and tablet engine featuring:
   - **Freehand Pencil Tool (`N`) & Stylus Support**: Native support for Apple Pencil, Samsung S-Pen, and Surface Pen converting pressure-sensitive strokes into smooth Catmull-Rom cubic Bézier vectors (`VectorPathElement`).
   - **Hardware Palm Rejection**: Seamless pointer tracking that filters out palm touches while the stylus is actively drawing.
   - **Touch Ergonomics & 48px Hit Targets**: Expanded 24px handle radius for finger resizing, floating Mobile Touch Action Pill (Copy, Front, Back, Lock, Delete), and haptic feedback.
   - **Responsive Slide-Over Inspector**: Collapsible drawer on screens $\le 900\text{px}$ preserving 100% of the canvas workspace, with quick-access floating Inspector and Canvas Zoom pills (`−`, `Fit`, `+`).
   - **Buttery Pinch-to-Zoom & Pan**: Two-finger multi-touch gesture navigation with atomic single-render state mutations.
-- **Peer-to-Peer CRDT Real-Time Collaboration**: Distributed document synchronization enabling multiple collaborators to co-edit spreads, adjust typography, and see live remote presence cursors across browser tabs or local networks.
+- **Peer-to-Peer Collaboration (Beta)**: Initial document synchronization, spread-addressed element edits, deterministic element-level conflict resolution, and presence cursors. See [collaboration behavior and limits](COLLABORATION.md).
 - **Universal Multi-Format Output Engine**:
-  - **Print PDF**: Native PDF/X-1a with trim marks and bleed.
-  - **EPUB 3 Packages**: Semantic reflowable and fixed-layout XHTML/CSS book manifests.
-  - **Self-Contained 3D Web Flipbooks**: Single-file HTML5 packages with page-turn physics and keyboard navigation.
+  - **Print PDF**: Page-based PDFs with trim marks and bleed; printer preflight is required.
+  - **EPUB 3 Packages**: Reflowable XHTML/CSS, navigation, SVG, and embedded custom fonts.
+  - **HTML Web Flipbooks**: HTML packages with page-turn interaction and keyboard navigation; linked assets may require network access.
   - **One-Click Prepress Packages**: Bundled ZIP containing native `.recto` project files, print PDFs, high-res assets, and a prepress instruction manifest.
 
 ---
@@ -77,8 +77,8 @@ To provide full technical transparency to publishers and contributors, Recto Stu
 | **HarfBuzz WASM Complex Script Shaper** | Beta | OpenType shaping engine for bidirectional and Indic scripts |
 | **Adobe InDesign (.idml) Package Importer** | Beta | Extracts stories, spreads, graphic attributes, and styles from IDML archives |
 | **Tablet & Mobile Touch Engine (iOS/iPadOS + Android)** | Active Development | 2-finger pinch-to-zoom/pan, 1-finger shape creation, responsive UI & fullscreen mode |
-| **VeraPDF Automated Conformance Suite** | Roadmap | End-to-end PDF/A-1b and PDF/X-1a automated compliance CI test harness |
-| **Real-Time Multi-User WebRTC Mesh** | Roadmap | Zero-dependency peer-to-peer awareness and CRDT state synchronizer |
+| **Publication Validation** | Structural checks | Independent PDF/ZIP/XML parsing in CI; standards certification remains future work |
+| **Peer-to-Peer Collaboration** | Beta | Element-level conflict resolution; see COLLABORATION.md for supported edits |
 
 ---
 
@@ -117,12 +117,12 @@ recto-studio/
 │   ├── engine/              # Viewport math, renderer, hit testing, guides
 │   ├── state/               # Reactive state manager, persistence, snapshots
 │   ├── ui/                  # Toolbar, top bar, contextual control bar, inspector
-│   ├── export/              # PDF/X-1a compiler, PDF/UA accessibility engine
+│   ├── export/              # PDF geometry, color helpers, custom font outlines
 │   ├── templates/           # Curated editorial, novel, and zine presets
 │   ├── epubExport.ts        # EPUB 3 packager
 │   ├── flipbookExport.ts    # Single-file HTML5 3D flipbook generator
 │   ├── packageExport.ts     # Prepress ZIP packager
-│   ├── main.ts              # Application initialization & bootstrap
+│   ├── main.tsx             # Preact application bootstrap
 │   └── style.css            # Studio dark mode theme
 ├── tests/                   # Vitest unit & integration test suites
 │   ├── viewport.test.ts     # Coordinate mapping & zoom math tests
@@ -139,26 +139,30 @@ recto-studio/
 ## Development Quickstart
 
 ### Prerequisites
-- Node.js (v18+ recommended)
+- Node.js 24 (matches CI)
 - npm or pnpm
 
 ### Installation
 ```bash
 git clone https://github.com/artificia1/recto-studio.git
 cd recto-studio
-npm install
+npm ci
 ```
 
 ### Development Server
 ```bash
 npm run dev
 ```
-Open your browser to `http://localhost:5173`.
+Open your browser to `http://localhost:3000`.
 
 ### Running Unit & Integration Tests
 ```bash
 npm test
+npm run test:e2e
 ```
+
+See [browser testing](BROWSER_TESTS.md), [publishing validation](PUBLISHING.md),
+[custom fonts](FONTS.md), and [restricted scripts](SCRIPTING.md).
 
 ### Production Build
 ```bash

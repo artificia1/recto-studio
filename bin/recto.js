@@ -32,6 +32,8 @@ if (!process.env._RECTO_TSX) {
   const { exportDocumentToEpub } = await import('../src/epubExport.js');
   const { parseDataset, generateRepeaterSpreads, fetchRemoteDataset } = await import('../src/dataMerge.js');
   const { bookEngine } = await import('../src/engine/bookEngine.js');
+  const { parseProject } = await import('../src/state/projectValidation.js');
+  const { INITIAL_STATE } = await import('../src/state/stateManager.js');
 
   function printHelp() {
     console.log(`
@@ -46,7 +48,7 @@ Usage:
 
 Commands:
   build <input>         Compile document headlessly into production print PDF, EPUB 3, or Flipbook
-  book <action> <file>  Multi-document book management: sync, toc, or build stitched PDF/X
+  book <action> <file>  Multi-document book management: sync, toc, or build stitched PDF
   preflight <input>     Execute automated prepress preflight audit (overset text, DPI, bleed)
 
 Build Options:
@@ -140,7 +142,7 @@ Examples:
       const rawData = fs.readFileSync(inputPath, 'utf8');
       let state;
       try {
-        state = JSON.parse(rawData);
+        state = parseProject(rawData, INITIAL_STATE);
       } catch (e) {
         console.error(`Error: Failed to parse JSON document: ${e.message}`);
         process.exitCode = 1;
@@ -193,7 +195,7 @@ Examples:
       }
 
       if (isPdf) {
-        console.log(`[Recto CLI] Compiling print-ready PDF/X OutputIntent (DeviceCMYK)...`);
+        console.log(`[Recto CLI] Compiling PDF with process-color helpers...`);
         const pdf = await exportDocumentToPdf(state, {
           includeBleed: parsed.bleed,
           includeCropMarks: parsed.cropMarks,
@@ -208,7 +210,7 @@ Examples:
         console.log(`  Destination : ${outputPath}`);
         console.log(`  File size   : ${(stats.size / 1024).toFixed(1)} KB`);
         console.log(`  Color Model : DeviceCMYK (Pure 100% K Black Plate)`);
-        console.log(`  Standard    : ISO 15930 PDF/X-1a Compliant`);
+        console.log(`  Conformance : PDF/X and PDF/UA are not certified; printer preflight required`);
         return 0;
       } else if (isFlipbook) {
         console.log(`[Recto CLI] Generating interactive 3D Web Flipbook package...`);
@@ -248,7 +250,7 @@ Examples:
 
       console.log(`[Recto CLI] Executing Prepress Preflight Audit: ${path.basename(inputPath)}...`);
       const rawData = fs.readFileSync(inputPath, 'utf8');
-      const state = JSON.parse(rawData);
+      const state = parseProject(rawData, INITIAL_STATE);
 
       let issuesCount = 0;
       for (const spread of state.spreads || []) {
@@ -278,7 +280,7 @@ Usage:
 Actions:
   sync    Synchronize styles and master spreads across chapters
   toc     Generate unified cross-document Table of Contents
-  build   Compile multi-chapter book into unified PDF/X
+  build   Compile multi-chapter book into unified PDF
 
 Options:
   --output <path>    Custom destination for stitched PDF
@@ -303,7 +305,7 @@ Options:
       const bookData = JSON.parse(fs.readFileSync(bookPath, 'utf8'));
       const loadState = (fp) => {
         const fullP = path.isAbsolute(fp) ? fp : path.resolve(path.dirname(bookPath), fp);
-        return JSON.parse(fs.readFileSync(fullP, 'utf8'));
+        return parseProject(fs.readFileSync(fullP, 'utf8'), INITIAL_STATE);
       };
       const saveState = (fp, st) => {
         const fullP = path.isAbsolute(fp) ? fp : path.resolve(path.dirname(bookPath), fp);
@@ -323,7 +325,7 @@ Options:
         return 0;
       } else {
         const outDest = parsed.output || path.resolve(path.dirname(bookPath), `${path.basename(bookPath, path.extname(bookPath))}.pdf`);
-        console.log(`[Recto CLI] Compiling multi-chapter book into unified PDF/X...`);
+        console.log(`[Recto CLI] Compiling multi-chapter book into unified PDF...`);
         const masterPdf = await bookEngine.exportBookToPdf(bookData, loadState, {
           includeBleed: parsed.bleed,
           includeCropMarks: parsed.cropMarks,

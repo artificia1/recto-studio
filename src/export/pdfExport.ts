@@ -5,6 +5,10 @@
  */
 
 import { jsPDF } from 'jspdf';
+import { colorToCmyk, applyCmykTextColor, applyCmykFillColor, applyCmykDrawColor, applySpotColor } from './pdfColors';
+export { colorToCmyk, applyCmykTextColor, applyCmykFillColor, applyCmykDrawColor, applySpotColor } from './pdfColors';
+import { fontManager } from '../fontManager';
+import { drawFontText, fontTextWidth, wrapFontText } from './fontOutlines';
 import { ProjectState, Page, Spread, TextElement, ImageElement, ShapeElement, VectorPathElement, TableElement } from '../types/index';
 import { stateManager, numberToSuperscript } from '../state';
 import { calculateImageFitting } from '../canvas';
@@ -13,6 +17,7 @@ import { tableEngine } from '../engine/tableEngine';
 import { getFreeToneColor, getSafeSpotName, generatePdfSeparationDict, FreeToneSpotColor } from '../engine/spotColors';
 
 export interface ExportOptions {
+  download?: boolean;
   includeCropMarks?: boolean;
   includeBleed?: boolean;
   includeRegistrationMarks?: boolean;
@@ -67,6 +72,7 @@ export async function exportDocumentToPdf(
   state: ProjectState,
   options: ExportOptions = {}
 ): Promise<jsPDF> {
+  await fontManager.restoreFonts(state.embeddedFonts);
   const {
     includeCropMarks = false,
     includeBleed = false,
@@ -93,7 +99,8 @@ export async function exportDocumentToPdf(
     compress: options.compress !== undefined ? options.compress : true,
   });
 
-  if (overprintBlack) {
+  // Helpers always emit the knockout state, including when overprint is disabled.
+  {
     const baseGState = new (doc as any).GState({ opacity: 1 });
     (doc as any).setGState(baseGState);
     (doc.internal.events as any).subscribe('putGStateDict', () => {
@@ -102,16 +109,14 @@ export async function exportDocumentToPdf(
     });
   }
 
-  // PDF/UA & Section 508 Universal Accessibility Metadata
   doc.setDocumentProperties({
     title: state.settings.title || 'Recto Document',
-    subject: 'Universal Accessible PDF Document (PDF/UA-1 & Section 508)',
+    subject: 'Publication exported from Recto Studio',
     author: 'Recto Studio',
-    keywords: 'PDF/UA, Section 508, Universal Accessibility, Tagged PDF',
+    keywords: 'publication, desktop publishing',
     creator: 'Recto Studio (Open-Source DTP Architecture)',
   });
 
-  const accessibleItems: { tag: string; altText?: string }[] = [];
   const storyOverflowMap = new Map<string, string[]>();
   const preflightWarnings: string[] = [];
   (doc as any).preflightWarnings = preflightWarnings;
@@ -166,6 +171,17 @@ export async function exportDocumentToPdf(
 
     const originX = slug + bleed;
     const originY = slug + bleed;
+    // jsPDF page boxes use points measured from the bottom-left corner.
+    const pointsPerMm = 72 / 25.4;
+    const box = (insetMm: number) => ({
+      bottomLeftX: insetMm * pointsPerMm,
+      bottomLeftY: insetMm * pointsPerMm,
+      topRightX: (pdfPageWidth - insetMm) * pointsPerMm,
+      topRightY: (pdfPageHeight - insetMm) * pointsPerMm,
+    });
+    const pageContext = (doc.internal as any).getCurrentPageInfo().pageContext;
+    pageContext.trimBox = box(slug + bleed);
+    pageContext.bleedBox = box(slug);
 
     // 1. Fill page background (DeviceCMYK 0%)
     doc.setFillColor(0, 0, 0, 0);
@@ -243,7 +259,13 @@ export async function exportDocumentToPdf(
               mTargetX = mX + textEl.width;
               mAlign = 'right';
             }
-            doc.text(evalText, mTargetX, mY + (textEl.fontSizePt * 0.3527), {
+            const masterFont = fontManager.getFont(textEl.fontFamily);
+            if (masterFont) {
+              applyCmykFillColor(doc, textEl.color || '#000000');
+              const width = fontTextWidth(masterFont, evalText, textEl.fontSizePt);
+              const x = mAlign === 'center' ? mTargetX - width / 2 : mAlign === 'right' ? mTargetX - width : mTargetX;
+              drawFontText(doc, masterFont, evalText, x, mY + textEl.fontSizePt * 0.3527, textEl.fontSizePt);
+            } else doc.text(evalText, mTargetX, mY + (textEl.fontSizePt * 0.3527), {
               maxWidth: textEl.width,
               align: mAlign,
             });
@@ -307,6 +329,7 @@ export async function exportDocumentToPdf(
         }
       } else if (el.type === 'text') {
         const text = el as TextElement;
+        const customFont = fontManager.getFont(text.fontFamily);
         if (text.backgroundColor && text.backgroundColor !== 'transparent') {
           applyCmykFillColor(doc, text.backgroundColor);
           doc.rect(elX, elY, text.width, text.height, 'F');
@@ -367,7 +390,9 @@ export async function exportDocumentToPdf(
           if (evalText.includes('{index:')) {
             evalText = evalText.replace(/\{index:[^}]+\}/g, '');
           }
-          linesToRender = doc.splitTextToSize(evalText, colWidth);
+          linesToRender = customFont
+            ? wrapFontText(customFont, evalText, text.fontSizePt, colWidth)
+            : doc.splitTextToSize(evalText, colWidth);
         }
 
         const totalCapacity = colCount * maxLinesPerCol;
@@ -407,7 +432,15 @@ export async function exportDocumentToPdf(
             alignOpt = 'left';
           }
 
-          doc.text(colLines, textX, startY, {
+          if (customFont) {
+            if (text.spotColor) applySpotColor(doc, text.spotColor, false);
+            else applyCmykFillColor(doc, text.color || '#000000');
+            colLines.forEach((line, index) => {
+              const width = fontTextWidth(customFont, line, text.fontSizePt);
+              const alignedX = alignOpt === 'center' ? textX - width / 2 : alignOpt === 'right' ? textX - width : textX;
+              drawFontText(doc, customFont, line, alignedX, startY + index * lineSpacingMm, text.fontSizePt);
+            });
+          } else doc.text(colLines, textX, startY, {
             maxWidth: colWidth,
             align: alignOpt,
           });
@@ -426,7 +459,10 @@ export async function exportDocumentToPdf(
           footnotes.forEach((fn, idx) => {
             const lineY = fnStartY + 2 + (idx * fnLineHeightMm);
             const marker = numberToSuperscript(fn.number);
-            doc.text(`${marker} ${fn.text}`, elX + padding, lineY);
+            if (customFont) {
+              applyCmykFillColor(doc, text.color || '#222222');
+              drawFontText(doc, customFont, `${marker} ${fn.text}`, elX + padding, lineY, fnFontSizePt);
+            } else doc.text(`${marker} ${fn.text}`, elX + padding, lineY);
           });
         }
       } else if (el.type === 'image') {
@@ -528,187 +564,18 @@ export async function exportDocumentToPdf(
       }
     }
 
-    // 5. Collect accessible structure items in reading order (top-to-bottom, left-to-right)
-    const sortedForReading = [...pageElements].sort((a, b) => {
-      const yDiff = a.y - b.y;
-      if (Math.abs(yDiff) > 5) return yDiff;
-      return a.x - b.x;
-    });
-
-    for (const el of sortedForReading) {
-      if (el.type === 'text') {
-        const textEl = el as TextElement;
-        const style = state.paragraphStyles?.find((s) => s.id === textEl.paragraphStyleId);
-        const tag = style?.pdfTag || 'P';
-        accessibleItems.push({ tag });
-      } else if (el.type === 'image') {
-        const imgEl = el as ImageElement;
-        accessibleItems.push({
-          tag: 'Figure',
-          altText: imgEl.altText || imgEl.caption || imgEl.name || 'Image frame',
-        });
-      } else if (el.type === 'table') {
-        accessibleItems.push({ tag: 'Table' });
-      } else if (el.type === 'path' || el.type === 'shape') {
-        accessibleItems.push({ tag: 'Figure' });
-      }
-    }
   }
 
-  // Tagged PDF / PDF/UA Structure Tree Registration
-  let structTreeRootId: number | undefined;
-
-  (doc.internal.events as any).subscribe('postPutResources', () => {
-    const childIds: number[] = [];
-    for (const item of accessibleItems) {
-      const childId = (doc.internal as any).newObject();
-      childIds.push(childId);
-      const altStr = item.altText ? ` /Alt (${escapePdfText(item.altText)})` : '';
-      (doc.internal as any).write(`<< /Type /StructElem /S /${item.tag}${altStr} >>\nendobj`);
-    }
-
-    structTreeRootId = (doc.internal as any).newObject();
-    const kRef = childIds.length > 0 ? childIds.map((id) => `${id} 0 R`).join(' ') : '';
-    (doc.internal as any).write(
-      `<< /Type /StructTreeRoot /RoleMap << /Title /H1 /Caption /P /BlockQuote /Part >> /K [${kRef}] >>\nendobj`
-    );
-  });
-
+  // Content is not tagged with MCIDs; do not advertise PDF/UA or PDF/X conformance.
   (doc.internal.events as any).subscribe('putCatalog', () => {
-    if (structTreeRootId) {
-      (doc.internal as any).write(`/StructTreeRoot ${structTreeRootId} 0 R`);
-    }
-    const colorMode = (state.settings.colorMode || 'cmyk').toUpperCase();
-    const iccProfile = state.settings.iccProfile || (colorMode === 'CMYK' ? 'FOGRA39' : 'sRGB');
-    (doc.internal as any).write(`/OutputIntents [<< /Type /OutputIntent /S /GTS_PDFX /OutputConditionIdentifier (${iccProfile}) /Info (${colorMode} ${iccProfile} Output Intent) /RegistryName (http://www.color.org) >>]`);
-    (doc.internal as any).write('/MarkInfo << /Marked true >> /Lang (en-US)');
+    (doc.internal as any).write('/Lang (en-US)');
   });
 
   const filename = `${state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'recto-document'}.pdf`;
-  doc.save(filename);
+  if (options.download !== false) doc.save(filename);
   return doc;
 }
 
-/**
- * Converts a hex or CSS color string to DeviceCMYK percentages (0-100).
- * Implements the "Pure Black" prepress rule: black colors map to 100% K (0, 0, 0, 100).
- */
-export function colorToCmyk(colorStr: string | undefined): [number, number, number, number] {
-  if (!colorStr || colorStr === 'transparent') {
-    return [0, 0, 0, 0];
-  }
-  const clean = colorStr.trim().toLowerCase();
-
-  // Pure Black Golden Rule for offset press plates
-  if (
-    clean === '#000' ||
-    clean === '#000000' ||
-    clean === 'black' ||
-    clean === 'rgb(0,0,0)' ||
-    clean === 'rgb(0, 0, 0)'
-  ) {
-    return [0, 0, 0, 100];
-  }
-
-  // Pure White
-  if (
-    clean === '#fff' ||
-    clean === '#ffffff' ||
-    clean === 'white' ||
-    clean === 'rgb(255,255,255)' ||
-    clean === 'rgb(255, 255, 255)'
-  ) {
-    return [0, 0, 0, 0];
-  }
-
-  let r = 0, g = 0, b = 0;
-  if (clean.startsWith('#')) {
-    const hex = clean.slice(1);
-    if (hex.length === 3) {
-      r = parseInt(hex[0] + hex[0], 16);
-      g = parseInt(hex[1] + hex[1], 16);
-      b = parseInt(hex[2] + hex[2], 16);
-    } else if (hex.length >= 6) {
-      r = parseInt(hex.slice(0, 2), 16);
-      g = parseInt(hex.slice(2, 4), 16);
-      b = parseInt(hex.slice(4, 6), 16);
-    }
-  } else if (clean.startsWith('rgb')) {
-    const m = clean.match(/\d+/g);
-    if (m && m.length >= 3) {
-      r = parseInt(m[0], 10);
-      g = parseInt(m[1], 10);
-      b = parseInt(m[2], 10);
-    }
-  }
-
-  const rNorm = r / 255;
-  const gNorm = g / 255;
-  const bNorm = b / 255;
-
-  const kNorm = 1 - Math.max(rNorm, gNorm, bNorm);
-  if (kNorm >= 0.999) {
-    return [0, 0, 0, 100];
-  }
-
-  const cNorm = (1 - rNorm - kNorm) / (1 - kNorm);
-  const mNorm = (1 - gNorm - kNorm) / (1 - kNorm);
-  const yNorm = (1 - bNorm - kNorm) / (1 - kNorm);
-
-  return [
-    Math.round(cNorm * 100),
-    Math.round(mNorm * 100),
-    Math.round(yNorm * 100),
-    Math.round(kNorm * 100),
-  ];
-}
-
-export function applyCmykTextColor(doc: any, colorStr: string | undefined, overprint: boolean = true): void {
-  const [c, m, y, k] = colorToCmyk(colorStr || '#000000');
-  doc.setTextColor(c, m, y, k);
-  if (overprint && c === 0 && m === 0 && y === 0 && k === 100) {
-    if (typeof (doc.internal as any).out === 'function') {
-      (doc.internal as any).out('/GSOverprint gs');
-    }
-  } else {
-    if (typeof (doc.internal as any).out === 'function') {
-      (doc.internal as any).out('/GSKnockout gs');
-    }
-  }
-}
-
-export function applyCmykFillColor(doc: any, colorStr: string | undefined): void {
-  const [c, m, y, k] = colorToCmyk(colorStr || '#ffffff');
-  doc.setFillColor(c, m, y, k);
-  if (typeof (doc.internal as any).out === 'function') {
-    (doc.internal as any).out('/GSKnockout gs');
-  }
-}
-
-export function applyCmykDrawColor(doc: any, colorStr: string | undefined): void {
-  const [c, m, y, k] = colorToCmyk(colorStr || '#000000');
-  doc.setDrawColor(c, m, y, k);
-}
-
-export function applySpotColor(doc: any, spotName: string, isStroke: boolean = false, tint: number = 1.0): void {
-  const spot = getFreeToneColor(spotName);
-  if (!spot) return;
-  const safeName = getSafeSpotName(spot.name);
-  if (typeof (doc.internal as any).out === 'function') {
-    if (isStroke) {
-      (doc.internal as any).out(`/CS_${safeName} CS ${tint.toFixed(3)} SC`);
-    } else {
-      (doc.internal as any).out(`/CS_${safeName} cs ${tint.toFixed(3)} sc`);
-    }
-  } else {
-    const [c, m, y, k] = spot.cmyk;
-    if (isStroke) {
-      doc.setDrawColor(Math.round(c * 100), Math.round(m * 100), Math.round(y * 100), Math.round(k * 100));
-    } else {
-      doc.setFillColor(Math.round(c * 100), Math.round(m * 100), Math.round(y * 100), Math.round(k * 100));
-    }
-  }
-}
 
 // shortcut: custom font embedding requires TTF base64, falls back to PostScript standard 14 when unavailable
 function applyFont(doc: any, fontFamily?: string) {
@@ -750,7 +617,7 @@ function drawPlaceholderImage(doc: any, x: number, y: number, w: number, h: numb
 
 export function drawCropMarks(doc: any, x: number, y: number, w: number, h: number, bleed: number) {
   // Pure 100% K Black for crisp offset press registration
-  doc.setDrawColor(0, 0, 0, 100);
+  doc.setDrawColor(0, 0, 0, 1);
   doc.setLineWidth(0.1);
 
   const markLen = 6;
@@ -775,8 +642,8 @@ export function drawCropMarks(doc: any, x: number, y: number, w: number, h: numb
 
 export function drawRegistrationTargets(doc: any, x: number, y: number, w: number, h: number, slug: number) {
   // 4-Color Registration Plate (100C 100M 100Y 100K)
-  doc.setDrawColor(100, 100, 100, 100);
-  doc.setFillColor(100, 100, 100, 100);
+  doc.setDrawColor(1, 1, 1, 1);
+  doc.setFillColor(1, 1, 1, 1);
   doc.setLineWidth(0.15);
 
   const targets = [
@@ -812,10 +679,10 @@ export function drawCMYKCalibrationBar(doc: any, x: number, y: number, w: number
 
   const startX = x + (w - swatches.length * swatchW) / 2;
   doc.setLineWidth(0.1);
-  doc.setDrawColor(0, 0, 0, 40);
+  doc.setDrawColor(0, 0, 0, 0.4);
 
   swatches.forEach(([c, m, y, k], i) => {
-    doc.setFillColor(c, m, y, k);
+    doc.setFillColor(c / 100, m / 100, y / 100, k / 100);
     doc.rect(startX + (i * swatchW), barY, swatchW, swatchH, 'FD');
   });
 }
@@ -838,7 +705,7 @@ function drawSlugMetadata(
 
   const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
   const safePageNum = Math.min(pageNum, totalPages);
-  const metaText = `RECTO STUDIO | ${title.toUpperCase()} | PAGE ${safePageNum} OF ${totalPages} | ${timestamp} | COLOR: ${colorMode.toUpperCase()} (${iccProfile}) | PDF/X READY`;
+  const metaText = `RECTO STUDIO | ${title.toUpperCase()} | PAGE ${safePageNum} OF ${totalPages} | ${timestamp} | COLOR SETTING: ${colorMode.toUpperCase()} (${iccProfile})`;
   doc.text(metaText, x, y + h + 11.5);
 }
 

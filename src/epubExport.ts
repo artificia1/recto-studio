@@ -48,11 +48,20 @@ export function bezierNodesToSvgPath(nodes: { x: number; y: number; handleIn?: {
   return d;
 }
 
+import { fontFamilyCss } from './export/fontAssets';
+
 export function generateEpubPackage(state: ProjectState): Record<string, string | Uint8Array> {
   const files: Record<string, string | Uint8Array> = {};
-
-  // 1. mimetype MUST be the very first file in the ZIP, uncompressed
+  // OCF requires this to precede every other ZIP entry, including fonts.
   files['mimetype'] = 'application/epub+zip';
+  const fontManifest: string[] = [];
+  const fontStyles = (state.embeddedFonts || []).map((font, index) => {
+    const extension = font.fileName.match(/\.(ttf|otf|woff2?)$/i)?.[1].toLowerCase() || 'ttf';
+    const location = `fonts/font-${index}.${extension}`;
+    files[`OEBPS/${location}`] = Uint8Array.from(atob(font.data), char => char.charCodeAt(0));
+    fontManifest.push(`    <item id="font-${index}" href="${location}" media-type="font/${extension}"/>`);
+    return `@font-face{font-family:${fontFamilyCss(font.family)};src:url("${location}");}`;
+  }).join('\n');
 
   // 2. META-INF/container.xml
   files['META-INF/container.xml'] = `<?xml version="1.0" encoding="UTF-8"?>
@@ -167,7 +176,7 @@ svg {
   break-before: page;
 }
 `;
-  files['OEBPS/styles.css'] = stylesCss;
+  files['OEBPS/styles.css'] = stylesCss + '\n' + fontStyles;
 
   // 4. Collect Pages across all spreads
   interface PageItem {
@@ -209,6 +218,7 @@ svg {
         const processed = formatOpenTypeText(textEl.text, textEl.openTypeFeatures);
         const paragraphs = processed.split('\n');
         const alignClass = `text-${textEl.alignment || 'left'}`;
+        const familyStyle = `style="font-family:${escapeXml(fontFamilyCss((textEl.fontFamily || 'serif').split(',')[0].replace(/['"]/g, '').trim()))}"`;
 
         const isTitle = textEl.fontSizePt >= 24;
         const isHeader = textEl.fontSizePt >= 14 && textEl.fontSizePt < 24;
@@ -219,16 +229,16 @@ svg {
           if (!para) continue;
 
           if (isTitle && pIdx === 0) {
-            bodyContent += `  <h1 class="${alignClass}">${escapeXml(para)}</h1>\n`;
+            bodyContent += `  <h1 class="${alignClass}" ${familyStyle}>${escapeXml(para)}</h1>\n`;
           } else if (isHeader && pIdx === 0) {
-            bodyContent += `  <h2 class="${alignClass}">${escapeXml(para)}</h2>\n`;
+            bodyContent += `  <h2 class="${alignClass}" ${familyStyle}>${escapeXml(para)}</h2>\n`;
           } else {
             if (hasDropCap && pIdx === 0 && para.length > 1) {
               const firstChar = para.charAt(0);
               const remainder = para.slice(1);
-              bodyContent += `  <p class="${alignClass}"><span class="drop-cap">${escapeXml(firstChar)}</span>${escapeXml(remainder)}</p>\n`;
+              bodyContent += `  <p class="${alignClass}" ${familyStyle}><span class="drop-cap">${escapeXml(firstChar)}</span>${escapeXml(remainder)}</p>\n`;
             } else {
-              bodyContent += `  <p class="${alignClass}">${escapeXml(para)}</p>\n`;
+              bodyContent += `  <p class="${alignClass}" ${familyStyle}>${escapeXml(para)}</p>\n`;
             }
           }
         }
@@ -263,12 +273,12 @@ svg {
         const pathEl = el as VectorPathElement;
         const d = bezierNodesToSvgPath(pathEl.nodes, pathEl.closed);
         const strokeDash = pathEl.strokeDash === 'dashed' ? ' stroke-dasharray="4,3"' : '';
-        bodyContent += `  <svg viewBox="0 0 ${pathEl.width} ${pathEl.height}" width="${pathEl.width}mm" height="${pathEl.height}mm">\n`;
+        bodyContent += `  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${pathEl.width} ${pathEl.height}" width="${pathEl.width}mm" height="${pathEl.height}mm">\n`;
         bodyContent += `    <path d="${d}" fill="${pathEl.fillColor || 'none'}" stroke="${pathEl.strokeColor || '#000000'}" stroke-width="${pathEl.strokeWidthMm || 1}" stroke-linecap="${pathEl.strokeCap || 'round'}" stroke-linejoin="${pathEl.strokeJoin || 'round'}"${strokeDash}/>\n`;
         bodyContent += '  </svg>\n';
       } else if (el.type === 'shape') {
         const shape = el as ShapeElement;
-        bodyContent += `  <svg viewBox="0 0 ${shape.width} ${shape.height}" width="${shape.width}mm" height="${shape.height}mm">\n`;
+        bodyContent += `  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${shape.width} ${shape.height}" width="${shape.width}mm" height="${shape.height}mm">\n`;
         if (shape.shapeKind === 'ellipse') {
           bodyContent += `    <ellipse cx="${shape.width / 2}" cy="${shape.height / 2}" rx="${shape.width / 2}" ry="${shape.height / 2}" fill="${shape.fillColor || 'none'}" stroke="${shape.strokeColor || '#000000'}" stroke-width="${shape.strokeWidthMm || 1}"/>\n`;
         } else if (shape.shapeKind === 'line') {
@@ -322,13 +332,14 @@ ${navLinks}
 </html>`;
 
   // 7. OEBPS/package.opf (Package Document)
-  const bookId = `urn:uuid:recto-${Date.now()}`;
+  const bookId = `urn:uuid:${crypto.randomUUID()}`;
   const modifiedIso = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
 
   const manifestEntries = [
     '    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>',
     '    <item id="css" href="styles.css" media-type="text/css"/>',
-    ...pageItems.map((p) => `    <item id="${p.id}" href="${p.filename}" media-type="application/xhtml+xml"/>`),
+    ...fontManifest,
+    ...pageItems.map((p) => `    <item id="${p.id}" href="${p.filename}" media-type="application/xhtml+xml"${String(files[`OEBPS/${p.filename}`]).includes("<svg ") ? ' properties="svg"' : ''}/>` ),
   ].join('\n');
 
   const spineEntries = pageItems.map((p) => `    <itemref idref="${p.id}"/>`).join('\n');

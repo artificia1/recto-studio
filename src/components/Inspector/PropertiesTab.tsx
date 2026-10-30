@@ -488,6 +488,17 @@ function TextInspector({
   const [fontSearch, setFontSearch] = useState('');
   const [fontCategory, setFontCategory] = useState<'all' | 'serif' | 'sans-serif' | 'display' | 'monospace' | 'handwriting'>('all');
   const [isFontHover, setIsFontHover] = useState(false);
+  const [fontError, setFontError] = useState('');
+  const importFont = async (file: File) => {
+    setFontError('');
+    try {
+      const name = await fontManager.registerFontBuffer(file.name, await file.arrayBuffer());
+      stateManager.saveImportedFonts();
+      stateManager.updateElement(element.id, { fontFamily: name });
+    } catch (error) {
+      setFontError(error instanceof Error ? error.message : 'Unable to read this font.');
+    }
+  };
   const fontFileRef = useRef<HTMLInputElement>(null);
   const [, setFontVer] = useState(0);
 
@@ -532,6 +543,7 @@ function TextInspector({
       </label>
 
       {/* Extended Font Picker & Custom Dropzone */}
+      {fontError && <p role="alert" style={{ color: '#ff7878', fontSize: '12px' }}>{fontError}</p>}
       <div className="font-picker-container" style={{ marginTop: '8px' }}>
         <input
           type="file"
@@ -541,9 +553,7 @@ function TextInspector({
           onChange={async (e) => {
             const file = (e.target as HTMLInputElement).files?.[0];
             if (file) {
-              const buffer = await file.arrayBuffer();
-              const name = await fontManager.registerFontBuffer(file.name, buffer);
-              stateManager.updateElement(element.id, { fontFamily: name });
+              await importFont(file);
             }
             (e.target as HTMLInputElement).value = '';
           }}
@@ -661,12 +671,11 @@ function TextInspector({
           onDragLeave={() => setIsFontHover(false)}
           onDrop={async (e) => {
             e.preventDefault();
+            e.stopPropagation();
             setIsFontHover(false);
             const file = e.dataTransfer?.files?.[0];
             if (file) {
-              const buffer = await file.arrayBuffer();
-              const name = await fontManager.registerFontBuffer(file.name, buffer);
-              stateManager.updateElement(element.id, { fontFamily: name });
+              await importFont(file);
             }
           }}
           onClick={() => fontFileRef.current?.click()}
@@ -683,7 +692,7 @@ function TextInspector({
           }}
           title="Click to browse or drag & drop .woff2, .ttf, or .otf font file directly"
         >
-          {isFontHover ? 'Drop font file to install' : 'Drop font file (.woff2, .ttf, .otf) or click to browse'}
+          {isFontHover ? 'Drop font file to install' : 'Import font: TTF, OTF, WOFF, WOFF2'}
         </div>
       </div>
 
@@ -1379,7 +1388,7 @@ function ImageInspector({ element }: { element: ImageElement }) {
         Alt Text (Accessibility):
         <input
           type="text"
-          placeholder="Screen-reader description (PDF/UA Section 508)..."
+          placeholder="Image description for accessible content..."
           value={element.altText || ''}
           onInput={(e) =>
             stateManager.updateElement(element.id, {

@@ -1,12 +1,22 @@
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { ProjectState, DisplayQuality, PreflightIssue } from '../types';
 import { stateManager } from '../state';
+import type { SaveStatus } from '../state/autosave';
 
 interface StatusBarProps {
   state: ProjectState;
 }
 
+const SAVE_LABELS: Record<SaveStatus, string> = {
+  saved: 'Saved locally',
+  pending: 'Saving…',
+  saving: 'Saving…',
+  error: 'Autosave failed — export your project to keep a copy',
+};
+
 export function StatusBar({ state }: StatusBarProps) {
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved');
+  useEffect(() => stateManager.autosave.subscribe(setSaveStatus), []);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement | HTMLSpanElement>(null);
@@ -50,6 +60,9 @@ export function StatusBar({ state }: StatusBarProps) {
   return (
     <footer className="status-bar">
       <div className="status-left">
+        <span role="status" style={{ color: saveStatus === 'error' ? '#ff7878' : 'inherit' }}>
+          {SAVE_LABELS[saveStatus]}
+        </span>
         {issues.length === 0 ? (
           <span
             ref={triggerRef as any}

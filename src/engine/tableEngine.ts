@@ -8,7 +8,9 @@
  */
 
 import { TableElement, TableCell } from '../types/index';
-import { applyCmykFillColor, applyCmykDrawColor, applyCmykTextColor } from '../export/pdfExport';
+import { fontManager } from '../fontManager';
+import { drawFontText, fontTextWidth } from '../export/fontOutlines';
+import { applyCmykFillColor, applyCmykDrawColor, applyCmykTextColor } from '../export/pdfColors';
 
 export interface TableRowSlice {
   frameId: string;
@@ -295,7 +297,13 @@ export class TableEngine {
           else if (align === 'right') drawX = cX + cellW - padding;
 
           const drawY = cY + (cellH / 2) + ((table.fontSizePt * 0.3527) / 3);
-          doc.text(textStr, drawX, drawY, { align: align as any });
+          const font = fontManager.getFont(table.fontFamily);
+          if (font) {
+            applyCmykFillColor(doc, textCol);
+            const width = fontTextWidth(font, textStr, table.fontSizePt);
+            const x = align === 'center' ? drawX - width / 2 : align === 'right' ? drawX - width : drawX;
+            drawFontText(doc, font, textStr, x, drawY, table.fontSizePt);
+          } else doc.text(textStr, drawX, drawY, { align: align as any });
         }
       }
     }

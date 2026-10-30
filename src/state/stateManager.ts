@@ -38,13 +38,31 @@ import {
 import { generateEan13DataUrl } from '../engine/barcodeEngine';
 import { generateQrDataUrl } from '../engine/qrEngine';
 import { RectoDB } from './persistence';
-import { parseIdmlPackage } from '../idmlImport';
-import { parseInddToProjectState, isInddBuffer } from '../engine/inddParser';
+import { Autosave } from './autosave';
+import { StateHistory } from './history';
+import {
+  DEFAULT_PARAGRAPH_STYLES,
+  DEFAULT_MASTER_SPREADS,
+  DEFAULT_OBJECT_STYLES,
+  DEFAULT_CONDITIONS,
+  INITIAL_STATE,
+} from './defaults';
+import { parseProject } from './projectValidation';
+import { fontManager } from '../fontManager';
 import { parseCsv, generateMergedSpreads, substituteElementTokens } from '../dataMerge';
 import { KnuthPlassComposer, ComposerOptions } from '../engine/knuthPlass';
 import { psdEngine } from '../engine/psdParser';
 import { assetStore } from '../engine/assetStore';
 import { colorEngine, GamutAuditResult, IccProfileName } from '../engine/colorEngine';
+
+// Preserve imports used by existing exporters, UI components, and integrations.
+export {
+  DEFAULT_PARAGRAPH_STYLES,
+  DEFAULT_MASTER_SPREADS,
+  DEFAULT_OBJECT_STYLES,
+  DEFAULT_CONDITIONS,
+  INITIAL_STATE,
+} from './defaults';
 
 const SUPERSCRIPTS: Record<string, string> = {
   '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
@@ -102,685 +120,29 @@ export interface FindResult {
 const STORAGE_KEY = 'recto_project_autosave';
 const SNAPSHOTS_STORAGE_KEY = 'recto_version_snapshots';
 
-export const DEFAULT_PARAGRAPH_STYLES: ParagraphStyle[] = [
-  {
-    id: 'style-title',
-    name: 'Title Display',
-    fontFamily: 'Playfair Display, Georgia, serif',
-    fontSizePt: 48,
-    lineHeight: 1.05,
-    letterSpacingPt: 2,
-    color: '#1a1a1a',
-    alignment: 'center',
-    snapToBaseline: false,
-    dropCapLines: 0,
-    pdfTag: 'Title',
-  },
-  {
-    id: 'style-h1',
-    name: 'Headline 1',
-    fontFamily: 'Playfair Display, Georgia, serif',
-    fontSizePt: 28,
-    lineHeight: 1.15,
-    letterSpacingPt: 0.5,
-    color: '#111111',
-    alignment: 'left',
-    snapToBaseline: true,
-    dropCapLines: 0,
-    pdfTag: 'H1',
-  },
-  {
-    id: 'style-h2',
-    name: 'Header 2',
-    fontFamily: 'Inter, system-ui, sans-serif',
-    fontSizePt: 14,
-    lineHeight: 1.25,
-    letterSpacingPt: 0.5,
-    color: '#222222',
-    alignment: 'left',
-    snapToBaseline: true,
-    dropCapLines: 0,
-    pdfTag: 'H2',
-  },
-  {
-    id: 'style-body',
-    name: 'Body Text',
-    fontFamily: 'Merriweather, Georgia, serif',
-    fontSizePt: 9.5,
-    lineHeight: 1.5,
-    letterSpacingPt: 0.1,
-    color: '#222222',
-    alignment: 'justify',
-    snapToBaseline: true,
-    dropCapLines: 3,
-    opticalMarginAlignment: true,
-    openTypeFeatures: { ligatures: true, fractions: true },
-    pdfTag: 'P',
-    grepStyles: [
-      {
-        id: 'grep-digits',
-        pattern: '\\b[0-9]+(?:\\.[0-9]+)?\\b',
-        bold: true,
-        color: '#1a1a1a',
-      },
-    ],
-  },
-  {
-    id: 'style-pullquote',
-    name: 'Pullquote',
-    fontFamily: 'Playfair Display, Georgia, serif',
-    fontSizePt: 18,
-    lineHeight: 1.35,
-    letterSpacingPt: 0,
-    color: '#1a1a1a',
-    alignment: 'left',
-    snapToBaseline: false,
-    dropCapLines: 0,
-    opticalMarginAlignment: true,
-    pdfTag: 'BlockQuote',
-  },
-  {
-    id: 'style-caption',
-    name: 'Caption / Folio',
-    fontFamily: 'Inter, system-ui, sans-serif',
-    fontSizePt: 7,
-    lineHeight: 1.2,
-    letterSpacingPt: 1.5,
-    color: '#888888',
-    alignment: 'left',
-    snapToBaseline: false,
-    dropCapLines: 0,
-    pdfTag: 'Caption',
-  },
-];
-
-export const DEFAULT_MASTER_SPREADS: MasterSpread[] = [
-  {
-    id: 'master-a',
-    name: 'A-Master Spread',
-    prefix: 'A',
-    pages: [
-      { id: 'master-a-p1', pageNumber: 1, side: 'left' },
-      { id: 'master-a-p2', pageNumber: 2, side: 'right' },
-    ],
-    elements: [
-      {
-        id: 'master-a-line-left',
-        type: 'shape',
-        pageId: 'master-a-p1',
-        x: 18,
-        y: 12,
-        width: 174,
-        height: 1,
-        rotation: 0,
-        opacity: 0.25,
-        zIndex: 1,
-        locked: true,
-        shapeKind: 'line',
-        fillColor: '#888888',
-        strokeColor: '#888888',
-        strokeWidthMm: 0.3,
-        strokeDash: 'solid',
-      } as ShapeElement,
-      {
-        id: 'master-a-hdr-left',
-        type: 'text',
-        pageId: 'master-a-p1',
-        x: 18,
-        y: 6,
-        width: 174,
-        height: 6,
-        rotation: 0,
-        opacity: 0.6,
-        zIndex: 2,
-        locked: true,
-        text: 'RECTO STUDIO · SPECIAL REPORT',
-        fontFamily: 'Inter, system-ui, sans-serif',
-        fontSizePt: 7,
-        lineHeight: 1,
-        letterSpacingPt: 1.5,
-        color: '#666666',
-        alignment: 'left',
-        columns: 1,
-        columnGutterMm: 4,
-        backgroundColor: 'transparent',
-        borderColor: 'transparent',
-        borderWidthMm: 0,
-        paddingMm: 0,
-      } as TextElement,
-      {
-        id: 'master-a-ftr-left',
-        type: 'text',
-        pageId: 'master-a-p1',
-        x: 18,
-        y: 282,
-        width: 174,
-        height: 8,
-        rotation: 0,
-        opacity: 0.7,
-        zIndex: 2,
-        locked: true,
-        text: '{{page}}',
-        fontFamily: 'Playfair Display, Georgia, serif',
-        fontSizePt: 9,
-        lineHeight: 1,
-        letterSpacingPt: 1,
-        color: '#555555',
-        alignment: 'left',
-        columns: 1,
-        columnGutterMm: 4,
-        backgroundColor: 'transparent',
-        borderColor: 'transparent',
-        borderWidthMm: 0,
-        paddingMm: 0,
-      } as TextElement,
-      {
-        id: 'master-a-line-right',
-        type: 'shape',
-        pageId: 'master-a-p2',
-        x: 18,
-        y: 12,
-        width: 174,
-        height: 1,
-        rotation: 0,
-        opacity: 0.25,
-        zIndex: 1,
-        locked: true,
-        shapeKind: 'line',
-        fillColor: '#888888',
-        strokeColor: '#888888',
-        strokeWidthMm: 0.3,
-        strokeDash: 'solid',
-      } as ShapeElement,
-      {
-        id: 'master-a-hdr-right',
-        type: 'text',
-        pageId: 'master-a-p2',
-        x: 18,
-        y: 6,
-        width: 174,
-        height: 6,
-        rotation: 0,
-        opacity: 0.6,
-        zIndex: 2,
-        locked: true,
-        text: '{{docTitle}}',
-        fontFamily: 'Inter, system-ui, sans-serif',
-        fontSizePt: 7,
-        lineHeight: 1,
-        letterSpacingPt: 1.5,
-        color: '#666666',
-        alignment: 'right',
-        columns: 1,
-        columnGutterMm: 4,
-        backgroundColor: 'transparent',
-        borderColor: 'transparent',
-        borderWidthMm: 0,
-        paddingMm: 0,
-      } as TextElement,
-      {
-        id: 'master-a-ftr-right',
-        type: 'text',
-        pageId: 'master-a-p2',
-        x: 18,
-        y: 282,
-        width: 174,
-        height: 8,
-        rotation: 0,
-        opacity: 0.7,
-        zIndex: 2,
-        locked: true,
-        text: 'Page {{page}} of {{totalPages}}',
-        fontFamily: 'Inter, system-ui, sans-serif',
-        fontSizePt: 8,
-        lineHeight: 1,
-        letterSpacingPt: 1,
-        color: '#666666',
-        alignment: 'right',
-        columns: 1,
-        columnGutterMm: 4,
-        backgroundColor: 'transparent',
-        borderColor: 'transparent',
-        borderWidthMm: 0,
-        paddingMm: 0,
-      } as TextElement,
-    ],
-  },
-];
-
-export const DEFAULT_OBJECT_STYLES: ObjectStyle[] = [
-  {
-    id: 'obj-none',
-    name: '[None]',
-    backgroundColor: 'transparent',
-    borderColor: 'transparent',
-    borderWidthMm: 0,
-    paddingMm: 0,
-  },
-  {
-    id: 'obj-callout',
-    name: 'Callout Box',
-    backgroundColor: '#f4f4f5',
-    borderColor: '#e4e4e7',
-    borderWidthMm: 0.5,
-    paddingMm: 4,
-    shadow: {
-      color: 'rgba(0,0,0,0.08)',
-      blurMm: 2,
-      offsetX: 1,
-      offsetY: 1,
-    },
-    textWrap: {
-      mode: 'boundingBox',
-      standoffMm: 3,
-    },
-  },
-  {
-    id: 'obj-sidebar',
-    name: 'Sidebar Frame',
-    backgroundColor: '#fafafa',
-    borderColor: '#0d99ff',
-    borderWidthMm: 1,
-    paddingMm: 5,
-    textWrap: {
-      mode: 'boundingBox',
-      standoffMm: 4,
-    },
-  },
-  {
-    id: 'obj-pullquote',
-    name: 'Pull Quote Frame',
-    backgroundColor: 'transparent',
-    borderColor: '#111827',
-    borderWidthMm: 1.5,
-    paddingMm: 3,
-  },
-];
-
-export const DEFAULT_CONDITIONS: ConditionTag[] = [
-  { id: 'cond-student', name: 'Student Edition', visible: true, colorHex: '#0d99ff' },
-  { id: 'cond-teacher', name: 'Teacher Edition', visible: false, colorHex: '#e63946' },
-];
-
-export const INITIAL_STATE: ProjectState = {
-  settings: {
-    title: 'Recto Editorial Spread',
-    preset: 'A4',
-    widthMm: PAGE_PRESETS['A4'].widthMm,
-    heightMm: PAGE_PRESETS['A4'].heightMm,
-    facingPages: true,
-    bleedMm: 3,
-    margins: {
-      topMm: 20,
-      bottomMm: 20,
-      insideMm: 25,
-      outsideMm: 18,
-    },
-    columnCount: 2,
-    columnGutterMm: 6,
-    baselineGrid: {
-      enabled: true,
-      incrementPt: 12,
-      startMm: 20,
-    },
-    colorMode: 'cmyk',
-    iccProfile: 'FOGRA39',
-    footnotes: [],
-    footnoteSettings: {
-      numberingStyle: 'superscript',
-      separatorRuleWidthMm: 30,
-      separatorRuleThicknessPt: 0.5,
-      fontSizePt: 8,
-      scope: 'document',
-    },
-  },
-  spreads: [
-    {
-      id: 'spread-1',
-      spreadIndex: 0,
-      pages: [
-        { id: 'page-1', pageNumber: 1, side: 'right' },
-      ],
-      elements: [
-        {
-          id: 'elem-cover-title',
-          type: 'text',
-          pageId: 'page-1',
-          x: 20,
-          y: 60,
-          width: 170,
-          height: 50,
-          rotation: 0,
-          opacity: 1,
-          zIndex: 10,
-          locked: false,
-          text: 'RECTO',
-          fontFamily: 'Playfair Display, Georgia, serif',
-          fontSizePt: 54,
-          lineHeight: 1.05,
-          letterSpacingPt: 3,
-          color: '#1a1a1a',
-          alignment: 'center',
-          columns: 1,
-          columnGutterMm: 5,
-          backgroundColor: 'transparent',
-          borderColor: 'transparent',
-          borderWidthMm: 0,
-          paddingMm: 2,
-        } as TextElement,
-        {
-          id: 'elem-cover-sub',
-          type: 'text',
-          pageId: 'page-1',
-          x: 35,
-          y: 115,
-          width: 140,
-          height: 25,
-          rotation: 0,
-          opacity: 1,
-          zIndex: 11,
-          locked: false,
-          text: 'The Open Source Publishing Revolution\nIssue 01 • October 2026',
-          fontFamily: 'Inter, system-ui, sans-serif',
-          fontSizePt: 12,
-          lineHeight: 1.4,
-          letterSpacingPt: 1,
-          color: '#666666',
-          alignment: 'center',
-          columns: 1,
-          columnGutterMm: 5,
-          backgroundColor: 'transparent',
-          borderColor: 'transparent',
-          borderWidthMm: 0,
-          paddingMm: 2,
-        } as TextElement,
-        {
-          id: 'elem-cover-frame',
-          type: 'image',
-          pageId: 'page-1',
-          x: 30,
-          y: 145,
-          width: 150,
-          height: 110,
-          rotation: 0,
-          opacity: 1,
-          zIndex: 5,
-          locked: false,
-          src: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="600" height="440" viewBox="0 0 600 440"><rect width="100%" height="100%" fill="%23242424"/><line x1="0" y1="0" x2="600" y2="440" stroke="%233a3a3a" stroke-width="2"/><line x1="600" y1="0" x2="0" y2="440" stroke="%233a3a3a" stroke-width="2"/><circle cx="300" cy="220" r="80" fill="%231a1a1a" stroke="%230d99ff" stroke-width="3"/><text x="300" y="226" font-family="sans-serif" font-size="16" fill="%23e0e0e0" text-anchor="middle" letter-spacing="2">COVER VISUAL FRAME</text></svg>',
-          fitMode: 'fill',
-          borderColor: '#cccccc',
-          borderWidthMm: 0.5,
-          caption: 'Cover Visual Frame (Click to replace with photo)',
-          altText: 'Cover visual frame with geometric publisher symbol',
-        } as ImageElement,
-      ],
-    },
-    {
-      id: 'spread-2',
-      spreadIndex: 1,
-      masterSpreadId: 'master-a',
-      pages: [
-        { id: 'page-2', pageNumber: 2, side: 'left' },
-        { id: 'page-3', pageNumber: 3, side: 'right' },
-      ],
-      elements: [
-        {
-          id: 'elem-header-left',
-          type: 'text',
-          pageId: 'page-2',
-          x: 18,
-          y: 10,
-          width: 80,
-          height: 8,
-          rotation: 0,
-          opacity: 0.7,
-          zIndex: 2,
-          locked: false,
-          text: 'RECTO JOURNAL • SPECIAL REPORT',
-          fontFamily: 'Inter, system-ui, sans-serif',
-          fontSizePt: 7,
-          lineHeight: 1,
-          letterSpacingPt: 1.5,
-          color: '#888888',
-          alignment: 'left',
-          columns: 1,
-          columnGutterMm: 4,
-          backgroundColor: 'transparent',
-          borderColor: 'transparent',
-          borderWidthMm: 0,
-          paddingMm: 1,
-        } as TextElement,
-        {
-          id: 'elem-page-num-2',
-          type: 'text',
-          pageId: 'page-2',
-          x: 18,
-          y: 282,
-          width: 20,
-          height: 8,
-          rotation: 0,
-          opacity: 0.8,
-          zIndex: 2,
-          locked: false,
-          text: '{{page}}',
-          fontFamily: 'Playfair Display, serif',
-          fontSizePt: 10,
-          lineHeight: 1,
-          letterSpacingPt: 0,
-          color: '#333333',
-          alignment: 'left',
-          columns: 1,
-          columnGutterMm: 4,
-          backgroundColor: 'transparent',
-          borderColor: 'transparent',
-          borderWidthMm: 0,
-          paddingMm: 0,
-        } as TextElement,
-        {
-          id: 'elem-img-left',
-          type: 'image',
-          pageId: 'page-2',
-          x: 18,
-          y: 22,
-          width: 174,
-          height: 180,
-          rotation: 0,
-          opacity: 1,
-          zIndex: 5,
-          locked: false,
-          src: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="696" height="720" viewBox="0 0 696 720"><rect width="100%" height="100%" fill="%231f1f1f"/><circle cx="348" cy="360" r="140" fill="%23141414" stroke="%23d82676" stroke-width="3"/><text x="348" y="365" font-family="Georgia,serif" font-size="18" fill="%23f0f0f0" text-anchor="middle" font-style="italic">Plate 1: The Modern Printing Press</text><line x1="50" y1="50" x2="646" y2="670" stroke="%232c2c2c" stroke-width="1.5"/><line x1="646" y1="50" x2="50" y2="670" stroke="%232c2c2c" stroke-width="1.5"/></svg>',
-          fitMode: 'fill',
-          borderColor: '#111111',
-          borderWidthMm: 0.3,
-          caption: 'Plate 1: The Modern Printing Press',
-          altText: 'Archival plate illustration depicting the modern printing press in workshop',
-        } as ImageElement,
-        {
-          id: 'elem-pullquote-left',
-          type: 'text',
-          pageId: 'page-2',
-          x: 25,
-          y: 212,
-          width: 160,
-          height: 55,
-          rotation: 0,
-          opacity: 1,
-          zIndex: 6,
-          locked: false,
-          text: '“Why should the craft of arranging thought upon paper require rent paid to a landlord in San Jose?”',
-          fontFamily: 'Playfair Display, Georgia, serif',
-          fontSizePt: 19,
-          lineHeight: 1.35,
-          letterSpacingPt: 0,
-          color: '#1a1a1a',
-          alignment: 'left',
-          columns: 1,
-          columnGutterMm: 4,
-          backgroundColor: '#fafafa',
-          borderColor: '#e5e5e5',
-          borderWidthMm: 0.5,
-          paddingMm: 5,
-        } as TextElement,
-        {
-          id: 'elem-header-right',
-          type: 'text',
-          pageId: 'page-3',
-          x: 110,
-          y: 10,
-          width: 82,
-          height: 8,
-          rotation: 0,
-          opacity: 0.7,
-          zIndex: 2,
-          locked: false,
-          text: 'THE ESSENTIAL TOOLKIT',
-          fontFamily: 'Inter, system-ui, sans-serif',
-          fontSizePt: 7,
-          lineHeight: 1,
-          letterSpacingPt: 1.5,
-          color: '#888888',
-          alignment: 'right',
-          columns: 1,
-          columnGutterMm: 4,
-          backgroundColor: 'transparent',
-          borderColor: 'transparent',
-          borderWidthMm: 0,
-          paddingMm: 1,
-        } as TextElement,
-        {
-          id: 'elem-page-num-3',
-          type: 'text',
-          pageId: 'page-3',
-          x: 172,
-          y: 282,
-          width: 20,
-          height: 8,
-          rotation: 0,
-          opacity: 0.8,
-          zIndex: 2,
-          locked: false,
-          text: '{{page}}',
-          fontFamily: 'Playfair Display, serif',
-          fontSizePt: 10,
-          lineHeight: 1,
-          letterSpacingPt: 0,
-          color: '#333333',
-          alignment: 'right',
-          columns: 1,
-          columnGutterMm: 4,
-          backgroundColor: 'transparent',
-          borderColor: 'transparent',
-          borderWidthMm: 0,
-          paddingMm: 0,
-        } as TextElement,
-        {
-          id: 'elem-headline-right',
-          type: 'text',
-          pageId: 'page-3',
-          x: 25,
-          y: 22,
-          width: 167,
-          height: 42,
-          rotation: 0,
-          opacity: 1,
-          zIndex: 8,
-          locked: false,
-          text: 'The Architecture of the Bound Page',
-          fontFamily: 'Playfair Display, Georgia, serif',
-          fontSizePt: 30,
-          lineHeight: 1.15,
-          letterSpacingPt: 0.5,
-          color: '#111111',
-          alignment: 'left',
-          columns: 1,
-          columnGutterMm: 4,
-          backgroundColor: 'transparent',
-          borderColor: 'transparent',
-          borderWidthMm: 0,
-          paddingMm: 1,
-        } as TextElement,
-        {
-          id: 'elem-divider-line',
-          type: 'shape',
-          pageId: 'page-3',
-          x: 25,
-          y: 67,
-          width: 167,
-          height: 1,
-          rotation: 0,
-          opacity: 1,
-          zIndex: 7,
-          locked: false,
-          shapeKind: 'line',
-          fillColor: '#111111',
-          strokeColor: '#111111',
-          strokeWidthMm: 0.5,
-          strokeDash: 'solid',
-        } as ShapeElement,
-        {
-          id: 'elem-body-columns-right',
-          type: 'text',
-          pageId: 'page-3',
-          x: 25,
-          y: 72,
-          width: 167,
-          height: 200,
-          rotation: 0,
-          opacity: 1,
-          zIndex: 9,
-          locked: false,
-          text: `For three decades, desktop publishing has been held hostage behind monolithic, proprietary walls. When an independent author sits down to set type, or a student editor arranges the columns of an underground gazette, they find themselves confronted by multi-gigabyte suites demanding perpetual tribute.
-
-Yet the mathematical purity of typesetting belongs to no corporate entity. The algorithms formulated by Donald Knuth—the harmonious balance of hyphens, the distribution of glue across a justified line, the relationship between margins and golden proportions—are cultural commons. 
-
-Recto was engineered from a simple conviction: creative freedom must never depend upon the luxury of flagship silicon. Built to execute flawlessly upon a modest dual-core machine, it renders facing pages, magnetic snap grids, and multi-column frames with instantaneous response. Here, the layout artist is restored to sovereignty.`,
-          fontFamily: 'Merriweather, Georgia, serif',
-          fontSizePt: 9.5,
-          lineHeight: 1.5,
-          letterSpacingPt: 0.1,
-          color: '#222222',
-          alignment: 'justify',
-          columns: 2,
-          columnGutterMm: 6,
-          backgroundColor: 'transparent',
-          borderColor: 'transparent',
-          borderWidthMm: 0,
-          paddingMm: 2,
-        } as TextElement,
-      ],
-    },
-  ],
-  activeSpreadIndex: 1,
-  selectedElementId: null,
-  selectedElementIds: [],
-  activeTool: 'select',
-  zoom: 1.0,
-  panX: 0,
-  panY: 0,
-  showGuides: true,
-  showBleed: true,
-  showBaselineGrid: true,
-  snapToGuides: true,
-  displayQuality: 'typical',
-  paragraphStyles: DEFAULT_PARAGRAPH_STYLES,
-  masterSpreads: DEFAULT_MASTER_SPREADS,
-  linkingFromFrameId: null,
-  layers: DEFAULT_LAYERS,
-  activeLayerId: 'layer-1',
-  previewMode: false,
-  objectStyles: DEFAULT_OBJECT_STYLES,
-  crossReferences: [],
-  indexEntries: [],
-  conditions: DEFAULT_CONDITIONS,
-};
-
 export type StateListener = (state: ProjectState) => void;
 
 export class StateManager {
+  private documentRevision = 0;
+
+  public getDocumentRevision(): number {
+    return this.documentRevision;
+  }
+  public readonly autosave = new Autosave(() => this.state);
+
+  public async recoverAutosave(): Promise<void> {
+    const recovered = await this.autosave.recover();
+    if (recovered) {
+      try {
+        this.loadFromJson(JSON.stringify(recovered));
+      } catch (error) {
+        console.warn('Invalid autosave backup skipped:', error);
+      }
+    }
+  }
   private state: ProjectState;
   private listeners: Set<StateListener> = new Set();
-  private history: ProjectState[] = [];
-  private historyIndex: number = -1;
+  private readonly history = new StateHistory<ProjectState>(30);
   private snapshots: VersionSnapshot[] = [];
   public onMutation?: (mutation: { type: 'add' | 'update' | 'delete'; elementId: string; element?: CanvasElement; updates?: Partial<CanvasElement> }) => void;
 
@@ -915,34 +277,32 @@ export class StateManager {
     return () => this.listeners.delete(fn);
   }
 
-  private notify() {
-    this.saveToStorage();
+  private notify(persist = true) {
+    if (persist) {
+      this.documentRevision++;
+      this.autosave.schedule();
+    }
     for (const listener of this.listeners) {
       listener(this.state);
     }
   }
 
   private pushHistory() {
-    if (this.historyIndex < this.history.length - 1) {
-      this.history = this.history.slice(0, this.historyIndex + 1);
-    }
-    this.history.push(JSON.parse(JSON.stringify(this.state)));
-    if (this.history.length > 30) this.history.shift();
-    this.historyIndex = this.history.length - 1;
+    this.history.push(this.state);
   }
 
   public undo() {
-    if (this.historyIndex > 0) {
-      this.historyIndex--;
-      this.state = JSON.parse(JSON.stringify(this.history[this.historyIndex]));
+    const state = this.history.undo();
+    if (state) {
+      this.state = state;
       this.notify();
     }
   }
 
   public redo() {
-    if (this.historyIndex < this.history.length - 1) {
-      this.historyIndex++;
-      this.state = JSON.parse(JSON.stringify(this.history[this.historyIndex]));
+    const state = this.history.redo();
+    if (state) {
+      this.state = state;
       this.notify();
     }
   }
@@ -1016,25 +376,25 @@ export class StateManager {
 
   public setTool(tool: ProjectState['activeTool']) {
     this.state.activeTool = tool;
-    this.notify();
+    this.notify(false);
   }
 
   public setZoom(zoom: number) {
     this.state.zoom = Math.max(0.2, Math.min(3.0, zoom));
-    this.notify();
+    this.notify(false);
   }
 
   public setPan(x: number, y: number) {
     this.state.panX = x;
     this.state.panY = y;
-    this.notify();
+    this.notify(false);
   }
 
   public setZoomAndPan(zoom: number, panX: number, panY: number) {
     this.state.zoom = Math.max(0.2, Math.min(3.0, zoom));
     this.state.panX = panX;
     this.state.panY = panY;
-    this.notify();
+    this.notify(false);
   }
 
   public toggleGuides() {
@@ -1295,13 +655,13 @@ export class StateManager {
   public selectElement(id: string | null) {
     this.state.selectedElementId = id;
     this.state.selectedElementIds = id ? [id] : [];
-    this.notify();
+    this.notify(false);
   }
 
   public selectElements(ids: string[]) {
     this.state.selectedElementIds = [...ids];
     this.state.selectedElementId = ids.length > 0 ? ids[0] : null;
-    this.notify();
+    this.notify(false);
   }
 
   public toggleElementSelection(id: string) {
@@ -1312,7 +672,7 @@ export class StateManager {
       this.state.selectedElementIds = [...this.state.selectedElementIds, id];
     }
     this.state.selectedElementId = this.state.selectedElementIds.length > 0 ? this.state.selectedElementIds[0] : null;
-    this.notify();
+    this.notify(false);
   }
 
   public getActiveSpread(): Spread {
@@ -1324,7 +684,7 @@ export class StateManager {
       this.state.activeSpreadIndex = index;
       this.state.selectedElementId = null;
       this.state.selectedElementIds = [];
-      this.notify();
+      this.notify(false);
     }
   }
 
@@ -2541,65 +1901,68 @@ export class StateManager {
 
     this.state = blankState;
     this.renumberPages();
-    this.history = [];
-    this.historyIndex = -1;
+    this.history.clear();
     this.pushHistory();
     this.notify();
   }
 
   public loadFromJson(jsonStr: string) {
-    try {
-      const parsed = JSON.parse(jsonStr);
-      if (parsed.settings && parsed.spreads) {
-        if (!Array.isArray(parsed.selectedElementIds)) {
-          parsed.selectedElementIds = parsed.selectedElementId ? [parsed.selectedElementId] : [];
-        }
-        if (!parsed.settings.baselineGrid) {
-          parsed.settings.baselineGrid = {
-            enabled: true,
-            incrementPt: 12,
-            startMm: 20,
-          };
-        }
-        if (parsed.showBaselineGrid === undefined) {
-          parsed.showBaselineGrid = true;
-        }
-        if (!Array.isArray(parsed.paragraphStyles) || parsed.paragraphStyles.length === 0) {
-          parsed.paragraphStyles = DEFAULT_PARAGRAPH_STYLES;
-        }
-        if (!Array.isArray(parsed.masterSpreads) || parsed.masterSpreads.length === 0) {
-          parsed.masterSpreads = DEFAULT_MASTER_SPREADS;
-        }
-        if (parsed.linkingFromFrameId === undefined) {
-          parsed.linkingFromFrameId = null;
-        }
-        if (!parsed.displayQuality) {
-          parsed.displayQuality = 'typical';
-        }
-        if (!Array.isArray(parsed.layers) || parsed.layers.length === 0) {
-          parsed.layers = JSON.parse(JSON.stringify(DEFAULT_LAYERS));
-        }
-        if (!parsed.activeLayerId) {
-          parsed.activeLayerId = parsed.layers[0]?.id || 'layer-1';
-        }
-        if (!parsed.settings.colorMode) {
-          parsed.settings.colorMode = 'cmyk';
-        }
-        if (!parsed.settings.iccProfile) {
-          parsed.settings.iccProfile = 'FOGRA39';
-        }
-        this.state = parsed;
-        this.renumberPages();
-        this.pushHistory();
-        this.notify();
+    const project = parseProject(jsonStr, INITIAL_STATE);
+    this.state = project;
+    this.renumberPages();
+    this.pushHistory();
+    this.notify();
+  }
+
+  /** Validate remote edits before committing, without changing the local viewport. */
+  public applyRemoteElement(spreadId: string, id: string, element: CanvasElement | null): boolean {
+    const index = this.state.spreads.findIndex(spread => spread.id === spreadId);
+    if (index < 0) return false;
+    const candidate = structuredClone(this.state);
+    const elements = candidate.spreads[index].elements;
+    const existing = elements.findIndex(item => item.id === id);
+    if (element) {
+      if (element.id !== id) return false;
+      if (existing < 0) elements.push(element);
+      else elements[existing] = element;
+    } else if (existing >= 0) elements.splice(existing, 1);
+    const validated = parseProject(JSON.stringify(candidate), INITIAL_STATE);
+    this.state.spreads[index].elements = validated.spreads[index].elements;
+    this.state.selectedElementIds = this.state.selectedElementIds.filter(selected => selected !== id || element !== null);
+    if (!element && this.state.selectedElementId === id) this.state.selectedElementId = null;
+    this.pushHistory();
+    this.notify();
+    return true;
+  }
+
+  public applyScriptUpdates(updates: { id: string; updates: Partial<CanvasElement> }[]): number {
+    if (updates.length === 0) return 0;
+    if (updates.length > 1000) throw new Error('Too many script updates.');
+    const candidate = structuredClone(this.state);
+    for (const change of updates) {
+      const spread = candidate.spreads.find(item => item.elements.some(element => element.id === change.id));
+      const element = spread?.elements.find(item => item.id === change.id);
+      if (!element || !spread) throw new Error(`Unknown element: ${change.id}`);
+      if (element.locked) throw new Error(`Element ${change.id} is locked.`);
+      if (change.updates.id !== undefined || change.updates.type !== undefined || change.updates.pageId !== undefined) {
+        throw new Error('Scripts cannot change element IDs, types, or page ownership.');
       }
-    } catch (e) {
-      console.error('Failed to parse project JSON', e);
+      const updated = { ...element, ...change.updates } as CanvasElement;
+      if (updated.type === 'text' && change.updates && 'text' in change.updates) {
+        if (updated.nextFrameId || updated.prevFrameId) throw new Error('Edit threaded stories through the story editor.');
+        updated.rawStoryText = updated.text;
+      }
+      spread.elements[spread.elements.indexOf(element)] = updated;
     }
+    this.state = parseProject(JSON.stringify(candidate), INITIAL_STATE);
+    this.pushHistory();
+    this.notify();
+    return updates.length;
   }
 
   public async loadFromIndd(inddBuffer: ArrayBuffer | Uint8Array, fileName?: string) {
     try {
+      const { parseInddToProjectState } = await import('../engine/inddParser');
       const newState = parseInddToProjectState(inddBuffer, fileName);
       if (!Array.isArray(newState.layers) || newState.layers.length === 0) {
         newState.layers = JSON.parse(JSON.stringify(DEFAULT_LAYERS));
@@ -2618,10 +1981,12 @@ export class StateManager {
   }
 
   public async loadFromIdml(idmlBuffer: ArrayBuffer | Uint8Array, fileName?: string) {
+    const { isInddBuffer } = await import('../engine/inddParser');
     if (isInddBuffer(idmlBuffer)) {
       return this.loadFromIndd(idmlBuffer, fileName);
     }
     try {
+      const { parseIdmlPackage } = await import('../idmlImport');
       const newState = await parseIdmlPackage(idmlBuffer, fileName);
       if (!Array.isArray(newState.layers) || newState.layers.length === 0) {
         newState.layers = JSON.parse(JSON.stringify(DEFAULT_LAYERS));
@@ -3246,25 +2611,21 @@ export class StateManager {
   }
 
   public async importProjectFile(file: File): Promise<void> {
-    const state = await RectoDB.importProjectFile(file);
+    const state = await RectoDB.importProjectFile(file, INITIAL_STATE);
+    await fontManager.restoreFonts(state.embeddedFonts);
     this.loadFromJson(JSON.stringify(state));
   }
 
-  private saveToStorage() {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
-    } catch {}
-
-    // Asynchronous high-capacity IndexedDB persistence
-    if (typeof indexedDB !== 'undefined') {
-      RectoDB.saveProject(this.state).catch(() => {});
-    }
+  public saveImportedFonts() {
+    this.state.embeddedFonts = fontManager.getFontAssets();
+    this.pushHistory();
+    this.notify();
   }
 
   private loadFromStorage(): ProjectState | null {
     try {
       const data = localStorage.getItem(STORAGE_KEY);
-      return data ? JSON.parse(data) : null;
+      return data ? parseProject(data, INITIAL_STATE) : null;
     } catch {
       return null;
     }

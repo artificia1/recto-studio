@@ -5,6 +5,7 @@
  */
 
 import { ProjectState } from '../types/index';
+import { parseProject } from './projectValidation';
 
 const DB_NAME = 'RectoStudioDB';
 const DB_VERSION = 1;
@@ -29,44 +30,47 @@ export class RectoDB {
           }
         };
         req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
+        req.onerror = () => {
+          this.dbPromise = null;
+          reject(req.error);
+        };
       });
     }
 
     return this.dbPromise;
   }
 
-  public static async saveProject(state: ProjectState): Promise<void> {
-    try {
-      const db = await this.getDB();
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, 'readwrite');
-        const store = tx.objectStore(STORE_NAME);
-        const record = {
-          id: RECORD_ID,
-          state: JSON.parse(JSON.stringify(state)),
-          updatedAt: Date.now(),
-        };
-        const req = store.put(record);
-        req.onsuccess = () => resolve();
-        req.onerror = () => reject(req.error);
-      });
-    } catch (e) {
-      // Fallback silently if IndexedDB is disabled or in test environments
-      console.warn('IndexedDB save skipped:', e);
-    }
+  public static async saveProject(state: ProjectState, updatedAt = Date.now()): Promise<void> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+      const record = {
+        id: RECORD_ID,
+        state: JSON.parse(JSON.stringify(state)),
+        updatedAt,
+      };
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error || new Error('Autosave transaction aborted'));
+      tx.onerror = () => reject(tx.error);
+      store.put(record);
+    });
   }
 
   public static async loadProject(): Promise<ProjectState | null> {
+    return (await this.loadProjectRecord())?.state || null;
+  }
+
+  public static async loadProjectRecord(): Promise<{ state: ProjectState; updatedAt: number } | null> {
     try {
       const db = await this.getDB();
-      return new Promise((resolve, reject) => {
+      return await new Promise((resolve, reject) => {
         const tx = db.transaction(STORE_NAME, 'readonly');
         const store = tx.objectStore(STORE_NAME);
         const req = store.get(RECORD_ID);
         req.onsuccess = () => {
           if (req.result && req.result.state) {
-            resolve(req.result.state);
+            resolve({ state: req.result.state, updatedAt: req.result.updatedAt || 0 });
           } else {
             resolve(null);
           }
@@ -91,13 +95,9 @@ export class RectoDB {
     URL.revokeObjectURL(url);
   }
 
-  public static async importProjectFile(file: File): Promise<ProjectState> {
+  public static async importProjectFile(file: File, defaults: ProjectState): Promise<ProjectState> {
     const text = await file.text();
-    const parsed = JSON.parse(text);
-    if (!parsed.settings || !parsed.spreads) {
-      throw new Error('Invalid Recto document structure');
-    }
-    return parsed as ProjectState;
+    return parseProject(text, defaults);
   }
 }
 

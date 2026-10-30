@@ -14,13 +14,12 @@ describe('PDF Export Vector Geometry & Print Slug Calculations', () => {
     expect(heightMm).toBe(297);
     expect(bleedMm).toBe(3);
 
-    // Standard commercial printer slug margin = 12mm for crop & registration marks
-    const slugMm = 12;
+    const slugMm = 14;
     const expectedExportWidth = widthMm + bleedMm * 2 + slugMm * 2; // 210 + 6 + 24 = 240 mm
     const expectedExportHeight = heightMm + bleedMm * 2 + slugMm * 2; // 297 + 6 + 24 = 327 mm
 
-    expect(expectedExportWidth).toBe(240);
-    expect(expectedExportHeight).toBe(327);
+    expect(expectedExportWidth).toBe(244);
+    expect(expectedExportHeight).toBe(331);
 
     // Export single spread
     const doc = await exportDocumentToPdf(state, {
@@ -29,6 +28,7 @@ describe('PDF Export Vector Geometry & Print Slug Calculations', () => {
       includeRegistrationMarks: true,
       includeColorBars: true,
       spreadRange: [0],
+      download: false,
     });
 
     expect(doc).toBeDefined();
@@ -40,8 +40,12 @@ describe('PDF Export Vector Geometry & Print Slug Calculations', () => {
     expect(outputStr.includes('trailer')).toBe(true);
     expect(outputStr.includes('%%EOF')).toBe(true);
 
-    // Verify PDF/UA accessibility marks are emitted
-    expect(outputStr.includes('/MarkInfo << /Marked true >>')).toBe(true);
+    expect(doc.internal.pageSize.getWidth()).toBeCloseTo(expectedExportWidth);
+    expect(doc.internal.pageSize.getHeight()).toBeCloseTo(expectedExportHeight);
+    expect(outputStr).toContain('/TrimBox');
+    expect(outputStr).toContain('/BleedBox');
+    expect(outputStr).not.toContain('/MarkInfo');
+    expect(outputStr).not.toContain('/GTS_PDFX');
     expect(outputStr.includes('/Lang (en-US)')).toBe(true);
 
     // Clean up temporary generated file if saved to disk
@@ -63,9 +67,12 @@ describe('PDF Export Vector Geometry & Print Slug Calculations', () => {
       includeRegistrationMarks: false,
       includeColorBars: false,
       spreadRange: [0],
+      download: false,
     });
 
     expect(doc).toBeDefined();
+    expect(doc.internal.pageSize.getWidth()).toBeCloseTo(widthMm);
+    expect(doc.internal.pageSize.getHeight()).toBeCloseTo(heightMm);
 
     // Clean up temporary generated file
     const filename = `${state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'recto-document'}.pdf`;

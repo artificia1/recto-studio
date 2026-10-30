@@ -1,3 +1,4 @@
+import { handleCanvasKeyDown } from './engine/interaction/keyboard';
 import {
   ProjectState,
   Spread,
@@ -655,86 +656,23 @@ export class SpreadCanvas {
     this.canvas.addEventListener('dragover', (e) => e.preventDefault());
     this.canvas.addEventListener('drop', this.handleFileDrop.bind(this));
 
-    this.addWindowListener('keydown', (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable) return;
-      const isMod = e.ctrlKey || e.metaKey;
-
-      if (e.code === 'Space' && !this.isSpacePanning) {
-        e.preventDefault();
-        this.isSpacePanning = true;
-        this.canvas.style.cursor = 'grab';
-        return;
-      }
-
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-        const state = stateManager.getState();
-        const hasSelection = (state.selectedElementIds && state.selectedElementIds.length > 0) || !!state.selectedElementId;
-        if (hasSelection) {
-          e.preventDefault();
-          const step = e.shiftKey ? 10 : (e.altKey ? 0.1 : 1);
-          let dx = 0;
-          let dy = 0;
-          if (e.key === 'ArrowLeft') dx = -step;
-          else if (e.key === 'ArrowRight') dx = step;
-          else if (e.key === 'ArrowUp') dy = -step;
-          else if (e.key === 'ArrowDown') dy = step;
-          stateManager.nudgeSelectedElements(dx, dy);
-          return;
-        }
-      }
-
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        const state = stateManager.getState();
-        if (state.selectedElementIds && state.selectedElementIds.length > 0) {
-          stateManager.deleteSelectedElements();
-        } else if (state.selectedElementId) {
-          stateManager.deleteElement(state.selectedElementId);
-        }
-      } else if (isMod && e.altKey && e.shiftKey && (e.key === 'c' || e.key === 'C')) {
-        e.preventDefault();
-        stateManager.applyImageFitMode('fill');
-      } else if (isMod && e.altKey && e.shiftKey && (e.key === 'e' || e.key === 'E')) {
-        e.preventDefault();
-        stateManager.applyImageFitMode('fit');
-      } else if (isMod && e.altKey && !e.shiftKey && (e.key === 'e' || e.key === 'E')) {
-        e.preventDefault();
-        stateManager.applyImageFitMode('contentToFrame');
-      } else if (isMod && !e.altKey && e.shiftKey && (e.key === 'e' || e.key === 'E')) {
-        e.preventDefault();
-        stateManager.applyImageFitMode('center');
-      } else if (!isMod && !e.altKey && (e.key === 'v' || e.key === 'V')) {
-        stateManager.setTool('select');
-      } else if (!isMod && !e.altKey && (e.key === 't' || e.key === 'T')) {
-        stateManager.setTool('text');
-      } else if (!isMod && !e.altKey && (e.key === 'p' || e.key === 'P')) {
-        stateManager.setTool('pen');
-      } else if (!isMod && !e.altKey && (e.key === 'n' || e.key === 'N')) {
-        stateManager.setTool('pencil');
-      } else if (!isMod && !e.altKey && (e.key === 'b' || e.key === 'B')) {
-        stateManager.setTool('table');
-      } else if (e.key === 'Escape' || e.key === 'Enter') {
-        if (this.activePenPathId) {
+    this.addWindowListener('keydown', (event: KeyboardEvent) => {
+      handleCanvasKeyDown(event, stateManager, {
+        beginSpacePan: () => {
+          if (this.isSpacePanning) return false;
+          this.isSpacePanning = true;
+          this.canvas.style.cursor = 'grab';
+          return true;
+        },
+        finishPenPath: () => {
+          if (!this.activePenPathId) return;
           this.activePenPathId = null;
           this.activePenNodeIndex = -1;
           this.isPenDraggingHandle = false;
           stateManager.setTool('select');
           this.render();
-        }
-      } else if (!isMod && !e.altKey && (e.key === 'f' || e.key === 'F')) {
-        stateManager.setTool('frame');
-      } else if (!isMod && !e.altKey && (e.key === 'm' || e.key === 'M')) {
-        stateManager.setTool('shape-rect');
-      } else if (!isMod && !e.altKey && (e.key === 'h' || e.key === 'H')) {
-        stateManager.setTool('hand');
-      } else if (isMod && (e.key === 'z' || e.key === 'Z')) {
-        e.preventDefault();
-        if (e.shiftKey) stateManager.redo();
-        else stateManager.undo();
-      } else if (isMod && (e.key === 'y' || e.key === 'Y')) {
-        e.preventDefault();
-        stateManager.redo();
-      }
+        },
+      });
     });
 
     this.addWindowListener('keyup', (e: KeyboardEvent) => {
@@ -4602,8 +4540,8 @@ export class SpreadCanvas {
 
     // Adaptive candidate strings matching available width (prevents text/patch collision on single-page spreads)
     const candidates = [
-      `RECTO PREPRESS SLUG | Doc: ${title} | Spread ${spreadNum} | Bleed: ${bleed} | PDF/X-1a CMYK`,
-      `Doc: ${title} | Spread ${spreadNum} | Bleed: ${bleed} | PDF/X-1a`,
+      `RECTO PREPRESS SLUG | Doc: ${title} | Spread ${spreadNum} | Bleed: ${bleed}`,
+      `Doc: ${title} | Spread ${spreadNum} | Bleed: ${bleed}`,
       `Doc: ${title} | Spread ${spreadNum} | Bleed: ${bleed}`,
       `Doc: ${title} | Spread ${spreadNum}`,
       `Doc: ${title} | Sp ${spreadNum}`,

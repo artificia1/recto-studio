@@ -21,11 +21,11 @@ interface BuiltInScript {
 }
 
 export function ScriptsModal({ isOpen, onClose }: ScriptsModalProps) {
-  if (!isOpen) return null;
-
   const [activeTab, setActiveTab] = useState<'presets' | 'custom'>('presets');
   const [customCode, setCustomCode] = useState('// JavaScript script runner\n// Available: stateManager\nconst state = stateManager.getState();\nalert("Document has " + state.spreads.length + " spreads");');
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [isRunning, setIsRunning] = useState(false);
+  if (!isOpen) return null;
 
   const builtInScripts: BuiltInScript[] = [
     {
@@ -133,13 +133,17 @@ export function ScriptsModal({ isOpen, onClose }: ScriptsModalProps) {
     }
   };
 
-  const handleRunCustom = () => {
+  const handleRunCustom = async () => {
+    setIsRunning(true);
     try {
-      const fn = new Function('stateManager', customCode);
-      fn(stateManager);
-      setStatusMsg('Custom script executed successfully.');
-    } catch (e: any) {
-      setStatusMsg(`Error: ${e?.message || 'Execution error'}`);
+      const { evaluateScript } = await import('../state/scriptRunner');
+      const result = evaluateScript(customCode, stateManager.getState());
+      const count = stateManager.applyScriptUpdates(result.updates);
+      setStatusMsg([...result.messages, `Applied ${count} updates.`].join('\n'));
+    } catch (error) {
+      setStatusMsg(`No changes applied. ${error instanceof Error ? error.message : 'Script failed.'}`);
+    } finally {
+      setIsRunning(false);
     }
   };
 
@@ -233,7 +237,7 @@ export function ScriptsModal({ isOpen, onClose }: ScriptsModalProps) {
               cursor: 'pointer',
             }}
           >
-            Custom JavaScript (ExtendScript Style)
+            Restricted JavaScript
           </button>
         </div>
 
@@ -284,6 +288,11 @@ export function ScriptsModal({ isOpen, onClose }: ScriptsModalProps) {
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <p style={{ fontSize: '11px', color: '#a0a0a8', margin: 0 }}>
+                Read with stateManager.getState(); edit with stateManager.updateElement(id, updates).
+                Supports variables, if, for…of, and basic arithmetic. No files, network, DOM, or arbitrary functions.
+                Changes apply together and can be undone.
+              </p>
               <textarea
                 value={customCode}
                 onInput={(e) => setCustomCode((e.target as HTMLTextAreaElement).value)}
@@ -304,6 +313,7 @@ export function ScriptsModal({ isOpen, onClose }: ScriptsModalProps) {
               <button
                 type="button"
                 onClick={handleRunCustom}
+                disabled={isRunning}
                 style={{
                   alignSelf: 'flex-end',
                   padding: '6px 16px',
@@ -316,7 +326,7 @@ export function ScriptsModal({ isOpen, onClose }: ScriptsModalProps) {
                   cursor: 'pointer',
                 }}
               >
-                Execute Script
+                {isRunning ? 'Running…' : 'Execute Script'}
               </button>
             </div>
           )}

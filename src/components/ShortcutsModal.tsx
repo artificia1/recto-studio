@@ -40,7 +40,7 @@ const SHORTCUT_SECTIONS: ShortcutSection[] = [
   {
     title: 'Typography & Editorial',
     items: [
-      { keys: ['Cmd/Ctrl', 'Y'], desc: 'Story Focus / Typewriter Editor' },
+      { keys: ['Cmd/Ctrl', 'Alt', 'Y'], desc: 'Story Focus / Typewriter Editor' },
       { keys: ['Cmd/Ctrl', 'Alt', 'C'], desc: 'Fit Frame Height to Content' },
       { keys: ['Cmd/Ctrl', 'B'], desc: 'Text Frame Options (Columns, Insets)' },
       { keys: ['Cmd/Ctrl', 'F'], desc: 'Find & Change / GREP Engine' },

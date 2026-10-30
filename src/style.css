@@ -459,6 +459,10 @@ html, body {
 
 @media (max-width: 650px) {
   .top-bar {
+    height: auto;
+    min-height: 44px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
     padding: 0 4px;
     gap: 4px;
     overflow: visible !important;
@@ -467,6 +471,9 @@ html, body {
     display: none !important;
   }
   .top-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
     gap: 3px;
     padding-right: 2px;
   }

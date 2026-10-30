@@ -18,24 +18,53 @@ const MIME_TYPES = {
   '.gif': 'image/gif',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
+  '.wasm': 'application/wasm',
 };
 
-const server = http.createServer((req, res) => {
-  let urlPath = req.url.split('?')[0];
+export function createStaticServer(rootDirectory = path.join(__dirname, 'dist')) {
+const root = path.resolve(rootDirectory);
+const isInside = (base, target) => {
+  const relative = path.relative(base, target);
+  return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+};
+return http.createServer(async (req, res) => {
+  const reply = (status, message) => {
+    res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end(message);
+  };
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.setHeader('Allow', 'GET, HEAD');
+    reply(405, 'Method Not Allowed');
+    return;
+  }
+  let urlPath;
+  try {
+    urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
+  } catch {
+    reply(400, 'Bad Request');
+    return;
+  }
+  if (urlPath.includes('\0') || urlPath.includes(':') || urlPath.split(/[/\\]/).some(segment => segment.startsWith('.'))) {
+    reply(403, 'Forbidden');
+    return;
+  }
   if (urlPath === '/' || urlPath === '') urlPath = '/index.html';
   
   const relativePath = urlPath.replace(/^[/\\]+/, '');
   
-  // Prefer dist/ production bundle if available
-  let filePath = path.join(__dirname, 'dist', relativePath);
-  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
-    filePath = path.join(__dirname, relativePath);
+  const filePath = path.resolve(root, relativePath);
+  if (!isInside(root, filePath)) {
+    reply(403, 'Forbidden');
+    return;
   }
-
-  fs.stat(filePath, (err, stats) => {
-    if (err || !stats.isFile()) {
-      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-      res.end('404 Not Found');
+  try {
+    const [realRoot, realFile] = await Promise.all([fs.promises.realpath(root), fs.promises.realpath(filePath)]);
+    if (!isInside(realRoot, realFile)) {
+      reply(403, 'Forbidden');
+      return;
+    }
+    if (!(await fs.promises.stat(realFile)).isFile()) {
+      reply(404, 'Not Found');
       return;
     }
 
@@ -45,14 +74,29 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, {
       'Content-Type': contentType,
       'Cache-Control': 'no-cache',
-      'Access-Control-Allow-Origin': '*',
+      'X-Content-Type-Options': 'nosniff',
     });
-    fs.createReadStream(filePath).pipe(res);
-  });
+    if (req.method === 'HEAD') {
+      res.end();
+      return;
+    }
+    const stream = fs.createReadStream(realFile);
+    stream.on('error', () => res.destroy());
+    stream.pipe(res);
+  } catch {
+    reply(404, 'Not Found');
+  }
 });
+}
 
-server.listen(PORT, () => {
-  console.log(`\n==================================================`);
-  console.log(`❖ RECTO STUDIO is live at http://localhost:${PORT}`);
-  console.log(`==================================================\n`);
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  if (!fs.existsSync(path.join(__dirname, 'dist', 'index.html'))) {
+    console.error('Built app not found. Run npm run build before npm run desktop.');
+    process.exitCode = 1;
+  } else {
+    const server = createStaticServer();
+    server.listen(PORT, '127.0.0.1', () => {
+      console.log(`Recto Studio is live at http://127.0.0.1:${server.address().port}`);
+    });
+  }
+}

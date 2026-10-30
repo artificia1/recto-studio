@@ -103,7 +103,7 @@ Trim Size:         ${widthMm} mm x ${heightMm} mm
 Bleed Size:        ${bleedMm} mm (All four sides)
 Safe Margins:      Top: ${margins.topMm}mm | Bottom: ${margins.bottomMm}mm | Inside: ${margins.insideMm}mm | Outside: ${margins.outsideMm}mm
 Baseline Grid:     ${state.settings.baselineGrid?.enabled ? `Active (${state.settings.baselineGrid.incrementPt}pt increment, ${state.settings.baselineGrid.startMm}mm start)` : 'Disabled'}
-Color Profile:     CMYK Coated FOGRA39 / ISO 12647-2 (Digital & Offset Press Ready)
+Color Setting:     ${state.settings.colorMode || 'cmyk'} / ${state.settings.iccProfile || 'FOGRA39'} (ICC conversion and standards conformance are not certified)
 
 2. FONTS SUMMARY
 --------------------------------------------------------------------------------
@@ -121,8 +121,9 @@ ${preflightSummary}
 
 5. PRESS OPERATOR NOTES & INSTRUCTIONS
 --------------------------------------------------------------------------------
-* Print-Ready PDF file is included in this root folder:
-  - Generated with 12mm slug containing dynamic crop marks, bleed boxes, registration targets, CMYK density color calibration bars, and publication metadata.
+* Print PDF file is included in this root folder:
+  - Generated with 14mm slug, crop marks, trim/bleed boxes, registration targets, and calibration bars.
+  - Obtain printer preflight approval before production. This is not certified PDF/X or PDF/UA output.
 * All placed raster assets are archived in the /Assets subfolder.
 * Native .recto project source is preserved in this package for archival editing and version inspection.
 ================================================================================
@@ -149,6 +150,7 @@ export async function packageDocument(
     includeColorBars: true,
     exportFormat: 'pages',
     spreadRange: 'all',
+    download: false,
   });
   const pdfArrayBuffer = pdfDoc.output('arraybuffer');
   files[`${baseTitle}-print.pdf`] = new Uint8Array(pdfArrayBuffer);

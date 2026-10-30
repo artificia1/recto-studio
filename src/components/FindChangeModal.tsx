@@ -24,8 +24,6 @@ const GREP_PRESETS = [
 ];
 
 export function FindChangeModal({ isOpen, onClose }: FindChangeModalProps) {
-  if (!isOpen) return null;
-
   const [findText, setFindText] = useState('');
   const [changeText, setChangeText] = useState('');
   const [isGrep, setIsGrep] = useState(false);
@@ -39,9 +37,11 @@ export function FindChangeModal({ isOpen, onClose }: FindChangeModalProps) {
 
   useEffect(() => {
     if (isOpen) {
-      setTimeout(() => findInputRef.current?.focus(), 50);
+      const timer = setTimeout(() => findInputRef.current?.focus(), 50);
+      return () => clearTimeout(timer);
     }
   }, [isOpen]);
+  if (!isOpen) return null;
 
   const getQuery = (): FindChangeQuery => ({
     findText,
