@@ -1,5 +1,7 @@
 # RECTO STUDIO
 
+[**Download the Windows app**](https://github.com/artificia1/recto-studio/releases/latest) · [Windows installation guide](DESKTOP.md)
+
 Manuscript import, formatted stories, and supported file features: [Manuscript guide](MANUSCRIPTS.md).
 
 ### *The Open-Source Desktop Publishing Suite Engineered for Craftsmanship.*

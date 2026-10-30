@@ -4049,16 +4049,17 @@ const gamutAuditNeon = stateManager.auditColorGamut('#00ff00', 'SWOP2006');
 assert.strictEqual(gamutAuditNeon.inGamut, false, 'Vivid neon green must be flagged out-of-gamut for publication SWOP');
 assert(gamutAuditNeon.warning && gamutAuditNeon.warning.includes('gamut'), 'Gamut audit must provide descriptive warning');
 
-// 4. Desktop OS File Associations (Tauri v2)
+// 4. Shippable Windows desktop packaging (Tauri v2)
 const tauriConfRaw = fs.readFileSync('src-tauri/tauri.conf.json', 'utf-8');
 const tauriConf = JSON.parse(tauriConfRaw);
-assert(Array.isArray(tauriConf.bundle?.fileAssociations), 'tauri.conf.json must define bundle.fileAssociations');
-const exts = tauriConf.bundle.fileAssociations.flatMap((fa: any) => fa.ext);
-assert(exts.includes('recto'), 'File associations must register .recto');
-assert(exts.includes('idml'), 'File associations must register .idml');
-assert(exts.includes('indd'), 'File associations must register .indd');
+assert(tauriConf.bundle?.targets.includes('nsis'), 'Desktop builds must produce a Windows setup executable');
+assert.strictEqual(tauriConf.build.frontendDist, '../dist', 'Desktop app must bundle its editor assets');
+assert.strictEqual(tauriConf.app.windows[0].dragDropEnabled, false, 'WebView must preserve the editor file-drop handling');
+assert.strictEqual(tauriConf.bundle.windows.nsis.installMode, 'currentUser', 'Install without requiring administrator privileges');
+assert(!tauriConf.bundle.fileAssociations, 'Do not register file associations until launch-file handling is implemented');
+for (const icon of tauriConf.bundle.icon) assert(fs.existsSync(`src-tauri/${icon}`), `Missing desktop icon: ${icon}`);
 
-console.log('✓ Enterprise Parity Suite (Live GREP Pipeline, Contour Alpha Wrap, Prepress Color Management & Tauri File Associations) verified.');
+console.log('✓ Enterprise Parity Suite (Live GREP Pipeline, Contour Alpha Wrap, Prepress Color Management & Windows Desktop Packaging) verified.');
 
 console.log('\n=============================================');
 console.log('ALL 58 TEST SUITES PASSED FLAWLESSLY! (100% OK)');

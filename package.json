@@ -1,7 +1,7 @@
 {
   "name": "recto-studio",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "The open-source, web-first desktop publishing alternative to Adobe InDesign. Zero subscriptions, zero cloud telemetry, canvas editing, InDesign shortcuts, IDML import, and PDF export with bleed and marks.",
   "repository": {
     "type": "git",
@@ -34,7 +34,8 @@
     "test:e2e:ui": "npm run test:e2e:typecheck && npm run build && playwright test --ui",
     "test:all": "vitest run && npx tsx test.ts",
     "cli": "node ./bin/recto.js",
-    "desktop": "node server.js",
+    "desktop": "tauri dev",
+    "desktop:serve": "node server.js",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"
   },
@@ -42,6 +43,7 @@
     "recto": "./bin/recto.js"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.12.4",
     "acorn": "^8.19.0",
     "ag-psd": "^31.0.3",
     "fontkit": "^2.0.4",
@@ -53,6 +55,7 @@
   "devDependencies": {
     "@playwright/test": "^1.64.1",
     "@preact/preset-vite": "^2.8.2",
+    "@tauri-apps/cli": "^2.12.4",
     "@types/estree": "^1.0.10",
     "@types/fontkit": "^2.0.9",
     "@types/node": "^26.6.5",

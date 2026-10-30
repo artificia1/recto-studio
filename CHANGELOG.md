@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.0] - 2026-10-30
+
+### Added
+- Standalone Windows application, setup program, portable package, and application icons derived from the existing Recto logo.
+- Native document Open/Save and export dialogs with atomic file replacement.
+- Formatted stories, reusable character styles, and Word/Markdown import previews with style mapping.
+- Windows release builds with native runtime checks and download checksums.
+
+### Fixed
+- Preserve paragraph boundaries and copy across text frame linking, deletion, editing, and save/reopen.
+- Keep browser publishing workflows available alongside the desktop edition.
+
 ## [1.1.0] - 2026-10-29
 
 ### Added

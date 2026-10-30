@@ -1,0 +1,74 @@
+name: Build Windows release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install build dependencies
+        run: npm ci
+      - name: Audit dependencies
+        run: npm audit --audit-level=moderate
+      - name: Verify editor regressions
+        run: npm test
+      - name: Set up Rust
+        run: rustup default stable
+      - name: Build Windows app and installer
+        run: npm run tauri:build -- --bundles nsis
+      - name: Verify native file I/O
+        working-directory: src-tauri
+        run: cargo test --locked
+      - name: Smoke-test the installed application runtime
+        run: node scripts/desktop-smoke.mjs src-tauri/target/release/recto-studio.exe
+      - name: Package downloadable files
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          New-Item -ItemType Directory -Path release-artifacts,release-artifacts/portable -Force | Out-Null
+          Copy-Item src-tauri/target/release/recto-studio.exe "release-artifacts/portable/Recto Studio.exe"
+          Copy-Item LICENSE release-artifacts/portable/LICENSE.txt
+          Copy-Item DESKTOP.md release-artifacts/portable/README.txt
+          Compress-Archive -Path release-artifacts/portable/* -DestinationPath "release-artifacts/Recto-Studio-$version-Windows-x64-portable.zip"
+          $installer = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          if (!$installer) { throw 'Windows installer was not generated.' }
+          Copy-Item $installer.FullName "release-artifacts/Recto-Studio-$version-Windows-x64-setup.exe"
+          $hashes = Get-ChildItem release-artifacts -File | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)" }
+          $hashes | Set-Content -Encoding ascii release-artifacts/SHA256SUMS.txt
+          "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
+      - name: Create draft release
+        shell: pwsh
+        run: |
+          gh release view "v$env:RELEASE_VERSION" --repo $env:GITHUB_REPOSITORY 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create "v$env:RELEASE_VERSION" --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --draft --title "Recto Studio $env:RELEASE_VERSION" --notes-file RELEASE_NOTES.md
+            if ($LASTEXITCODE -ne 0) { throw 'Could not create release.' }
+          }
+          $assets = Get-ChildItem release-artifacts -File | ForEach-Object { $_.FullName }
+          gh release upload "v$env:RELEASE_VERSION" @assets --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Could not upload release assets.' }
+      - name: Save build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build-diagnostics
+          path: |
+            test-results/desktop/
+            src-tauri/Cargo.lock
+          if-no-files-found: ignore

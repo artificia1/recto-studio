@@ -8,6 +8,7 @@ import { jsPDF } from 'jspdf';
 import { colorToCmyk, applyCmykTextColor, applyCmykFillColor, applyCmykDrawColor, applySpotColor } from './pdfColors';
 export { colorToCmyk, applyCmykTextColor, applyCmykFillColor, applyCmykDrawColor, applySpotColor } from './pdfColors';
 import { fontManager } from '../fontManager';
+import { isDesktop, savePublicationFile } from '../desktop';
 import { layoutStory } from '../engine/storyLayout';
 import { drawFontText, fontTextWidth, wrapFontText } from './fontOutlines';
 import { ProjectState, Page, Spread, TextElement, ImageElement, ShapeElement, VectorPathElement, TableElement } from '../types/index';
@@ -606,7 +607,10 @@ export async function exportDocumentToPdf(
   });
 
   const filename = `${state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'recto-document'}.pdf`;
-  if (options.download !== false) doc.save(filename);
+  if (options.download !== false) {
+    if (isDesktop()) await savePublicationFile(filename, doc.output('arraybuffer'), 'application/pdf');
+    else doc.save(filename);
+  }
   return doc;
 }
 

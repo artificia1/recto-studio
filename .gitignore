@@ -4,6 +4,9 @@ node_modules/
 # Production output
 dist/
 build/
+src-tauri/target/
+src-tauri/gen/
+release-artifacts/
 
 # Local environment & config
 *.local
@@ -14,3 +17,9 @@ test-results/
 playwright-report/
 yarn-debug.log*
 yarn-error.log*
+
+# Local-only work files
+/planning/
+/.planning/
+/STABILITY_ROADMAP.md
+/PR2_REVIEW.md

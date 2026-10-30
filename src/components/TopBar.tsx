@@ -9,6 +9,7 @@ import { stateManager } from '../state';
 import { PAGE_PRESETS, PagePreset, ProjectState, VersionSnapshot, PeerPresence } from '../types';
 import { parseCsv } from '../dataMerge';
 import { collabSession } from '../collab';
+import { isDesktop, openDesktopDocument, savePublicationFile } from '../desktop';
 import type { IngestedStory } from '../contentImport';
 import type { TextElement } from '../types';
 import { BookletImpositionModal, CoverSpineModal } from './LazyPrintDialogs';
@@ -200,19 +201,20 @@ export function TopBar({
     }
   };
 
-  const handleSave = () => {
+  const handleSave = () => runExport(async () => {
     const json = stateManager.exportJson();
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${state.settings.title.toLowerCase().replace(/\s+/g, '-')}.recto`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+    const name = state.settings.title.toLowerCase().replace(/[^a-z0-9_-]/g, '-') || 'publication';
+    await savePublicationFile(`${name}.recto`, json, 'application/json');
+  });
 
   const handleOpenClick = () => {
-    fileInputRef.current?.click();
+    if (!isDesktop()) { fileInputRef.current?.click(); return; }
+    void (async () => {
+      try {
+        const file = await openDesktopDocument();
+        if (file) await handleFileChange({ target: { files: [file], value: '' } });
+      } catch (error) { alert(`Could not open this project. ${error instanceof Error ? error.message : String(error)}`); }
+    })();
   };
 
   const handleIdmlClick = () => {
@@ -349,15 +351,17 @@ export function TopBar({
 
   const handleExportEpub = () => runExport(async () => {
     const { exportDocumentToEpub } = await import('../epubExport');
-    await exportDocumentToEpub(state, { download: true });
+    const result = exportDocumentToEpub(state, { download: !isDesktop() });
+    if (isDesktop()) await savePublicationFile(result.filename, result.buffer, 'application/epub+zip');
   });
 
   const handleExportFlipbook = () => runExport(async () => {
     const { exportDocumentToFlipbook } = await import('../flipbookExport');
-    await exportDocumentToFlipbook(state, { download: true });
+    const result = exportDocumentToFlipbook(state, { download: !isDesktop() });
+    if (isDesktop()) await savePublicationFile(result.filename, result.html, 'text/html');
   });
 
-  const handleExportSpreadPng = () => {
+  const handleExportSpreadPng = () => runExport(async () => {
     setShowExportMenu(false);
     const canvas = (window as any).recto?.spreadCanvas;
     if (canvas && typeof canvas.exportSpreadAsPng === 'function') {
@@ -366,29 +370,29 @@ export function TopBar({
         const link = document.createElement('a');
         const spreadNum = state.activeSpreadIndex + 1;
         const safeTitle = (state.settings.title || 'recto-spread').toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+        if (isDesktop()) {
+          const blob = await (await fetch(dataUrl)).blob();
+          await savePublicationFile(`${safeTitle}-spread-${spreadNum}.png`, blob, 'image/png');
+          return;
+        }
         link.download = `${safeTitle}-spread-${spreadNum}.png`;
         link.href = dataUrl;
         link.click();
       }
     }
-  };
+  });
 
   const handlePackageDocument = () => runExport(async () => {
     const { packageDocument } = await import('../packageExport');
-    await packageDocument(state, { download: true });
+    const result = await packageDocument(state, { download: !isDesktop() });
+    if (isDesktop()) await savePublicationFile(result.filename, result.buffer, 'application/zip');
   });
 
   const handleExportIdml = () => runExport(async () => {
     const { exportDocumentToIdml } = await import('../export/idmlExport');
     const idmlBytes = exportDocumentToIdml(state);
-    const blob = new Blob([idmlBytes as any], { type: 'application/vnd.adobe.indesign-idml-package' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
     const safeTitle = (state.settings.title || 'publication').toLowerCase().replace(/[^a-z0-9_-]/g, '-');
-    a.download = `${safeTitle}.idml`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    await savePublicationFile(`${safeTitle}.idml`, idmlBytes, 'application/vnd.adobe.indesign-idml-package');
   });
 
   const handleCsvUpload = async (e: Event) => {
