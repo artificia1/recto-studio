@@ -67,8 +67,9 @@ jobs:
           Copy-Item LICENSE release-artifacts/portable/LICENSE.txt
           Copy-Item DESKTOP.md release-artifacts/portable/README.txt
           Compress-Archive -Path release-artifacts/portable/* -DestinationPath "release-artifacts/Recto-Studio-$version-Windows-x64-portable.zip"
-          $installer = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
-          if (!$installer) { throw 'Windows installer was not generated.' }
+          $installers = @(Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Where-Object { $_.Name -match "_$([regex]::Escape($version))_.*-setup\.exe$" })
+          if ($installers.Count -ne 1) { throw "Expected exactly one installer for version $version; found $($installers.Count)." }
+          $installer = $installers[0]
           Copy-Item $installer.FullName "release-artifacts/Recto-Studio-$version-Windows-x64-setup.exe"
           $signature = "$($installer.FullName).sig"
           if (Test-Path $signature) {
