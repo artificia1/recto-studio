@@ -61,4 +61,4 @@ retained. Photoshop support still contributes an eager dependency because curren
 layer operations use synchronous APIs. Change that boundary only with dedicated
 PSD workflow checks. Large-publication layout/render profiling is separate work.
 See PUBLISHING.md for independent export validation, publishing limitations, and
-remaining dependency security work.
+the dependency audit enforced by CI.

@@ -257,11 +257,19 @@ test('loads manuscript tools on demand and places text', async ({ page }) => {
 test('reports an unavailable export module and preserves the document', async ({ page }) => {
   await importProject(page);
   await page.route(/\/assets\/epubExport-[^/]+\.js$/, route => route.abort());
-  const message = page.waitForEvent('dialog');
+  const message = new Promise<string>((resolve, reject) => {
+    page.once('dialog', async dialog => {
+      const text = dialog.message();
+      try {
+        await dialog.accept();
+        resolve(text);
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
   await page.getByTitle('Export Clean PDF, Print PDF, EPUB 3, Web Flipbook, or Package').click();
   await page.getByText('Export EPUB 3', { exact: true }).click();
-  const dialog = await message;
-  expect(dialog.message()).toContain('Export failed.');
-  await dialog.accept();
+  expect(await message).toContain('Export failed.');
   await expect(page.locator('.inspector-panel textarea').first()).toHaveValue('Browser workflow sample');
 });

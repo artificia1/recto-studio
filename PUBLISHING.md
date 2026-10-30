@@ -76,8 +76,10 @@ for every publication, reader, operating system, or printer.
 Format references: [W3C EPUB 3.3](https://www.w3.org/TR/epub-33/) and
 [PDF Association's PDF/X requirements](https://pdfa.org/pdfx-the-key-facts/).
 
-## Before a release
+## Dependency checks
 
-Resolve the dependency advisories previously reported for jsPDF/DOMPurify and
-Vite through a dedicated update with regression checks. This export validation
-does not remediate those advisories or certify the release's security.
+The project uses jsPDF 4.2.1, DOMPurify 3.4.17, and Vite 6.4.5 or their compatible
+patched releases. The dependency audit was clean when these versions were adopted.
+CI runs `npm audit --audit-level=moderate` so newly reported moderate, high, or
+critical advisories block deployment. A clean package audit does not certify the
+application or publication files as secure.
