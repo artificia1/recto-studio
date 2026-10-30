@@ -251,6 +251,42 @@ export interface BaseElement {
   };
 }
 
+export interface TextFormatting {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  fontFamily?: string;
+  fontSizePt?: number;
+  color?: string;
+}
+
+export interface CharacterStyle extends TextFormatting {
+  id: string;
+  name: string;
+}
+
+export interface StoryRun extends TextFormatting {
+  text: string;
+  characterStyleId?: string;
+}
+
+export interface StoryParagraph {
+  styleId?: string;
+  sourceStyle?: string;
+  formatting?: TextFormatting & {
+    alignment?: 'left' | 'center' | 'right' | 'justify';
+    lineHeight?: number;
+    letterSpacingPt?: number;
+  };
+  runs: StoryRun[];
+}
+
+/** Paragraph boundaries are represented by a single newline in the plain-text view. */
+export interface StoryContent {
+  version: 1;
+  paragraphs: StoryParagraph[];
+}
+
 export interface TextElement extends BaseElement {
   type: 'text';
   text: string;
@@ -278,6 +314,12 @@ export interface TextElement extends BaseElement {
   prevFrameId?: string;
   storyId?: string;
   rawStoryText?: string;
+  /** Authoritative manuscript, held by the first frame in a thread. */
+  storyContent?: StoryContent;
+  /** Derived formatted slice for this frame (including overset in the last frame). */
+  textContent?: StoryContent;
+  storyStart?: number;
+  storyEnd?: number;
   verticalAlign?: 'top' | 'middle' | 'bottom';
   grepStyles?: GrepStyleRule[];
   columnRule?: {
@@ -464,6 +506,7 @@ export interface ProjectState {
   snapToGuides: boolean;
   displayQuality: DisplayQuality;
   paragraphStyles: ParagraphStyle[];
+  characterStyles?: CharacterStyle[];
   masterSpreads: MasterSpread[];
   linkingFromFrameId?: string | null;
   layers: Layer[];

@@ -4,9 +4,13 @@
  * Licensed under the MIT License.
  */
 
-import { useState, useEffect } from 'preact/hooks';
+import { useState, useEffect, useRef } from 'preact/hooks';
 import { ProjectState, TextElement } from '../types';
 import { stateManager } from '../state';
+import { sliceStory, storyText } from '../engine/storyContent';
+import { StoryPreview } from './StoryPreview';
+import { useModalFocus } from '../hooks/useModalFocus';
+import './manuscript.css';
 
 interface StoryEditorModalProps {
   isOpen: boolean;
@@ -15,21 +19,38 @@ interface StoryEditorModalProps {
 }
 
 export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalProps) {
-  const spread = stateManager.getActiveSpread();
-  const textElements = spread.elements.filter((el): el is TextElement => el.type === 'text');
-  const selectedTextEl = textElements.find((el) => el.id === state.selectedElementId) || textElements[0];
+  const textElements = state.spreads.flatMap(spread => spread.elements).filter((el): el is TextElement => el.type === 'text' && !el.prevFrameId);
+  const selectedTextEl = stateManager.getStoryHead(state.selectedElementId || '') || textElements[0];
 
   const [currentElementId, setCurrentElementId] = useState<string>(selectedTextEl?.id || '');
   const activeEl = textElements.find((el) => el.id === currentElementId) || selectedTextEl;
-  const [editorText, setEditorText] = useState<string>(activeEl?.text || '');
+  const [editorText, setEditorText] = useState<string>('');
   const [fontSize, setFontSize] = useState<number>(16);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(isOpen, dialogRef);
+  const [selection, setSelection] = useState({ start: 0, end: 0 });
+  const [styleName, setStyleName] = useState('');
+  const [error, setError] = useState('');
+  const content = stateManager.getStoryContent(activeEl?.id || '');
+  const selectedContent = sliceStory(content, selection.start, selection.end);
+  const selectedRun = selectedContent.paragraphs[0]?.runs[0];
+  const named = state.characterStyles?.find(style => style.id === selectedRun?.characterStyleId);
+  const marks = { ...named, ...selectedRun };
+  const restoreSelection = () => {
+    textareaRef.current?.focus();
+    textareaRef.current?.setSelectionRange(selection.start, selection.end);
+  };
+  const apply = (action: () => void) => {
+    try { action(); setError(''); restoreSelection(); } catch (e) { setError(e instanceof Error ? e.message : 'Could not edit story.'); }
+  };
 
   useEffect(() => {
     if (isOpen && activeEl) {
-      setEditorText(activeEl.text || '');
+      setEditorText(storyText(stateManager.getStoryContent(activeEl.id)));
       setCurrentElementId(activeEl.id);
     }
-  }, [isOpen, activeEl?.id, activeEl?.text]);
+  }, [isOpen, activeEl?.id, activeEl?.text, activeEl?.rawStoryText]);
   if (!isOpen) return null;
 
   const words = editorText.trim() ? editorText.trim().split(/\s+/).filter(Boolean).length : 0;
@@ -40,7 +61,13 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
   const handleTextChange = (newText: string) => {
     setEditorText(newText);
     if (activeEl) {
-      stateManager.updateElement(activeEl.id, { text: newText });
+      try {
+        stateManager.setStoryText(activeEl.id, newText);
+        setError('');
+      } catch (e) {
+        setEditorText(storyText(stateManager.getStoryContent(activeEl.id)));
+        setError(e instanceof Error ? e.message : 'Could not edit story.');
+      }
     }
   };
 
@@ -51,6 +78,7 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
       aria-modal="true"
       aria-label="Story Editor"
       onKeyDown={(event) => {
+        event.stopPropagation();
         if (event.key === 'Escape') {
           event.preventDefault();
           event.stopPropagation();
@@ -73,10 +101,11 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
       }}
     >
       <div
-        className="modal-dialog"
+        className="modal-dialog manuscript-dialog"
+        ref={dialogRef}
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: '840px',
+          width: '1120px',
           maxWidth: '92vw',
           height: '84vh',
           backgroundColor: '#18181c',
@@ -101,7 +130,7 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
             <span style={{ fontSize: '12px', fontWeight: 700, color: '#ffffff', letterSpacing: '0.5px' }}>
-              STORY EDITOR (CTRL+Y)
+              STORY EDITOR
             </span>
             {textElements.length > 1 && (
               <select
@@ -118,7 +147,7 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
               >
                 {textElements.map((el, i) => (
                   <option key={el.id} value={el.id}>
-                    Frame {i + 1}: {el.text.slice(0, 24) || 'Empty'}...
+                    Story {i + 1}: {(el.rawStoryText ?? el.text).slice(0, 24) || 'Empty'}...
                   </option>
                 ))}
               </select>
@@ -159,25 +188,58 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
           </div>
         </div>
 
-        {/* Text Area */}
-        <div style={{ flex: 1, padding: '24px 32px', display: 'flex', flexDirection: 'column', backgroundColor: '#18181c' }}>
+        <div className="story-format-bar">
+          <label>Paragraph <select aria-label="Paragraph style" disabled={!activeEl} value={selectedContent.paragraphs[0]?.styleId || ''}
+            onChange={e => activeEl && apply(() => stateManager.styleStoryRange(activeEl.id, selection.start, selection.end, e.currentTarget.value))}>
+            <option value="" disabled>Frame default</option>
+            {state.paragraphStyles.map(style => <option key={style.id} value={style.id}>{style.name}</option>)}
+          </select></label>
+          {(['bold', 'italic', 'underline'] as const).map(mark => <button key={mark} className="sm-btn"
+            aria-label={mark[0].toUpperCase() + mark.slice(1)} aria-pressed={!!marks[mark]}
+            disabled={!activeEl || selection.start === selection.end}
+            onMouseDown={e => e.preventDefault()} onClick={() => activeEl && apply(() => stateManager.formatStoryRange(activeEl.id, selection.start, selection.end, { [mark]: !marks[mark] }))}>
+            {mark === 'bold' ? <b>B</b> : mark === 'italic' ? <i>I</i> : <u>U</u>}
+          </button>)}
+          <label>Character <select aria-label="Character style" value={selectedRun?.characterStyleId || ''}
+            disabled={!activeEl || selection.start === selection.end} onChange={e => activeEl && apply(() => stateManager.formatStoryRange(activeEl.id, selection.start, selection.end,
+              { characterStyleId: e.currentTarget.value || undefined, bold: undefined, italic: undefined, underline: undefined }))}>
+            <option value="">None</option>{state.characterStyles?.map(style => <option key={style.id} value={style.id}>{style.name}</option>)}
+          </select></label>
+          <input aria-label="New character style name" placeholder="Character style name" value={styleName} onInput={e => setStyleName(e.currentTarget.value)} style={{ width: '145px' }} />
+          <button className="sm-btn" disabled={!activeEl || !styleName.trim() || selection.start === selection.end} onClick={() => activeEl && apply(() => {
+            const id = `character-${Date.now()}`;
+            stateManager.createCharacterStyle({ id, name: styleName.trim(), bold: !!marks.bold, italic: !!marks.italic, underline: !!marks.underline });
+            stateManager.formatStoryRange(activeEl.id, selection.start, selection.end, { characterStyleId: id, bold: undefined, italic: undefined, underline: undefined });
+            setStyleName('');
+          })}>Save style</button>
+        </div>
+        {error && <p role="alert" style={{ padding: '8px 20px' }}>{error}</p>}
+        {!activeEl && <p style={{ padding: '16px' }}>Select or create a text frame to edit a story.</p>}
+        <div className="manuscript-body">
           <textarea
+            ref={textareaRef}
+            aria-label="Story manuscript"
+            className="story-editor-text"
+            disabled={!activeEl}
             value={editorText}
+            onSelect={e => setSelection({ start: e.currentTarget.selectionStart, end: e.currentTarget.selectionEnd })}
             onInput={(e) => handleTextChange((e.target as HTMLTextAreaElement).value)}
             placeholder="Write manuscript story here... Canvas updates in real time."
             style={{
               flex: 1,
-              width: '100%',
+              width: '50%',
               backgroundColor: 'transparent',
               border: 'none',
               outline: 'none',
               resize: 'none',
               color: '#f0f0f2',
               fontSize: `${fontSize}px`,
+              fontWeight: 400,
               lineHeight: 1.65,
               fontFamily: activeEl?.fontFamily ? `${activeEl.fontFamily}, Georgia, serif` : 'Georgia, serif',
             }}
           />
+          {activeEl && <StoryPreview content={content} frame={activeEl} state={state} />}
         </div>
 
         {/* Footer Stats */}

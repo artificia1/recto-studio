@@ -1,0 +1,69 @@
+# Manuscripts and formatted stories
+
+Books, magazines, and marketing layouts use the same text frames and story tools.
+
+## Import
+
+Select a text frame and use **File → Place Text**, or drop a `.docx`, `.md`,
+`.markdown`, or UTF-8 `.txt` file onto the document. Dropping onto a document with
+no text frames prepares a new frame inside the margins.
+
+The import dialog previews the manuscript and maps source paragraph styles to
+existing Recto styles. Review the warnings, then choose **Place manuscript**.
+Cancel leaves the publication untouched. Placement replaces the complete selected
+story, including its linked frames, as one undo step.
+
+Markdown supports headings, paragraphs, emphasis, quotes, visible list markers,
+and scene breaks. Code blocks become plain paragraphs. Link/image labels remain
+text. HTML is literal text and is never executed. This is an editorial subset,
+not a complete CommonMark implementation.
+
+DOCX preserves paragraph style references, bold/italic/underline, inherited Word
+run styles, explicit formatting-off values, Unicode text, tabs, line breaks, and
+empty paragraphs. Word typography maps to the publication's paragraph styles.
+
+Word tables become paragraphs; images need separate placement; list numbering and
+nesting need review. Tracked changes use accepted text. Fields retain cached text.
+Footnote/endnote references use bracketed IDs, with note text appended for review;
+they are not automatic Recto notes. Headers, footers, and page geometry are not
+imported. These limitations appear in the preview where applicable. Manuscripts
+are limited to 32 MB and expanded DOCX archives to 64 MB.
+
+## Edit and flow
+
+The Story Editor opens the complete manuscript from any frame in its thread. Its
+editing pane is paired with a formatted preview. Select text to apply emphasis or
+reusable character styles. The paragraph style control applies to touched
+paragraphs, or the paragraph at the cursor. Character styles can be created from
+the selected text's formatting.
+
+Linking frames retains both stories, paragraph boundaries, spaces, and formatting.
+Resizing or changing typography reflows using measured widths. The final frame
+keeps all remaining copy, including overset. Deleting a frame retains the story in
+the remaining thread; unlinking partitions it into independent stories. Save,
+autosave, and undo retain structured content. Legacy plain-text projects remain
+supported. Preview displays up to 150 paragraphs; placement retains everything.
+
+The shared formatted layout supports columns, alignment, baseline grids, and
+object wrapping. Legacy drop caps, GREP styling, optical margins, and Knuth-Plass
+composition are not yet integrated into this formatted path. Automatic page
+creation, keep rules, and widow/orphan control are follow-up work.
+
+## Output and compatibility
+
+PDF uses the formatted layout. Custom font outlines use the registered face;
+synthetic bold/italic variants are not guaranteed in custom-font PDF output.
+Existing PDF font-substitution and accessibility limitations in
+[PUBLISHING.md](PUBLISHING.md) still apply.
+
+EPUB writes the semantic story once at its first frame, preserving headings,
+paragraphs, and emphasis without duplicates at frame boundaries. This represents
+reading order, not print-page appearance. IDML export still uses its simplified
+per-frame representation; rich-format round-tripping through IDML is not included.
+
+The `.recto` model adds versioned `storyContent` to the first frame and derived
+`textContent`/source offsets to frames. Paragraphs hold style references, local
+formatting, and text runs with optional character-style references. Plain `text`
+and `rawStoryText` remain compatibility views. Use the state manager to update
+these fields together. The canonical manuscript owns the content; frame slices
+are derived views.

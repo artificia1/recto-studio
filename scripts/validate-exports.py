@@ -87,13 +87,33 @@ def main():
                 pdf[0].render(scale=1).to_pil().save(path.with_suffix('.png'))
                 pdf.close()
     validate_epub(folder / 'publication.epub')
+    manuscript = PdfReader(folder / 'manuscript.pdf', strict=True)
+    assert len(manuscript.pages) == 1
+    extracted = manuscript.pages[0].extract_text()
+    assert 'Heading' in extracted and 'bold' in extracted and 'italic' in extracted
+    fonts = manuscript.pages[0]['/Resources']['/Font']
+    font_names = [str(font.get_object().get('/BaseFont', '')) for font in fonts.values()]
+    assert any('Bold' in name for name in font_names)
+    assert any('Italic' in name for name in font_names)
+    with zipfile.ZipFile(folder / 'manuscript.epub') as book:
+        assert book.testzip() is None
+        ns = {'x': 'http://www.w3.org/1999/xhtml'}
+        bold_count = 0
+        for name in book.namelist():
+            if name.endswith('.xhtml'):
+                document = ET.fromstring(book.read(name))
+                bold_count += len(document.findall('.//x:strong', ns))
+                if document.findall('.//x:strong', ns):
+                    assert document.find('.//x:h1', ns) is not None
+                    assert document.find('.//x:em', ns).text == 'italic'
+        assert bold_count == 1
     with zipfile.ZipFile(folder / 'publication.zip') as package:
         assert package.testzip() is None
         names = package.namelist()
         assert any(name.endswith('.recto') for name in names)
         validate_pdf(io.BytesIO(package.read(next(name for name in names if name.endswith('.pdf')))), 297, 210, True)
         assert 'not certified PDF/X' in package.read('Instructions.txt').decode()
-    print('Validated four PDF variants, custom-font EPUB structure, and packaged PDF.')
+    print('Validated four PDF variants, custom-font EPUB structure, packaged PDF, and formatted manuscript PDF/EPUB.')
 
 
 if __name__ == '__main__':

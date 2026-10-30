@@ -8,6 +8,7 @@ import { jsPDF } from 'jspdf';
 import { colorToCmyk, applyCmykTextColor, applyCmykFillColor, applyCmykDrawColor, applySpotColor } from './pdfColors';
 export { colorToCmyk, applyCmykTextColor, applyCmykFillColor, applyCmykDrawColor, applySpotColor } from './pdfColors';
 import { fontManager } from '../fontManager';
+import { layoutStory } from '../engine/storyLayout';
 import { drawFontText, fontTextWidth, wrapFontText } from './fontOutlines';
 import { ProjectState, Page, Spread, TextElement, ImageElement, ShapeElement, VectorPathElement, TableElement } from '../types/index';
 import { stateManager, numberToSuperscript } from '../state';
@@ -376,6 +377,38 @@ export async function exportDocumentToPdf(
         const lineSpacingMm = (text.fontSizePt * lineHeight * 25.4) / 72;
         const maxLinesPerCol = Math.max(1, Math.floor((availableHeight - (text.fontSizePt * 0.3527)) / lineSpacingMm) + 1);
 
+        if (text.textContent) {
+          const layout = layoutStory(text.textContent, text, state.paragraphStyles, state.characterStyles, undefined, totalFnHtMm,
+            { obstacles: spread.elements, baselineGrid: state.settings.baselineGrid });
+          for (const line of layout.lines) for (const segment of line.segments) {
+            const style = segment.style;
+            const font = fontManager.getFont(style.fontFamily);
+            const x = elX + segment.x;
+            const y = elY + line.y + style.fontSizePt * 25.4 / 72;
+            applyCmykTextColor(doc, style.color, overprintBlack);
+            if (font) {
+              applyCmykFillColor(doc, style.color);
+              drawFontText(doc, font, segment.text, x, y, style.fontSizePt);
+            } else {
+              applyFont(doc, style.fontFamily);
+              doc.setFont(doc.getFont().fontName, style.bold ? (style.italic ? 'bolditalic' : 'bold') : (style.italic ? 'italic' : 'normal'));
+              doc.setFontSize(style.fontSizePt);
+              doc.setCharSpace(style.letterSpacingPt * 25.4 / 72);
+              doc.text(segment.text, x, y);
+              doc.setCharSpace(0);
+            }
+            if (style.underline) {
+              applyCmykDrawColor(doc, style.color);
+              doc.setLineWidth(0.15);
+              doc.line(x, y + 0.3, x + segment.width, y + 0.3);
+            }
+          }
+          if (layout.overset && !text.nextFrameId) {
+            const warning = `Page ${page.pageNumber}: Text frame "${text.id}" has overset manuscript text.`;
+            preflightWarnings.push(warning);
+            options.onWarning?.(warning);
+          }
+        } else {
         let linesToRender: string[];
         if (text.prevFrameId && storyOverflowMap.has(text.id)) {
           linesToRender = storyOverflowMap.get(text.id)!;
@@ -446,6 +479,7 @@ export async function exportDocumentToPdf(
           });
         }
 
+        }
         if (footnotes.length > 0) {
           const fnStartY = elY + text.height - padding - totalFnHtMm + 1;
           const ruleWidthMm = Math.min(availableWidth * 0.45, fnSettings.separatorRuleWidthMm || 30);

@@ -1,195 +1,204 @@
 import { readZip } from './zip';
-import { extractXmlTags, extractXmlAttr } from './idmlImport';
-import { isInddBuffer, parseInddMetadata, InddMetadata } from './engine/inddParser';
+import { isInddBuffer, parseInddMetadata, type InddMetadata } from './engine/inddParser';
+import type { StoryContent, StoryParagraph, StoryRun, TextFormatting } from './types';
+import { compactRuns, plainStory, storyText } from './engine/storyContent';
+import { child, children, descendants, nodeText, parseManuscriptXml, type XmlNode } from './import/manuscriptXml';
 
+export interface ImportSourceStyle { name: string; suggestedStyleId: string; paragraphCount: number }
 export interface IngestedStory {
   formattedText: string;
   detectedStyleId?: string;
   wordCount: number;
+  content?: StoryContent;
+  sourceStyles?: ImportSourceStyle[];
+  warnings?: string[];
   inddMetadata?: InddMetadata;
 }
 
+function suggestedStyle(name: string): string {
+  if (/^(heading|h)\s*1$|headline/i.test(name)) return 'style-h1';
+  if (/^(heading|h)\s*[2-6]$|subhead/i.test(name)) return 'style-h2';
+  if (/^title$/i.test(name)) return 'style-title';
+  if (/quote/i.test(name)) return 'style-pullquote';
+  return 'style-body';
+}
+
+function result(paragraphs: StoryParagraph[], warnings: string[] = []): IngestedStory {
+  const content: StoryContent = { version: 1, paragraphs: paragraphs.length ? paragraphs : plainStory('').paragraphs };
+  const formattedText = storyText(content);
+  const styles = new Map<string, ImportSourceStyle>();
+  for (const p of paragraphs) {
+    const name = p.sourceStyle || 'Body';
+    const entry = styles.get(name) || { name, suggestedStyleId: p.styleId || 'style-body', paragraphCount: 0 };
+    entry.paragraphCount++;
+    styles.set(name, entry);
+  }
+  return { content, formattedText, detectedStyleId: paragraphs[0]?.styleId || 'style-body',
+    wordCount: formattedText.trim().split(/\s+/).filter(Boolean).length,
+    sourceStyles: [...styles.values()], warnings: [...new Set(warnings)] };
+}
+
+/** Editorial Markdown subset; raw HTML is always literal text. */
+function inlineMarkdown(text: string, marks: TextFormatting = {}, depth = 0): StoryRun[] {
+  if (depth > 16) return [{ text, ...marks }];
+  const runs: StoryRun[] = [];
+  let plain = '';
+  const flush = () => { if (plain) { runs.push({ text: plain, ...marks }); plain = ''; } };
+  for (let i = 0; i < text.length;) {
+    if (text[i] === '\\' && /[\\`*_[\]{}()#+.!>~-]/.test(text[i + 1] || '')) { plain += text[i + 1]; i += 2; continue; }
+    const link = /^!?\[([^\]]*)\]\([^)]*\)/.exec(text.slice(i));
+    if (link) { flush(); runs.push(...inlineMarkdown(link[1], marks, depth + 1)); i += link[0].length; continue; }
+    const delimiter = ['***', '___', '**', '__', '*', '_', '`'].find(d => text.startsWith(d, i));
+    if (delimiter && !(delimiter.includes('_') && /[\p{L}\p{N}]/u.test(text[i - 1] || ''))) {
+      const close = text.indexOf(delimiter, i + delimiter.length);
+      if (close > i + delimiter.length && !/\s/.test(text[i + delimiter.length])) {
+        flush();
+        const inner = text.slice(i + delimiter.length, close);
+        runs.push(...(delimiter === '`' ? [{ text: inner, ...marks }] : inlineMarkdown(inner, {
+          ...marks, ...(delimiter.length >= 2 ? { bold: true } : {}), ...(delimiter.length !== 2 ? { italic: true } : {}),
+        }, depth + 1)));
+        i = close + delimiter.length; continue;
+      }
+    }
+    plain += text[i++];
+  }
+  flush();
+  return compactRuns(runs);
+}
+
 export function parseMarkdownContent(markdown: string): IngestedStory {
-  const lines = markdown.split(/\r?\n/);
-  const processedParagraphs: string[] = [];
-  let detectedStyleId: string | undefined;
-
-  let currentBlock: string[] = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    const rawLine = lines[i];
-    const trimmed = rawLine.trim();
-
-    if (!trimmed) {
-      if (currentBlock.length > 0) {
-        processedParagraphs.push(currentBlock.join(' '));
-        currentBlock = [];
-      }
-      continue;
+  const paragraphs: StoryParagraph[] = [], warnings: string[] = [];
+  let block: string[] = [], fenced = false;
+  const add = (text: string, sourceStyle = 'Body') => paragraphs.push({ sourceStyle,
+    styleId: suggestedStyle(sourceStyle), runs: inlineMarkdown(text) });
+  const flush = () => { if (block.length) { add(block.join(' ')); block = []; } };
+  for (const raw of markdown.replace(/^\uFEFF/, '').split(/\r\n?|\n/)) {
+    const line = raw.trim();
+    if (/^(```|~~~)/.test(line)) { flush(); fenced = !fenced; warnings.push('Code blocks are imported as plain paragraphs.'); continue; }
+    if (fenced) { paragraphs.push({ sourceStyle: 'Code', styleId: 'style-body', runs: [{ text: raw }] }); continue; }
+    if (!line) { flush(); continue; }
+    const heading = /^(#{1,6})\s+(.+?)(?:\s+#+)?$/.exec(line);
+    if (heading) { flush(); add(heading[2], `Heading ${heading[1].length}`); continue; }
+    if (/^>\s?/.test(line)) { flush(); add(line.replace(/^>\s?/, ''), 'Quote'); continue; }
+    if (/^(?:[-+*]|\d+[.)])\s+/.test(line)) {
+      flush(); add(line.replace(/^[-+*]\s+/, '• '), 'List');
+      warnings.push('Lists retain their visible markers; automatic list numbering is not imported.'); continue;
     }
-
-    // Markdown Heading 1 (# Headline)
-    if (trimmed.startsWith('# ')) {
-      if (currentBlock.length > 0) {
-        processedParagraphs.push(currentBlock.join(' '));
-        currentBlock = [];
-      }
-      const headingText = trimmed.replace(/^#\s+/, '').trim();
-      processedParagraphs.push(headingText);
-      if (!detectedStyleId) detectedStyleId = 'style-h1';
-      continue;
-    }
-
-    // Markdown Heading 2 (## Subhead)
-    if (trimmed.startsWith('## ')) {
-      if (currentBlock.length > 0) {
-        processedParagraphs.push(currentBlock.join(' '));
-        currentBlock = [];
-      }
-      const h2Text = trimmed.replace(/^##\s+/, '').trim();
-      processedParagraphs.push(h2Text);
-      if (!detectedStyleId) detectedStyleId = 'style-h2';
-      continue;
-    }
-
-    // Blockquote / Pullquote (> Quote text)
-    if (trimmed.startsWith('>')) {
-      if (currentBlock.length > 0) {
-        processedParagraphs.push(currentBlock.join(' '));
-        currentBlock = [];
-      }
-      const quoteText = trimmed.replace(/^>\s*/, '').trim();
-      processedParagraphs.push(quoteText);
-      if (!detectedStyleId) detectedStyleId = 'style-pullquote';
-      continue;
-    }
-
-    // Unordered Bullet list (- Item or * Item)
-    if (/^[-*]\s+/.test(trimmed)) {
-      if (currentBlock.length > 0) {
-        processedParagraphs.push(currentBlock.join(' '));
-        currentBlock = [];
-      }
-      const itemText = trimmed.replace(/^[-*]\s+/, '').trim();
-      processedParagraphs.push(`• ${itemText}`);
-      continue;
-    }
-
-    // Standard body text line - clean inline bold/italics markers for clean editorial typesetting
-    const cleanedLine = trimmed
-      .replace(/\*\*([^*]+)\*\*/g, '$1')
-      .replace(/__([^_]+)__/g, '$1')
-      .replace(/\*([^*]+)\*/g, '$1')
-      .replace(/_([^_]+)_/g, '$1');
-
-    currentBlock.push(cleanedLine);
+    if (block.length && /^(?:=+|-+)\s*$/.test(line)) { add(block.join(' '), line[0] === '=' ? 'Heading 1' : 'Heading 2'); block = []; continue; }
+    if (/^([-*_])(?:\s*\1){2,}$/.test(line)) { flush(); add('⁂', 'Scene break'); continue; }
+    block.push(line);
   }
-
-  if (currentBlock.length > 0) {
-    processedParagraphs.push(currentBlock.join(' '));
-  }
-
-  const formattedText = processedParagraphs.join('\n\n');
-  const wordCount = formattedText.trim().split(/\s+/).filter(Boolean).length;
-
-  return {
-    formattedText,
-    detectedStyleId: detectedStyleId || 'style-body',
-    wordCount,
-  };
+  flush();
+  if (/!\[/.test(markdown)) warnings.push('Image labels are retained; place image files separately.');
+  if (/\]\(/.test(markdown)) warnings.push('Link labels are retained; hyperlink destinations are not imported.');
+  if (/<\/?[a-z][^>]*>/i.test(markdown)) warnings.push('HTML is retained as literal text and is never executed.');
+  if (/\[\^/.test(markdown)) warnings.push('Footnote syntax is retained as text; automatic footnotes are not imported yet.');
+  return result(paragraphs, warnings);
 }
 
-export async function parseDocxContent(docxBuffer: ArrayBuffer | Uint8Array): Promise<IngestedStory> {
-  const files = await readZip(docxBuffer);
-  const docXmlBytes = files.get('word/document.xml');
+function runProperties(properties?: XmlNode): TextFormatting {
+  const marks: TextFormatting = {};
+  for (const [tag, key] of [['b', 'bold'], ['i', 'italic'], ['u', 'underline']] as const) {
+    const item = child(properties, tag);
+    if (item) marks[key] = !/^(0|false|off|none)$/.test(item.attrs.val || 'true');
+  }
+  return marks;
+}
 
-  if (!docXmlBytes) {
-    return {
-      formattedText: 'Error: Not a valid DOCX document (word/document.xml not found).',
-      detectedStyleId: 'style-body',
-      wordCount: 0,
+export async function parseDocxContent(buffer: ArrayBuffer | Uint8Array): Promise<IngestedStory> {
+  const files = await readZip(buffer, 64 * 1024 * 1024);
+  const document = files.get('word/document.xml');
+  if (!document) throw new Error('Not a valid DOCX document: word/document.xml is missing.');
+  const root = parseManuscriptXml(new TextDecoder().decode(document));
+  const body = descendants(root, 'body')[0];
+  if (!body) throw new Error('The DOCX has no document body.');
+  const warnings: string[] = [];
+  const definitions = new Map<string, { name: string; base?: string; marks: TextFormatting }>();
+  const styleBytes = files.get('word/styles.xml');
+  if (styleBytes) {
+    for (const style of descendants(parseManuscriptXml(new TextDecoder().decode(styleBytes)), 'style')) {
+      definitions.set(style.attrs.styleId, { name: child(style, 'name')?.attrs.val || style.attrs.styleId,
+        base: child(style, 'basedOn')?.attrs.val, marks: runProperties(child(style, 'rPr')) });
+    }
+  }
+  const inherited = (id: string | undefined, seen = new Set<string>()): TextFormatting => {
+    if (!id || seen.has(id)) return {};
+    seen.add(id);
+    const definition = definitions.get(id);
+    return definition ? { ...inherited(definition.base, seen), ...definition.marks } : {};
+  };
+  const paragraphs: StoryParagraph[] = [];
+  for (const p of descendants(body, 'p')) {
+    const pPr = child(p, 'pPr');
+    const styleId = child(pPr, 'pStyle')?.attrs.val;
+    const sourceStyle = definitions.get(styleId || '')?.name || styleId || 'Body';
+    const runs: StoryRun[] = [];
+    const walk = (node: XmlNode) => {
+      if (node.name === 'del' || node.name === 'moveFrom') return;
+      if (node.name === 'r') {
+        const rPr = child(node, 'rPr');
+        const marks = { ...inherited(styleId), ...inherited(child(rPr, 'rStyle')?.attrs.val), ...runProperties(rPr) };
+        let text = '';
+        for (const item of children(node)) {
+          if (item.name === 't') text += nodeText(item);
+          else if (item.name === 'tab') text += '\t';
+          else if (item.name === 'br' || item.name === 'cr') text += '\n';
+          else if (item.name === 'noBreakHyphen') text += '\u2011';
+          else if (item.name === 'softHyphen') text += '\u00ad';
+          else if (item.name === 'footnoteReference' || item.name === 'endnoteReference') text += `[${item.attrs.id || 'note'}]`;
+        }
+        if (text) runs.push({ text, ...marks });
+        return;
+      }
+      for (const item of children(node)) if (item.name !== 'pPr') walk(item);
     };
+    walk(p);
+    if (child(pPr, 'numPr')) {
+      runs.unshift({ text: '• ' });
+      warnings.push('Word lists use bullet markers; numbering and nesting require review.');
+    }
+    paragraphs.push({ styleId: suggestedStyle(sourceStyle), sourceStyle, runs: compactRuns(runs) });
   }
-
-  const xml = new TextDecoder().decode(docXmlBytes);
-  const pTags = extractXmlTags(xml, 'w:p');
-  const paragraphs: string[] = [];
-  let detectedStyleId: string | undefined;
-
-  for (const pXml of pTags) {
-    // Check paragraph style
-    const pStyleVal = extractXmlAttr(pXml, 'w:val');
-    if (pStyleVal) {
-      if (/heading\s*1/i.test(pStyleVal) && !detectedStyleId) detectedStyleId = 'style-h1';
-      else if (/heading\s*2/i.test(pStyleVal) && !detectedStyleId) detectedStyleId = 'style-h2';
-      else if (/title/i.test(pStyleVal) && !detectedStyleId) detectedStyleId = 'style-title';
-      else if (/quote/i.test(pStyleVal) && !detectedStyleId) detectedStyleId = 'style-pullquote';
-    }
-
-    // Extract all text runs <w:t>
-    const tTags = extractXmlTags(pXml, 'w:t');
-    const runs: string[] = [];
-    for (const t of tTags) {
-      const text = t.replace(/<w:t[^>]*>/, '').replace(/<\/w:t>/, '');
-      runs.push(text);
-    }
-
-    const pText = runs.join('').trim();
-    if (pText) {
-      paragraphs.push(pText);
+  const has = (name: string) => descendants(body, name).length > 0;
+  if (has('tbl')) warnings.push('Tables are flattened into paragraphs in reading order; rebuild table layout after import.');
+  if (has('drawing') || has('pict')) warnings.push('Embedded images are not placed; add image files separately.');
+  if (has('hyperlink')) warnings.push('Hyperlink text is retained; destinations are not imported.');
+  if (has('ins') || has('del') || has('moveFrom') || has('moveTo')) warnings.push('Tracked changes are imported as accepted text; review the manuscript in Word first.');
+  if (has('fldChar') || has('fldSimple')) warnings.push('Word fields use their cached text and will not update automatically.');
+  if (has('footnoteReference') || has('endnoteReference')) {
+    warnings.push('Note references use bracketed IDs. Note text is appended for review; automatic notes are not created.');
+    for (const kind of ['footnotes', 'endnotes']) {
+      const bytes = files.get(`word/${kind}.xml`);
+      if (!bytes) continue;
+      for (const note of descendants(parseManuscriptXml(new TextDecoder().decode(bytes)), kind === 'footnotes' ? 'footnote' : 'endnote')) {
+        if (Number(note.attrs.id) > 0) paragraphs.push({ sourceStyle: 'Notes', styleId: 'style-body', runs: [{ text: `[${note.attrs.id}] ${descendants(note, 't').map(nodeText).join('')}` }] });
+      }
     }
   }
-
-  const formattedText = paragraphs.join('\n\n');
-  const wordCount = formattedText.trim().split(/\s+/).filter(Boolean).length;
-
-  return {
-    formattedText,
-    detectedStyleId: detectedStyleId || 'style-body',
-    wordCount,
-  };
+  if ([...files.keys()].some(name => /^word\/(header|footer)\d*\.xml$/.test(name))) warnings.push('Headers, footers, and Word page geometry are not imported; set these in Recto.');
+  warnings.push('Word typography is mapped to Recto paragraph styles. Bold, italic, and underline are preserved; other direct formatting requires review.');
+  return result(paragraphs, warnings);
 }
 
-export async function ingestManuscript(
-  fileName: string,
-  buffer: ArrayBuffer | Uint8Array
-): Promise<IngestedStory> {
-  const lowerName = fileName.toLowerCase();
+export function mapManuscriptStyles(story: IngestedStory, mapping: Record<string, string>): StoryContent {
+  const content = story.content || plainStory(story.formattedText, story.detectedStyleId);
+  return { version: 1, paragraphs: content.paragraphs.map(p => ({ ...p,
+    styleId: mapping[p.sourceStyle || 'Body'] || p.styleId || 'style-body', runs: p.runs.map(r => ({ ...r })) })) };
+}
 
-  if (lowerName.endsWith('.indd') || isInddBuffer(buffer)) {
+export async function ingestManuscript(fileName: string, buffer: ArrayBuffer | Uint8Array): Promise<IngestedStory> {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  if (bytes.length > 32 * 1024 * 1024) throw new Error('Please use a manuscript smaller than 32 MB.');
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith('.indd') || isInddBuffer(buffer)) {
     const meta = parseInddMetadata(buffer);
-    const title = meta.title || 'Untitled InDesign Document';
-    const fonts = meta.fonts.map(f => f.name).join(', ') || 'Embedded OpenType';
-    const text = `# ${title}\n\n[Adobe InDesign Source File Ingested]\nPages: ${meta.pageCount}\nTool: ${meta.creatorTool || 'InDesign'}\nFonts: ${fonts}\n\nThumbnail and metadata successfully extracted from binary stream.`;
-    return {
-      formattedText: text,
-      detectedStyleId: 'style-h1',
-      wordCount: text.split(/\s+/).filter(Boolean).length,
-      inddMetadata: meta,
-    };
+    const formattedText = `${meta.title || 'Untitled InDesign Document'}\nPages: ${meta.pageCount}`;
+    return { formattedText, wordCount: formattedText.split(/\s+/).length, inddMetadata: meta,
+      warnings: ['This is a metadata preview. Use Import INDD for document recovery.'] };
   }
-
-  if (lowerName.endsWith('.docx')) {
-    return parseDocxContent(buffer);
-  }
-
-  const text = new TextDecoder().decode(buffer);
-  if (lowerName.endsWith('.md') || lowerName.endsWith('.markdown')) {
-    return parseMarkdownContent(text);
-  }
-
-  // Plain text (.txt)
-  const paragraphs = text
-    .split(/\r?\n\r?\n/)
-    .map(p => p.replace(/\r?\n/g, ' ').trim())
-    .filter(Boolean);
-
-  const formattedText = paragraphs.join('\n\n');
-  const wordCount = formattedText.split(/\s+/).filter(Boolean).length;
-
-  return {
-    formattedText,
-    detectedStyleId: 'style-body',
-    wordCount,
-  };
+  if (lower.endsWith('.docx')) return parseDocxContent(buffer);
+  if (!/\.(md|markdown|txt)$/.test(lower)) throw new Error('Choose a DOCX, Markdown, or plain text manuscript.');
+  const text = new TextDecoder('utf-8', { fatal: true }).decode(buffer).replace(/^\uFEFF/, '');
+  if (/\.(md|markdown)$/.test(lower)) return parseMarkdownContent(text);
+  return result(plainStory(text.replace(/\r\n?/g, '\n'), 'style-body').paragraphs);
 }

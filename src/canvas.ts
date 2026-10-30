@@ -20,6 +20,7 @@ import { stateManager, numberToSuperscript } from './state';
 import { collabSession } from './collab';
 import { assetStore } from './engine/assetStore';
 import { tableEngine } from './engine/tableEngine';
+import { canvasRunFont, layoutStory } from './engine/storyLayout';
 
 export const MM_TO_PX = 3.7795275591;
 
@@ -3374,7 +3375,24 @@ export class SpreadCanvas {
         }
         const processedText = formatOpenTypeText(rawCleanedText, text.openTypeFeatures);
 
-        if (obstacles.length > 0) {
+        if (text.textContent) {
+          const layout = layoutStory(text.textContent, text, state.paragraphStyles, state.characterStyles,
+            undefined, totalFootnoteHeightPx / pxPerMm, { obstacles: spread.elements, baselineGrid: state.settings.baselineGrid });
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'alphabetic';
+          for (const line of layout.lines) for (const segment of line.segments) {
+            ctx.font = canvasRunFont(segment.style, pxPerMm);
+            ctx.fillStyle = segment.style.color;
+            ctx.letterSpacing = `${segment.style.letterSpacingPt * 25.4 / 72 * pxPerMm}px`;
+            const x = elScreenX + segment.x * pxPerMm;
+            const y = elScreenY + (line.y + segment.style.fontSizePt * 25.4 / 72) * pxPerMm;
+            ctx.fillText(segment.text, x, y);
+            if (segment.style.underline) {
+              ctx.fillRect(x, y + state.zoom, segment.width * pxPerMm, Math.max(0.6, state.zoom));
+            }
+          }
+          isOverflowing = layout.overset;
+        } else if (obstacles.length > 0) {
           const paragraphs = processedText.split('\n');
           let pIdx = 0;
           let wordList: string[] = paragraphs[0] ? paragraphs[0].trim().split(/\s+/).filter(Boolean) : [];

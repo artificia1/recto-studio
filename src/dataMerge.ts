@@ -1,4 +1,5 @@
 import { Spread, Page, CanvasElement, TextElement, ImageElement, TableElement } from './types';
+import { editStory, storyText } from './engine/storyContent';
 
 export interface DataMergeResult {
   headers: string[];
@@ -127,6 +128,8 @@ export function substituteElementTokens(element: CanvasElement, record: Record<s
       ...textEl,
       text: substituteTokens(textEl.text, record),
       rawStoryText: textEl.rawStoryText ? substituteTokens(textEl.rawStoryText, record) : undefined,
+      storyContent: textEl.storyContent ? editStory(textEl.storyContent, substituteTokens(storyText(textEl.storyContent), record)) : undefined,
+      textContent: textEl.textContent ? editStory(textEl.textContent, substituteTokens(storyText(textEl.textContent), record)) : undefined,
     };
   }
 

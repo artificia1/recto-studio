@@ -9,10 +9,13 @@ import { stateManager } from '../state';
 import { PAGE_PRESETS, PagePreset, ProjectState, VersionSnapshot, PeerPresence } from '../types';
 import { parseCsv } from '../dataMerge';
 import { collabSession } from '../collab';
+import type { IngestedStory } from '../contentImport';
+import type { TextElement } from '../types';
 import { BookletImpositionModal, CoverSpineModal } from './LazyPrintDialogs';
 
 interface TopBarProps {
   state: ProjectState;
+  onImportManuscript: (story: IngestedStory, fileName: string, frame: TextElement) => void;
   onOpenFindChange?: () => void;
   onOpenQuickApply?: () => void;
   onOpenImposition?: () => void;
@@ -27,6 +30,7 @@ interface TopBarProps {
 
 export function TopBar({
   state,
+  onImportManuscript,
   onOpenFindChange,
   onOpenQuickApply,
   onOpenImposition,
@@ -298,9 +302,11 @@ export function TopBar({
         const buffer = await file.arrayBuffer();
         const { ingestManuscript } = await import('../contentImport');
         const ingested = await ingestManuscript(file.name, buffer);
-        stateManager.placeTextContent(textEl.id, ingested);
+        if (!ingested.formattedText.trim()) throw new Error('This manuscript has no readable text.');
+        onImportManuscript(ingested, file.name, textEl as TextElement);
       } catch (err) {
         console.error('Failed to place text content:', err);
+        alert(`Could not import manuscript. ${err instanceof Error ? err.message : 'Please try another file.'}`);
       } finally {
         target.value = '';
       }

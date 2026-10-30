@@ -34,7 +34,12 @@ import {
   IndexEntry,
   ConditionTag,
   AnchoredObjectSettings,
+  StoryContent,
+  TextFormatting,
+  CharacterStyle,
 } from '../types/index';
+import { editStory, formatStory, plainStory, sliceStory, storyText, styleStoryParagraphs } from '../engine/storyContent';
+import { layoutStory } from '../engine/storyLayout';
 import { generateEan13DataUrl } from '../engine/barcodeEngine';
 import { generateQrDataUrl } from '../engine/qrEngine';
 import { RectoDB } from './persistence';
@@ -288,6 +293,27 @@ export class StateManager {
   }
 
   private pushHistory() {
+    // Older editing commands still mutate the plain frame view. Reconcile those
+    // edits before recording history so formatting and canonical copy stay in sync.
+    const edits = new Map<string, { frame: TextElement; text: string; start: number; end: number }[]>();
+    for (const spread of this.state.spreads) for (const frame of spread.elements) {
+      if (frame.type !== 'text' || !frame.textContent || frame.text === storyText(frame.textContent)) continue;
+      const head = this.getStoryHead(frame.id);
+      if (!head) continue;
+      const group = edits.get(head.id) || [];
+      group.push({ frame, text: frame.text, start: frame.storyStart ?? 0, end: frame.storyEnd ?? frame.text.length });
+      edits.set(head.id, group);
+    }
+    for (const [id, group] of edits) {
+      const head = this.getStoryHead(id)!;
+      const content = this.getStoryContent(id);
+      let text = storyText(content);
+      for (const edit of group.sort((a, b) => b.start - a.start)) text = text.slice(0, edit.start) + edit.text + text.slice(edit.end);
+      head.storyContent = editStory(content, text);
+      head.rawStoryText = storyText(head.storyContent);
+      this.reflowStory(id);
+    }
+    this.reflowFormattedStories();
     this.history.push(this.state);
   }
 
@@ -610,6 +636,7 @@ export class StateManager {
       }
     }
 
+    this.reflowFormattedStories();
     this.pushHistory();
     this.notify();
   }
@@ -623,6 +650,7 @@ export class StateManager {
         }
       }
     }
+    this.reflowFormattedStories();
     this.pushHistory();
     this.notify();
   }
@@ -634,6 +662,10 @@ export class StateManager {
     const spread = this.getActiveSpread();
     const el = spread.elements.find(e => e.id === elementId);
     if (!el || el.type !== 'text') return;
+    if (el.textContent || el.storyContent) {
+      this.styleStoryRange(el.id, el.storyStart ?? 0, el.storyEnd ?? storyText(this.getStoryContent(el.id)).length, styleId);
+      return;
+    }
 
     const textEl = el as TextElement;
     textEl.paragraphStyleId = styleId;
@@ -715,9 +747,12 @@ export class StateManager {
       if (el.type === 'text') {
         const textEl = el as TextElement;
         const textUpdates = updates as Partial<TextElement>;
-        if (textUpdates.text !== undefined && !textEl.prevFrameId) {
+        if (textUpdates.text !== undefined && (textEl.textContent || textEl.storyContent)) {
+          this.editFrameStory(textEl, textUpdates.text);
+        } else if (textUpdates.text !== undefined && !textEl.prevFrameId) {
           textEl.rawStoryText = textEl.text;
         }
+        this.updateStoryFrameFormatting(textEl, textUpdates);
         if (textEl.nextFrameId || textEl.prevFrameId) {
           this.reflowStory(id);
         }
@@ -743,9 +778,12 @@ export class StateManager {
         if (el.type === 'text') {
           const textEl = el as TextElement;
           const textPartial = partial as Partial<TextElement>;
-          if (textPartial.text !== undefined && !textEl.prevFrameId) {
+          if (textPartial.text !== undefined && (textEl.textContent || textEl.storyContent)) {
+            this.editFrameStory(textEl, textPartial.text);
+          } else if (textPartial.text !== undefined && !textEl.prevFrameId) {
             textEl.rawStoryText = textEl.text;
           }
+          this.updateStoryFrameFormatting(textEl, textPartial);
           if (textEl.nextFrameId || textEl.prevFrameId) {
             this.reflowStory(id);
           }
@@ -1029,6 +1067,12 @@ export class StateManager {
       const textCloned = cloned as TextElement;
       delete textCloned.prevFrameId;
       delete textCloned.nextFrameId;
+      if (textCloned.textContent) {
+        textCloned.storyContent = structuredClone(textCloned.textContent);
+        textCloned.rawStoryText = textCloned.text;
+        textCloned.storyStart = 0;
+        textCloned.storyEnd = textCloned.text.length;
+      }
     } else if (cloned.type === 'table') {
       const tableCloned = cloned as TableElement;
       delete tableCloned.prevFrameId;
@@ -1099,41 +1143,136 @@ export class StateManager {
 
     // 3. Obtain full story manuscript
     const headFrame = chain[0];
-    if (!headFrame.rawStoryText) {
+    if (headFrame.rawStoryText === undefined) {
       headFrame.rawStoryText = chain.map(f => f.text).join('\n\n').trim();
     }
-    const fullStory = headFrame.rawStoryText;
-
-    if (chain.length === 1) {
-      headFrame.text = fullStory;
-      return;
-    }
-
-    // 4. Distribute text across chain based on geometric capacities
-    const words = fullStory.split(/\s+/).filter(Boolean);
-    let wordIdx = 0;
-
+    const content = headFrame.storyContent || plainStory(headFrame.rawStoryText, headFrame.paragraphStyleId);
+    const fullStory = storyText(content);
+    headFrame.storyContent = content;
+    headFrame.rawStoryText = fullStory;
+    let offset = 0;
     for (let i = 0; i < chain.length; i++) {
       const frame = chain[i];
-      if (wordIdx >= words.length) {
-        frame.text = '';
-        continue;
-      }
+      const remaining = sliceStory(content, offset, fullStory.length);
+      const reserved = this.getFootnotesForElement(frame.id).length * 4 + (this.getFootnotesForElement(frame.id).length ? 3 : 0);
+      const layout = layoutStory(remaining, frame, this.state.paragraphStyles, this.state.characterStyles, undefined, reserved,
+        { obstacles: this.findElementById(frame.id)?.spread.elements, baselineGrid: this.state.settings.baselineGrid });
+      const end = i === chain.length - 1 ? fullStory.length : offset + layout.consumed;
+      frame.textContent = sliceStory(content, offset, end);
+      frame.text = fullStory.slice(offset, end);
+      frame.storyStart = offset;
+      frame.storyEnd = end;
+      if (i) { delete frame.storyContent; delete frame.rawStoryText; }
+      offset = end;
+    }
+  }
 
-      const isLastFrame = (i === chain.length - 1);
-      if (isLastFrame) {
-        frame.text = words.slice(wordIdx).join(' ');
-        wordIdx = words.length;
-      } else {
-        const lineCapacity = this.estimateFrameLineCapacity(frame);
-        const charsPerLine = this.estimateCharsPerLine(frame);
-        const wordsPerLine = Math.max(3, Math.floor(charsPerLine / 5.5));
-        const frameWordCapacity = Math.max(5, lineCapacity * wordsPerLine);
+  public getStoryHead(frameId: string): TextElement | null {
+    let frame = this.getElementById(frameId);
+    const seen = new Set<string>();
+    while (frame?.type === 'text' && frame.prevFrameId && !seen.has(frame.id)) {
+      seen.add(frame.id);
+      frame = this.getElementById(frame.prevFrameId);
+    }
+    return frame?.type === 'text' ? frame : null;
+  }
 
-        const frameWords = words.slice(wordIdx, wordIdx + frameWordCapacity);
-        frame.text = frameWords.join(' ');
-        wordIdx += frameWordCapacity;
-      }
+  public getStoryContent(frameId: string): StoryContent {
+    const head = this.getStoryHead(frameId);
+    if (!head) return plainStory('');
+    if (head.storyContent) return head.storyContent;
+    if (head.rawStoryText !== undefined) return plainStory(head.rawStoryText, head.paragraphStyleId);
+    const parts: string[] = [];
+    let frame: TextElement | null = head;
+    const seen = new Set<string>();
+    while (frame?.type === 'text' && !seen.has(frame.id)) {
+      seen.add(frame.id); parts.push(frame.text);
+      frame = frame.nextFrameId ? this.getElementById(frame.nextFrameId) as TextElement | null : null;
+    }
+    return plainStory(parts.join('\n\n'), head.paragraphStyleId);
+  }
+
+  private editFrameStory(frame: TextElement, text: string) {
+    const head = this.getStoryHead(frame.id);
+    if (!head) return;
+    const content = this.getStoryContent(frame.id);
+    const full = storyText(content);
+    const start = frame.storyStart ?? 0;
+    const end = frame.storyEnd ?? full.length;
+    head.storyContent = editStory(content, full.slice(0, start) + text + full.slice(end));
+    head.rawStoryText = storyText(head.storyContent);
+    this.reflowStory(head.id);
+  }
+
+  private updateStoryFrameFormatting(frame: TextElement, updates: Partial<TextElement>) {
+    if (!frame.textContent) return;
+    const keys = ['fontFamily', 'fontSizePt', 'color', 'alignment', 'lineHeight', 'letterSpacingPt'] as const;
+    const formatting = Object.fromEntries(keys.filter(key => updates[key] !== undefined).map(key => [key, updates[key]]));
+    if (!Object.keys(formatting).length) return;
+    const head = this.getStoryHead(frame.id)!;
+    const content = this.getStoryContent(frame.id);
+    const start = frame.storyStart ?? 0, end = frame.storyEnd ?? storyText(content).length;
+    let offset = 0;
+    head.storyContent = { version: 1, paragraphs: content.paragraphs.map(paragraph => {
+      const length = paragraph.runs.reduce((n, r) => n + r.text.length, 0);
+      const selected = offset < end && offset + length >= start;
+      offset += length + 1;
+      return selected ? { ...paragraph, formatting: { ...paragraph.formatting, ...formatting } } : paragraph;
+    }) };
+    this.reflowStory(head.id);
+  }
+
+  public setStoryContent(frameId: string, content: StoryContent) {
+    const head = this.getStoryHead(frameId);
+    if (!head) throw new Error('The selected text frame no longer exists.');
+    let frame: TextElement | null = head;
+    const seen = new Set<string>();
+    while (frame && !seen.has(frame.id)) {
+      if (frame.locked || this.state.layers.find(layer => layer.id === frame!.layerId)?.locked) throw new Error('Unlock the story frames before editing this manuscript.');
+      seen.add(frame.id);
+      frame = frame.nextFrameId ? this.getElementById(frame.nextFrameId) as TextElement | null : null;
+    }
+    head.storyContent = structuredClone(content);
+    head.rawStoryText = storyText(content);
+    this.reflowStory(head.id);
+    this.pushHistory();
+    this.notify();
+  }
+
+  public setStoryText(frameId: string, text: string) {
+    const head = this.getStoryHead(frameId);
+    if (head && !head.storyContent && !head.textContent && !head.nextFrameId) {
+      if (head.locked || this.state.layers.find(layer => layer.id === head.layerId)?.locked) throw new Error('Unlock the story frame before editing.');
+      // Plain legacy frames retain their existing advanced typography renderer.
+      head.text = text;
+      head.rawStoryText = text;
+      this.pushHistory();
+      this.notify();
+      return;
+    }
+    this.setStoryContent(frameId, editStory(this.getStoryContent(frameId), text));
+  }
+
+  public formatStoryRange(frameId: string, start: number, end: number, formatting: TextFormatting & { characterStyleId?: string }) {
+    if (end <= start) return;
+    this.setStoryContent(frameId, formatStory(this.getStoryContent(frameId), start, end, formatting));
+  }
+
+  public styleStoryRange(frameId: string, start: number, end: number, styleId: string) {
+    if (!this.state.paragraphStyles.some(s => s.id === styleId)) return;
+    this.setStoryContent(frameId, styleStoryParagraphs(this.getStoryContent(frameId), start, end, styleId));
+  }
+
+  public createCharacterStyle(style: CharacterStyle) {
+    if (!style.name.trim() || this.state.characterStyles?.some(s => s.id === style.id)) return;
+    this.state.characterStyles = [...(this.state.characterStyles || []), style];
+    this.pushHistory();
+    this.notify();
+  }
+
+  public reflowFormattedStories() {
+    for (const spread of this.state.spreads) for (const frame of spread.elements) {
+      if (frame.type === 'text' && frame.storyContent && !frame.prevFrameId) this.reflowStory(frame.id);
     }
   }
 
@@ -1146,6 +1285,8 @@ export class StateManager {
 
     const source = sourceFound.element as TextElement;
     const target = targetFound.element as TextElement;
+    if (source.locked || target.locked || source.nextFrameId && source.nextFrameId !== targetId) return false;
+    if (source.nextFrameId === targetId) return true;
 
     // Target cannot already have another predecessor
     if (target.prevFrameId && target.prevFrameId !== sourceId) return false;
@@ -1167,15 +1308,20 @@ export class StateManager {
       if (oldTarget) oldTarget.prevFrameId = undefined;
     }
 
+    const sourceHead = this.getStoryHead(sourceId)!;
+    const sourceContent = this.getStoryContent(sourceId);
+    const targetContent = this.getStoryContent(targetId);
+    const merged: StoryContent = { version: 1, paragraphs: [
+      ...sourceContent.paragraphs,
+      ...(storyText(targetContent) ? targetContent.paragraphs : []),
+    ] };
+    sourceHead.storyContent = merged;
+    sourceHead.rawStoryText = storyText(merged);
     const storyId = source.storyId || target.storyId || `story-${Date.now()}`;
     source.nextFrameId = targetId;
     source.storyId = storyId;
     target.prevFrameId = sourceId;
     target.storyId = storyId;
-
-    if (!source.rawStoryText) {
-      source.rawStoryText = source.text;
-    }
 
     this.reflowStory(sourceId);
     this.state.linkingFromFrameId = null;
@@ -1188,26 +1334,44 @@ export class StateManager {
     const found = this.findElementById(frameId);
     if (!found || found.element.type !== 'text') return;
     const frame = found.element as TextElement;
+    const head = this.getStoryHead(frameId)!;
+    const content = this.getStoryContent(frameId);
+    const length = storyText(content).length;
 
     const prev = frame.prevFrameId ? (this.findElementById(frame.prevFrameId)?.element as TextElement | undefined) : undefined;
     const next = frame.nextFrameId ? (this.findElementById(frame.nextFrameId)?.element as TextElement | undefined) : undefined;
 
-    if (restitch && prev && next) {
-      prev.nextFrameId = next.id;
-      next.prevFrameId = prev.id;
+    if (restitch) {
+      if (prev) prev.nextFrameId = next?.id;
+      if (next) next.prevFrameId = prev?.id;
+      const newHead = head === frame ? next : head;
+      if (newHead) {
+        newHead.storyContent = content;
+        newHead.rawStoryText = storyText(content);
+      }
       frame.prevFrameId = undefined;
       frame.nextFrameId = undefined;
-      this.reflowStory(prev.id);
+      if (newHead) this.reflowStory(newHead.id);
     } else {
+      const start = frame.storyStart ?? 0;
+      const end = frame.storyEnd ?? length;
       if (prev) {
         prev.nextFrameId = undefined;
+        head.storyContent = sliceStory(content, 0, start);
+        head.rawStoryText = storyText(head.storyContent);
         this.reflowStory(prev.id);
       }
       if (next) {
         next.prevFrameId = undefined;
+        next.storyContent = sliceStory(content, end, length);
+        next.rawStoryText = storyText(next.storyContent);
+        this.reflowStory(next.id);
       }
       frame.prevFrameId = undefined;
       frame.nextFrameId = undefined;
+      frame.storyContent = sliceStory(content, start, end);
+      frame.rawStoryText = storyText(frame.storyContent);
+      this.reflowStory(frame.id);
     }
 
     this.state.linkingFromFrameId = null;
@@ -1785,6 +1949,12 @@ export class StateManager {
           const textCloned = cloned as TextElement;
           delete textCloned.prevFrameId;
           delete textCloned.nextFrameId;
+          if (textCloned.textContent) {
+            textCloned.storyContent = structuredClone(textCloned.textContent);
+            textCloned.rawStoryText = textCloned.text;
+            textCloned.storyStart = 0;
+            textCloned.storyEnd = textCloned.text.length;
+          }
         } else if (cloned.type === 'table') {
           const tableCloned = cloned as TableElement;
           delete tableCloned.prevFrameId;
@@ -1910,6 +2080,7 @@ export class StateManager {
     const project = parseProject(jsonStr, INITIAL_STATE);
     this.state = project;
     this.renumberPages();
+    this.reflowFormattedStories();
     this.pushHistory();
     this.notify();
   }
@@ -2004,10 +2175,15 @@ export class StateManager {
     }
   }
 
-  public placeTextContent(elementId: string, content: { formattedText: string; detectedStyleId?: string }) {
+  public placeTextContent(elementId: string, content: { formattedText: string; detectedStyleId?: string; content?: StoryContent }) {
     const spread = this.getActiveSpread();
     const el = spread.elements.find(e => e.id === elementId);
     if (!el || el.type !== 'text') return;
+    if (content.content) {
+      if (content.detectedStyleId) el.paragraphStyleId = content.detectedStyleId;
+      this.setStoryContent(elementId, content.content);
+      return;
+    }
 
     const updates: Partial<TextElement> = {
       text: content.formattedText,
@@ -2149,7 +2325,10 @@ export class StateManager {
             }
             const totalLinesCapacity = maxLinesPerCol * cols;
 
-            if (approxRenderedLines > totalLinesCapacity || textContent.length > totalCapacity * 1.15) {
+            const overset = textEl.textContent ? layoutStory(textEl.textContent, textEl, this.state.paragraphStyles, this.state.characterStyles, undefined, 0,
+              { obstacles: spread.elements, baselineGrid: settings.baselineGrid }).overset
+              : approxRenderedLines > totalLinesCapacity || textContent.length > totalCapacity * 1.15;
+            if (overset) {
               const overflowAmt = Math.max(
                 approxRenderedLines - totalLinesCapacity,
                 Math.ceil((textContent.length - totalCapacity) / charsPerLine)
@@ -2158,7 +2337,7 @@ export class StateManager {
                 id: `preflight-overset-${spreadIdx}-${el.id}`,
                 severity: 'error',
                 code: 'OVERSET_TEXT',
-                message: `Text frame overflows available area by ~${overflowAmt} lines. Link to next frame or enlarge frame.`,
+                message: textEl.textContent ? 'Manuscript text exceeds the final frame. Link another frame or enlarge this frame.' : `Text frame overflows available area by ~${overflowAmt} lines. Link to next frame or enlarge frame.`,
                 spreadIndex: spreadIdx,
                 pageNumber,
                 elementId: el.id,

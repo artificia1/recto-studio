@@ -251,7 +251,63 @@ test('loads manuscript tools on demand and places text', async ({ page }) => {
   await page.locator('input[accept=".md,.markdown,.txt,.docx"]').setInputFiles({
     name: 'manuscript.txt', mimeType: 'text/plain', buffer: Buffer.from('Manuscript loaded on demand'),
   });
+  await expect(page.getByRole('dialog', { name: 'Import manuscript' })).toBeVisible();
+  await expect(page.locator('.inspector-panel textarea').first()).toHaveValue('Browser workflow sample');
+  await page.getByRole('button', { name: 'Place manuscript', exact: true }).click();
   await expect(page.locator('.inspector-panel textarea').first()).toHaveValue('Manuscript loaded on demand');
+});
+
+test('previews mixed manuscript styles, cancels safely and preserves rich formatting through editing and reopen', async ({ page }) => {
+  await importProject(page);
+  const upload = () => page.locator('input[accept=".md,.markdown,.txt,.docx"]').setInputFiles({
+    name: 'novel.md', mimeType: 'text/markdown', buffer: Buffer.from('# Chapter one\n\nA **bold** and *italic* paragraph.\n\n## Section two\n\nFinal paragraph.'),
+  });
+  await upload();
+  let modal = page.getByRole('dialog', { name: 'Import manuscript' });
+  await expect(modal.getByLabel('Map Heading 1')).toHaveValue('style-h1');
+  await modal.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.locator('.inspector-panel textarea').first()).toHaveValue('Browser workflow sample');
+  await upload();
+  modal = page.getByRole('dialog', { name: 'Import manuscript' });
+  await modal.getByLabel('Map Heading 2').selectOption('style-body');
+  await page.screenshot({ path: 'test-results/manuscript-import-preview.png', fullPage: true });
+  await modal.getByRole('button', { name: 'Place manuscript', exact: true }).click();
+  await menuCommand(page, 'Open distraction-free Story Focus typewriter editor (Ctrl+Alt+Y)');
+  const editor = page.getByRole('textbox', { name: 'Story manuscript', exact: true });
+  await expect(editor).toHaveValue('Chapter one\nA bold and italic paragraph.\nSection two\nFinal paragraph.');
+  await expect(page.locator('.manuscript-preview span').filter({ hasText: /^bold$/ })).toHaveCSS('font-weight', '700');
+  await editor.evaluate((element: HTMLTextAreaElement) => { element.focus(); element.setSelectionRange(14, 18); element.dispatchEvent(new Event('select', { bubbles: true })); });
+  await page.getByRole('button', { name: 'Underline', exact: true }).click();
+  await page.getByRole('textbox', { name: 'New character style name' }).fill('Book emphasis');
+  await page.getByRole('button', { name: 'Save style', exact: true }).click();
+  await editor.press('Control+End');
+  await editor.pressSequentially(' Appended.');
+  await expect(editor).toHaveValue(/Final paragraph\. Appended\.$/);
+  await page.screenshot({ path: 'test-results/manuscript-story-editor.png', fullPage: true });
+  await editor.press('Escape');
+  const saved = await savedProject(page);
+  const frame = saved.spreads[0].elements[0];
+  expect(frame.storyContent.paragraphs[2].styleId).toBe('style-body');
+  expect(frame.storyContent.paragraphs[1].runs.some((run: { bold?: boolean; characterStyleId?: string }) => run.bold ||
+    saved.characterStyles.find((style: { id: string; bold?: boolean }) => style.id === run.characterStyleId)?.bold)).toBe(true);
+  expect(saved.characterStyles.some((style: { name: string }) => style.name === 'Book emphasis')).toBe(true);
+  await importProject(page, saved);
+  await menuCommand(page, 'Open distraction-free Story Focus typewriter editor (Ctrl+Alt+Y)');
+  await expect(editor).toHaveValue(/Final paragraph\. Appended\.$/);
+});
+
+test('imports a Word manuscript with source style mapping and explicit warnings', async ({ page }) => {
+  await importProject(page);
+  const buffer = createZipArchive({
+    'word/document.xml': '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>A Word chapter</w:t></w:r></w:p><w:p><w:r><w:rPr><w:i/></w:rPr><w:t>Italic Word body &amp; text.</w:t></w:r></w:p></w:body></w:document>',
+  });
+  await page.locator('input[accept=".md,.markdown,.txt,.docx"]').setInputFiles({ name: 'chapter.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', buffer: Buffer.from(buffer) });
+  const modal = page.getByRole('dialog', { name: 'Import manuscript' });
+  await expect(modal.getByLabel('Map Heading1')).toHaveValue('style-h1');
+  await expect(modal.getByText('Review after import', { exact: true })).toBeVisible();
+  await modal.getByRole('button', { name: 'Place manuscript', exact: true }).click();
+  const saved = await savedProject(page);
+  expect(saved.spreads[0].elements[0].storyContent.paragraphs[1].runs[0]).toMatchObject({ italic: true, text: 'Italic Word body & text.' });
 });
 
 test('reports an unavailable export module and preserves the document', async ({ page }) => {

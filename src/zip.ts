@@ -5,10 +5,16 @@ export interface ZipEntry {
   data: Uint8Array;
 }
 
-export async function readZip(buffer: ArrayBuffer | Uint8Array): Promise<Map<string, Uint8Array>> {
+export async function readZip(buffer: ArrayBuffer | Uint8Array, maxBytes = Infinity): Promise<Map<string, Uint8Array>> {
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const entries = new Map<string, Uint8Array>();
+  let remainingBytes = maxBytes;
+  const store = (name: string, data: Uint8Array) => {
+    if (data.length > remainingBytes) throw new Error('The expanded archive exceeds the import size limit.');
+    remainingBytes -= data.length;
+    entries.set(name, data);
+  };
 
   // 1. Locate End of Central Directory (EOCD) signature: 0x06054b50
   let eocdOffset = -1;
@@ -49,11 +55,11 @@ export async function readZip(buffer: ArrayBuffer | Uint8Array): Promise<Map<str
 
         if (compressionMethod === 0) {
           // Stored (no compression)
-          entries.set(fileName, compressedData);
+          store(fileName, compressedData);
         } else if (compressionMethod === 8) {
           // Deflated
-          const decompressed = await decompressDeflateRaw(compressedData);
-          entries.set(fileName, decompressed);
+          const decompressed = await decompressDeflateRaw(compressedData, remainingBytes);
+          store(fileName, decompressed);
         }
       }
     }
@@ -77,10 +83,10 @@ export async function readZip(buffer: ArrayBuffer | Uint8Array): Promise<Map<str
 
       if (compressedSize > 0) {
         if (compressionMethod === 0) {
-          entries.set(fileName, compressedData);
+          store(fileName, compressedData);
         } else if (compressionMethod === 8) {
-          const decompressed = await decompressDeflateRaw(compressedData);
-          entries.set(fileName, decompressed);
+          const decompressed = await decompressDeflateRaw(compressedData, remainingBytes);
+          store(fileName, decompressed);
         }
       }
       offset = dataStart + compressedSize;
@@ -90,18 +96,27 @@ export async function readZip(buffer: ArrayBuffer | Uint8Array): Promise<Map<str
   return entries;
 }
 
-export async function decompressDeflateRaw(data: Uint8Array): Promise<Uint8Array> {
+export async function decompressDeflateRaw(data: Uint8Array, maxBytes = Infinity): Promise<Uint8Array> {
   if (typeof DecompressionStream !== 'undefined') {
     const ds = new DecompressionStream('deflate-raw');
     const writer = ds.writable.getWriter();
-    writer.write(data as any);
-    writer.close();
+    const writing = writer.write(data as any).then(() => writer.close());
+    // The readable side reports decompression errors; cancellation also rejects writes.
+    void writing.catch(() => {});
     const reader = ds.readable.getReader();
     const chunks: Uint8Array[] = [];
+    let bytesRead = 0;
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (value) chunks.push(value);
+      if (value) {
+        bytesRead += value.length;
+        if (bytesRead > maxBytes) {
+          await reader.cancel();
+          throw new Error('The expanded archive exceeds the import size limit.');
+        }
+        chunks.push(value);
+      }
     }
     const totalLength = chunks.reduce((acc, c) => acc + c.length, 0);
     const result = new Uint8Array(totalLength);

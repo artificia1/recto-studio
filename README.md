@@ -1,4 +1,7 @@
 # RECTO STUDIO
+
+Manuscript import, formatted stories, and supported file features: [Manuscript guide](MANUSCRIPTS.md).
+
 ### *The Open-Source Desktop Publishing Suite Engineered for Craftsmanship.*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)

@@ -1,4 +1,8 @@
 import { useState, useEffect, useRef } from 'preact/hooks';
+import { lazy, Suspense } from 'preact/compat';
+import type { IngestedStory } from '../contentImport';
+import type { TextElement } from '../types';
+import { storyText } from '../engine/storyContent';
 import { useProjectState } from '../hooks/useProjectState';
 import { TopBar } from './TopBar';
 import { ControlBar } from './ControlBar';
@@ -16,9 +20,11 @@ import { ScriptsModal } from './ScriptsModal';
 import { SpreadCanvas } from '../canvas';
 import { stateManager } from '../state';
 import { fontManager } from '../fontManager';
+const ManuscriptImportModal = lazy(() => import('./ManuscriptImportModal').then(module => ({ default: module.ManuscriptImportModal })));
 
 export function App() {
   const state = useProjectState();
+  const [pendingManuscript, setPendingManuscript] = useState<{ story: IngestedStory; fileName: string; frame: TextElement; createFrame?: boolean } | null>(null);
   const [showFindChange, setShowFindChange] = useState(false);
   const [showQuickApply, setShowQuickApply] = useState(false);
   const [showImposition, setShowImposition] = useState(false);
@@ -37,7 +43,10 @@ export function App() {
   const spreadCanvasRef = useRef<SpreadCanvas | null>(null);
 
   useEffect(() => {
-    const unsubscribe = fontManager.subscribe(() => spreadCanvasRef.current?.render());
+    const unsubscribe = fontManager.subscribe(() => {
+      stateManager.reflowFormattedStories();
+      spreadCanvasRef.current?.render();
+    });
     const families = new Set(state.paragraphStyles.map(style => style.fontFamily));
     for (const spread of state.spreads) {
       for (const element of spread.elements) {
@@ -190,21 +199,22 @@ export function App() {
       const buffer = await file.arrayBuffer();
       const { ingestManuscript } = await import('../contentImport');
       const ingested = await ingestManuscript(file.name, buffer);
+      if (!ingested.formattedText.trim()) throw new Error('This manuscript has no readable text.');
 
       const activeSpread = stateManager.getActiveSpread();
       const selectedElId = state.selectedElementId;
       const selectedEl = activeSpread.elements.find((el) => el.id === selectedElId);
 
       if (selectedEl && selectedEl.type === 'text') {
-        stateManager.placeTextContent(selectedEl.id, ingested);
+        setPendingManuscript({ story: ingested, fileName: file.name, frame: selectedEl });
       } else {
         const textEl = activeSpread.elements.find((el) => el.type === 'text');
         if (textEl) {
-          stateManager.placeTextContent(textEl.id, ingested);
+          setPendingManuscript({ story: ingested, fileName: file.name, frame: textEl });
         } else {
           const page = activeSpread.pages[0];
           const margin = state.settings.margins;
-          stateManager.addElement({
+          setPendingManuscript({ story: ingested, fileName: file.name, createFrame: true, frame: {
             id: `text-placed-${Date.now()}`,
             type: 'text',
             pageId: page.id,
@@ -230,7 +240,7 @@ export function App() {
             borderWidthMm: 0,
             paddingMm: 2,
             paragraphStyleId: ingested.detectedStyleId,
-          });
+          } });
         }
       }
       return;
@@ -295,7 +305,18 @@ export function App() {
 
   return (
     <div id="app" onDragOver={handleDragOver} onDrop={handleDrop}>
+      {pendingManuscript && <Suspense fallback={null}><ManuscriptImportModal manuscript={pendingManuscript.story}
+        fileName={pendingManuscript.fileName} frame={pendingManuscript.frame} state={state}
+        onClose={() => setPendingManuscript(null)} onPlace={content => {
+          if (pendingManuscript.createFrame) {
+            const text = storyText(content);
+            stateManager.addElement({ ...pendingManuscript.frame, text, rawStoryText: text,
+              storyContent: content, textContent: content, storyStart: 0, storyEnd: text.length });
+          } else stateManager.setStoryContent(pendingManuscript.frame.id, content);
+          setPendingManuscript(null);
+        }} /></Suspense>}
       <TopBar
+        onImportManuscript={(story, fileName, frame) => setPendingManuscript({ story, fileName, frame })}
         state={state}
         onOpenFindChange={() => setShowFindChange(true)}
         onOpenQuickApply={() => setShowQuickApply(true)}

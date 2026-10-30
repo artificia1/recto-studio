@@ -72,12 +72,26 @@ const paragraphStyle = object({
   letterSpacingPt: number, color: text, alignment, snapToBaseline: boolean,
   grepStyles: optional(array(grepRule)),
 });
+const textFormatting = {
+  bold: optional(boolean), italic: optional(boolean), underline: optional(boolean),
+  fontFamily: optional(text), fontSizePt: optional(positive), color: optional(text),
+};
+const storyContent: Validator = (value, path) => {
+  object({ version: (v, p) => { if (v !== 1) fail(p, 'unsupported story version'); },
+    paragraphs: array(object({ styleId: optional(identifier), sourceStyle: optional(text),
+      formatting: optional(object({ ...textFormatting, alignment: optional(alignment), lineHeight: optional(positive), letterSpacingPt: optional(number) })),
+      runs: array(object({ text, characterStyleId: optional(identifier), ...textFormatting })) })),
+  })(value, path);
+  if (!(value as { paragraphs: unknown[] }).paragraphs.length) fail(path, 'a story requires at least one paragraph');
+};
 const elementSchemas: Record<string, Schema> = {
   text: {
     text, ...typography, lineHeight: positive, letterSpacingPt: number,
     color: optional(text), alignment, columns: count, columnGutterMm: nonnegative,
     backgroundColor: text, borderColor: text, borderWidthMm: nonnegative, paddingMm: optional(nonnegative),
     rawStoryText: optional(text), nextFrameId: optional(identifier), prevFrameId: optional(identifier),
+    storyContent: optional(storyContent), textContent: optional(storyContent),
+    storyStart: optional(integer), storyEnd: optional(integer),
     grepStyles: optional(array(grepRule)),
   },
   image: {
@@ -163,6 +177,7 @@ export function parseProject(json: string, defaults: ProjectState): ProjectState
     spreads: array(spread), masterSpreads: array(master), layers: array(layer),
     embeddedFonts: optional(array(object({ family: identifier, fileName: text, data: text }))),
     paragraphStyles: array(paragraphStyle),
+    characterStyles: optional(array(object({ id: identifier, name: text, ...textFormatting }))),
     objectStyles: optional(array(object({ id: identifier, name: text }))),
     conditions: optional(array(object({ id: identifier, name: text, visible: boolean, colorHex: text }))),
     crossReferences: optional(array(object({ id: identifier }))),
@@ -200,6 +215,24 @@ export function parseProject(json: string, defaults: ProjectState): ProjectState
     }
   }
   // Selection and viewport are session state, so stale references can be repaired.
+  const frames = new Map(project.spreads.flatMap(s => s.elements).filter(e => e.type === 'text').map(e => [e.id, e]));
+  for (const frame of frames.values()) {
+    if (!frame.storyContent && !frame.textContent) continue;
+    for (const [pointer, reciprocal] of [['nextFrameId', 'prevFrameId'], ['prevFrameId', 'nextFrameId']] as const) {
+      const id = frame[pointer];
+      if (id && frames.get(id)?.[reciprocal] !== frame.id) fail(`Story ${frame.id}`, 'broken text-frame link');
+    }
+    const visited = new Set<string>();
+    let current = frame;
+    while (current.prevFrameId) {
+      if (visited.has(current.id)) fail(`Story ${frame.id}`, 'circular text-frame link');
+      visited.add(current.id);
+      const previous = frames.get(current.prevFrameId);
+      if (!previous) fail(`Story ${frame.id}`, 'missing text frame');
+      current = previous;
+    }
+    if (!current.storyContent) fail(`Story ${frame.id}`, 'the first frame is missing its manuscript');
+  }
   project.activeSpreadIndex = Math.min(project.activeSpreadIndex, project.spreads.length - 1);
   const activeIds = new Set(project.spreads[project.activeSpreadIndex].elements.map(item => item.id));
   project.selectedElementIds = project.selectedElementIds.filter(id => activeIds.has(id));

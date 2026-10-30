@@ -9,6 +9,7 @@
 import { ProjectState, CanvasElement, TextElement, ImageElement, ShapeElement, TableElement, VectorPathElement, Page } from './types';
 import { createZipArchive } from './zip';
 import { formatOpenTypeText } from './canvas';
+import { resolveParagraphStyle, resolveRunStyle } from './engine/storyLayout';
 
 export interface EpubExportOptions {
   download?: boolean;
@@ -215,6 +216,26 @@ svg {
     for (const el of item.elements) {
       if (el.type === 'text') {
         const textEl = el as TextElement;
+        if (textEl.storyContent || textEl.textContent) {
+          // Export the semantic story once, so frame boundaries cannot split paragraphs or duplicate copy.
+          if (textEl.prevFrameId) continue;
+          const content = textEl.storyContent || textEl.textContent!;
+          for (const paragraph of content.paragraphs) {
+            const style = resolveParagraphStyle(paragraph, state.paragraphStyles);
+            const semantic = style?.pdfTag;
+            const tag = semantic && /^H[1-6]$/.test(semantic) ? semantic.toLowerCase() : semantic === 'Title' ? 'h1' : semantic === 'BlockQuote' ? 'blockquote' : 'p';
+            const runs = paragraph.runs.map(run => {
+              const format = resolveRunStyle(textEl, style, run, state.characterStyles || []);
+              let html = escapeXml(run.text).replace(/\n/g, '<br/>');
+              if (format.bold) html = `<strong>${html}</strong>`;
+              if (format.italic) html = `<em>${html}</em>`;
+              if (format.underline) html = `<u>${html}</u>`;
+              return `<span style="font-family:${escapeXml(fontFamilyCss(format.fontFamily.split(',')[0].replace(/['"]/g, '').trim()))}">${html}</span>`;
+            }).join('');
+            bodyContent += `  <${tag} class="text-${style?.alignment || textEl.alignment || 'left'}">${runs || '<br/>'}</${tag}>\n`;
+          }
+          continue;
+        }
         const processed = formatOpenTypeText(textEl.text, textEl.openTypeFeatures);
         const paragraphs = processed.split('\n');
         const alignClass = `text-${textEl.alignment || 'left'}`;
