@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.3] - 2026-10-31
+
+### Added
+- Paragraph keep rules, widow/orphan controls, and English/German/French dictionary hyphenation for formatted stories.
+- Paragraph font emphasis controls and EPUB language/flow hints.
+
+### Fixed
+- Retain the previous font when a new font cannot load; report failures in the style editor.
+- Verify the native application version in desktop release checks.
+
+## [1.2.2] - 2026-10-31
+
+### Added
+- Signed in-app updates with save-before-install protection.
+- Automatic story extension, paired facing spreads, chapter openings, sections, and running headers.
+
+### Fixed
+- Responsive footer spacing and mobile controls covering status information.
+- Keep generated pages with their chapter and preserve the current spread during pagination.
+- Select the Windows installer matching the release version instead of a cached older installer.
+
 ## [1.2.1] - 2026-10-30
 
 ### Fixed

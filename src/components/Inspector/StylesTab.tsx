@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useState, useRef } from 'preact/hooks';
 import { stateManager } from '../../state';
 import { fontManager } from '../../fontManager';
 import { ProjectState, ParagraphStyle, GrepStyleRule } from '../../types';
@@ -9,6 +9,8 @@ interface StylesTabProps {
 
 export function StylesTab({ state }: StylesTabProps) {
   const [editingStyleId, setEditingStyleId] = useState<string | null>(null);
+  const [fontError, setFontError] = useState('');
+  const fontRequests = useRef(new Map<string, number>());
 
   const activeSpread = state.spreads[state.activeSpreadIndex] || state.spreads[0];
   const selectedEl = activeSpread?.elements.find((el) => el.id === state.selectedElementId);
@@ -90,8 +92,17 @@ export function StylesTab({ state }: StylesTabProps) {
                     value={style.fontFamily}
                     onChange={async (e) => {
                       const val = (e.target as HTMLSelectElement).value;
-                      stateManager.updateParagraphStyle(style.id, { fontFamily: val });
-                      await fontManager.loadGoogleFont(val);
+                      const request = (fontRequests.current.get(style.id) || 0) + 1;
+                      fontRequests.current.set(style.id, request);
+                      setFontError('');
+                      try {
+                        const loaded = await fontManager.loadGoogleFont(val);
+                        if (fontRequests.current.get(style.id) !== request) return;
+                        if (!loaded) { setFontError(`Could not load ${val}. The previous font is retained.`); return; }
+                        stateManager.updateParagraphStyle(style.id, { fontFamily: val });
+                      } catch {
+                        if (fontRequests.current.get(style.id) === request) setFontError('Font loading failed. Try again when connected or import a local font.');
+                      }
                     }}
                   >
                     {fontManager.getAvailableFonts().map((f) => (
@@ -101,6 +112,30 @@ export function StylesTab({ state }: StylesTabProps) {
                     ))}
                   </select>
                 </label>
+
+                {fontError && <p role="alert" style={{ color: '#ff7878', fontSize: '11px' }}>{fontError}</p>}
+                <div className="publication-panel">
+                  <strong style={{ fontSize: '11px' }}>Paragraph flow</strong>
+                  {(['keepWithNext', 'keepTogether', 'bold', 'italic', 'hyphenate'] as const).map(key => (
+                    <label key={key} className="publication-check"><input type="checkbox" checked={!!style[key]}
+                      onChange={event => stateManager.updateParagraphStyle(style.id, { [key]: event.currentTarget.checked })}/>
+                      {{ keepWithNext: 'Keep with next paragraph', keepTogether: 'Keep paragraph together', bold: 'Bold', italic: 'Italic', hyphenate: 'Automatic hyphenation' }[key]}
+                    </label>
+                  ))}
+                  <label>Minimum lines at column bottom<select aria-label="Minimum lines at column bottom" value={style.orphanLines || 1}
+                    onChange={event => stateManager.updateParagraphStyle(style.id, { orphanLines: Number(event.currentTarget.value) })}>
+                    {[1,2,3,4].map(n => <option value={n} key={n}>{n === 1 ? 'Off (1 line)' : `${n} lines`}</option>)}
+                  </select></label>
+                  <label>Minimum lines at column top<select aria-label="Minimum lines at column top" value={style.widowLines || 1}
+                    onChange={event => stateManager.updateParagraphStyle(style.id, { widowLines: Number(event.currentTarget.value) })}>
+                    {[1,2,3,4].map(n => <option value={n} key={n}>{n === 1 ? 'Off (1 line)' : `${n} lines`}</option>)}
+                  </select></label>
+                  <label>Hyphenation language<select aria-label="Hyphenation language" value={style.language || 'en-US'}
+                    onChange={event => stateManager.updateParagraphStyle(style.id, { language: event.currentTarget.value as ParagraphStyle['language'] })}>
+                    <option value="en-US">English (US)</option><option value="de">German</option><option value="fr">French</option>
+                  </select></label>
+                  <p>Keep rules apply to formatted stories in canvas and PDF. Rules that cannot fit a whole empty column fall back to normal flow.</p>
+                </div>
 
                 <label className="full-label" style={{ marginBottom: '8px' }}>
                   PDF Tag (Accessibility):

@@ -71,6 +71,10 @@ const paragraphStyle = object({
   id: identifier, name: text, ...typography, lineHeight: positive,
   letterSpacingPt: number, color: text, alignment, snapToBaseline: boolean,
   grepStyles: optional(array(grepRule)),
+  keepWithNext: optional(boolean), keepTogether: optional(boolean),
+  orphanLines: optional(count), widowLines: optional(count),
+  hyphenate: optional(boolean), language: optional(choice('en-US', 'de', 'fr')),
+  bold: optional(boolean), italic: optional(boolean),
 });
 const textFormatting = {
   bold: optional(boolean), italic: optional(boolean), underline: optional(boolean),

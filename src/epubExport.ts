@@ -232,7 +232,8 @@ svg {
               if (format.underline) html = `<u>${html}</u>`;
               return `<span style="font-family:${escapeXml(fontFamilyCss(format.fontFamily.split(',')[0].replace(/['"]/g, '').trim()))}">${html}</span>`;
             }).join('');
-            bodyContent += `  <${tag} class="text-${style?.alignment || textEl.alignment || 'left'}">${runs || '<br/>'}</${tag}>\n`;
+            const flowCss = `orphans:${style.orphanLines || 1};widows:${style.widowLines || 1};break-inside:${style.keepTogether ? 'avoid' : 'auto'};break-after:${style.keepWithNext ? 'avoid' : 'auto'};hyphens:${style.hyphenate ? 'auto' : 'manual'}`;
+            bodyContent += `  <${tag} class="text-${style?.alignment || textEl.alignment || 'left'}" xml:lang="${style.language || 'en-US'}" lang="${style.language || 'en-US'}" style="${flowCss}">${runs || '<br/>'}</${tag}>\n`;
           }
           continue;
         }

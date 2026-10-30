@@ -1,4 +1,14 @@
-## Recto Studio 1.2.2
+## Recto Studio 1.2.3
+
+- Paragraph keep-with-next and keep-together controls for formatted stories.
+- Configurable widow/orphan minimums across columns and linked text frames.
+- Dictionary hyphenation for English (US), German and French, preserving manuscript text.
+- Paragraph bold/italic controls and safer font loading with visible failure feedback.
+- EPUB language and flow hints for compatible readers.
+
+**Updater test:** install 1.2.2 first, then choose **Check for updates → Install update** to reach 1.2.3.
+
+## Included from 1.2.2
 
 - Signed in-app updates: check, download, save pending work, install and restart.
 - Automatic story extension, paired facing spreads, chapter openings, sections and running headers.
@@ -18,8 +28,8 @@ Install this version manually once. Future releases can be installed through **C
 Recto Studio now runs as a standalone Windows application with its own window,
 app icon, and Start menu entry. End users do not need Node.js, npm, or a terminal.
 
-- **Recommended:** download `Recto-Studio-1.2.2-Windows-x64-setup.exe`, install it, and open Recto Studio from the Start menu.
-- **Portable:** extract `Recto-Studio-1.2.2-Windows-x64-portable.zip` and open `Recto Studio.exe`. Requires an existing WebView2 runtime.
+- **Recommended:** download `Recto-Studio-1.2.3-Windows-x64-setup.exe`, install it, and open Recto Studio from the Start menu.
+- **Portable:** extract `Recto-Studio-1.2.3-Windows-x64-portable.zip` and open `Recto Studio.exe`. Requires an existing WebView2 runtime.
 - Native Open/Save dialogs for publications and exports, with safe replacement of saved files.
 - Local autosave and bundled editor assets; no local server or browser tab is required.
 

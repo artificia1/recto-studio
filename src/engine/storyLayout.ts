@@ -1,5 +1,6 @@
 import type { CanvasElement, CharacterStyle, ParagraphStyle, StoryContent, StoryParagraph, StoryRun, TextElement, TextFormatting } from '../types';
 import { fontManager } from '../fontManager';
+import { hyphenateLanguage } from './languageHyphenation';
 
 export interface RunStyle extends TextFormatting {
   fontFamily: string;
@@ -8,7 +9,7 @@ export interface RunStyle extends TextFormatting {
   letterSpacingPt: number;
 }
 export interface StorySegment { text: string; x: number; width: number; style: RunStyle }
-export interface StoryLine { segments: StorySegment[]; y: number; height: number; start: number; end: number }
+export interface StoryLine { segments: StorySegment[]; y: number; height: number; start: number; end: number; column?: number }
 export type StoryMeasure = (text: string, style: RunStyle) => number;
 export interface StoryLayoutOptions {
   obstacles?: CanvasElement[];
@@ -55,9 +56,9 @@ export function resolveRunStyle(frame: TextElement, paragraph: Partial<Paragraph
 }
 
 /** Compose a formatted slice, returning the exact source offset that fits. Never rewrites copy. */
-export function layoutStory(content: StoryContent, frame: TextElement, styles: ParagraphStyle[],
+function composeStory(content: StoryContent, frame: TextElement, styles: ParagraphStyle[],
   characters: CharacterStyle[] = [], measure: StoryMeasure = measureStoryText,
-  reserveBottom = 0, options: StoryLayoutOptions = {}): { lines: StoryLine[]; consumed: number; overset: boolean } {
+  reserveBottom = 0, options: StoryLayoutOptions = {}, breaks = new Set<number>()): { lines: StoryLine[]; consumed: number; overset: boolean } {
   const padding = frame.paddingMm ?? 2;
   const cols = frame.spanColumns ? 1 : Math.max(1, frame.splitColumns || frame.columns || 1);
   const gutter = frame.columnGutterMm ?? 4;
@@ -65,6 +66,7 @@ export function layoutStory(content: StoryContent, frame: TextElement, styles: P
   const bottom = frame.height - padding - reserveBottom;
   const lines: StoryLine[] = [];
   let column = 0, y = padding, offset = 0, consumed = 0;
+  const appliedBreaks = new Set<number>();
   const total = content.paragraphs.reduce((n, p) => n + p.runs.reduce((m, r) => m + r.text.length, 0) + 1, -1);
   if (width <= 0 || bottom <= padding) return { lines, consumed, overset: total > 0 };
 
@@ -79,6 +81,11 @@ export function layoutStory(content: StoryContent, frame: TextElement, styles: P
     let availableWidth = width, inset = 0;
     const prepare = (): boolean => {
       if (segments.length) return true;
+      if (breaks.has(lineStart) && !appliedBreaks.has(lineStart)) {
+        appliedBreaks.add(lineStart);
+        column++;
+        y = padding;
+      }
       for (;;) {
         const grid = options.baselineGrid;
         if ((style?.snapToBaseline ?? frame.snapToBaseline) && grid?.enabled) {
@@ -129,7 +136,7 @@ export function layoutStory(content: StoryContent, frame: TextElement, styles: P
           if (part === ' ') shift += extra;
         }
       }
-      lines.push({ segments: positioned, y, height, start: lineStart, end: offset });
+      lines.push({ segments: positioned, y, height, start: lineStart, end: offset, column });
       y += height;
       consumed = offset;
       segments = []; lineWidth = 0; lineStart = offset; height = paragraphHeight;
@@ -138,14 +145,35 @@ export function layoutStory(content: StoryContent, frame: TextElement, styles: P
     for (const run of paragraph.runs) {
       const runStyle = resolveRunStyle(frame, style, run, characters);
       // Keep ordinary words together; split overlong tokens by Unicode code point.
-      for (const token of run.text.match(/[^\S\n]+|\n|[^\s]+/gu) || []) {
+      for (let token of run.text.match(/[^\S\n]+|\n|[^\s]+/gu) || []) {
         if (!prepare()) return { lines, consumed, overset: true };
         if (token === '\n') {
           offset++;
           if (!flush(true)) return { lines, consumed, overset: true };
           continue;
         }
-        const tokenWidth = measure(token, runStyle) + Array.from(token).length * runStyle.letterSpacingPt * PT;
+        const measured = (text: string) => measure(text, runStyle) + Array.from(text).length * runStyle.letterSpacingPt * PT;
+        if (style.hyphenate && /^\p{L}+$/u.test(token)) {
+          while (measured(token) > availableWidth - lineWidth + 0.0001) {
+            const syllables = hyphenateLanguage(token, style.language);
+            let prefix = '', fitting = '';
+            for (const part of syllables.slice(0, -1)) {
+              prefix += part;
+              if (measured(prefix + '-') <= availableWidth - lineWidth) fitting = prefix;
+            }
+            if (!fitting) {
+              if (!lineWidth) break;
+              if (!flush(false) || !prepare()) return { lines, consumed, overset: true };
+              continue;
+            }
+            segments.push({ text: fitting + '-', x: lineWidth, width: measured(fitting + '-'), style: runStyle });
+            lineWidth += measured(fitting + '-');
+            offset += fitting.length;
+            token = token.slice(fitting.length);
+            if (!flush(false) || !prepare()) return { lines, consumed, overset: true };
+          }
+        }
+        const tokenWidth = measured(token);
         if (lineWidth && lineWidth + tokenWidth > availableWidth && !/^\s+$/.test(token)) {
           if (!flush(false)) return { lines, consumed, overset: true };
           if (!prepare()) return { lines, consumed, overset: true };
@@ -168,4 +196,71 @@ export function layoutStory(content: StoryContent, frame: TextElement, styles: P
     if (!flush(true)) return { lines, consumed, overset: true };
   }
   return { lines, consumed: Math.max(0, total), overset: false };
+}
+
+/** Move breakpoints rather than changing manuscript text or inserting blank paragraphs. */
+export function layoutStory(content: StoryContent, frame: TextElement, styles: ParagraphStyle[],
+  characters: CharacterStyle[] = [], measure: StoryMeasure = measureStoryText,
+  reserveBottom = 0, options: StoryLayoutOptions = {}): { lines: StoryLine[]; consumed: number; overset: boolean } {
+  const breaks = new Set<number>();
+  const padding = frame.paddingMm ?? 2;
+  const capacity = frame.height - padding * 2 - reserveBottom;
+  let result = composeStory(content, frame, styles, characters, measure, reserveBottom, options, breaks);
+  let sourceOffset = 0;
+  const paragraphs = content.paragraphs.map(paragraph => {
+    const start = sourceOffset;
+    sourceOffset += paragraph.runs.reduce((n, run) => n + run.text.length, 0) + 1;
+    return { paragraph, start, end: sourceOffset - 1, style: resolveParagraphStyle(paragraph, styles) };
+  });
+  const counts = new Map<number, StoryLine[]>();
+  const allLines = (index: number) => {
+    if (!counts.has(index)) {
+      const copy = { ...frame, columns: 1, splitColumns: 1, spanColumns: true,
+        width: (frame.width - padding * 2 - ((frame.spanColumns ? 1 : Math.max(1, frame.splitColumns || frame.columns)) - 1) * frame.columnGutterMm) / (frame.spanColumns ? 1 : Math.max(1, frame.splitColumns || frame.columns)) + padding * 2,
+        height: Math.max(100000, frame.height) };
+      counts.set(index, composeStory({ version: 1, paragraphs: [paragraphs[index].paragraph] }, copy, styles, characters, measure).lines);
+    }
+    return counts.get(index)!;
+  };
+  // Each pass moves at least one breakpoint; the cap also bounds pathological keep chains.
+  for (let pass = 0; pass < Math.min(128, paragraphs.length * 4 + 4); pass++) {
+    let move: number | undefined;
+    for (let index = 0; index < paragraphs.length && move === undefined; index++) {
+      const { start, end, style } = paragraphs[index];
+      if (!style.keepTogether && !style.keepWithNext && !style.orphanLines && !style.widowLines) continue;
+      const visible = result.lines.filter(line => line.start >= start && line.start <= end);
+      if (!visible.length) continue;
+      const full = allLines(index);
+      const fullHeight = full.reduce((n, line) => n + line.height, 0);
+      const groups = new Map<number, StoryLine[]>();
+      for (const line of visible) { const column = line.column || 0; groups.set(column, [...(groups.get(column) || []), line]); }
+      const split = groups.size > 1 || result.consumed < end;
+      if (style.keepTogether && split && fullHeight <= capacity && visible[0].y > padding + 0.001) move = start;
+      let shown = 0;
+      for (const group of groups.values()) {
+        shown += group.length;
+        const remaining = Math.max(0, full.length - shown);
+        if (!remaining) continue;
+        const orphans = Math.min(full.length, Math.max(1, style.orphanLines || 1));
+        const widows = Math.min(full.length, Math.max(1, style.widowLines || 1));
+        if (group.length < orphans && group[0].y > padding + 0.001) { move = group[0].start; break; }
+        if (remaining < widows && group.length > 1) {
+          const retain = group.length - (widows - remaining);
+          const candidate = retain >= orphans ? group[retain] : group[0];
+          if (candidate && (candidate.y > padding + 0.001)) { move = candidate.start; break; }
+        }
+      }
+      if (style.keepWithNext && index + 1 < paragraphs.length && result.consumed >= end) {
+        const last = visible.at(-1)!;
+        const next = result.lines.filter(line => line.start >= paragraphs[index + 1].start && line.column === last.column);
+        const minimum = Math.max(1, paragraphs[index + 1].style.orphanLines || 1);
+        const nextLines = allLines(index + 1).slice(0, minimum);
+        if (next.length < minimum && fullHeight + nextLines.reduce((n, line) => n + line.height, 0) <= capacity && visible[0].y > padding + 0.001) move = start;
+      }
+    }
+    if (move === undefined || breaks.has(move)) break;
+    breaks.add(move);
+    result = composeStory(content, frame, styles, characters, measure, reserveBottom, options, breaks);
+  }
+  return result;
 }

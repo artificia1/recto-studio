@@ -82,8 +82,26 @@ Supported tokens include `{{chapterTitle}}`, `{{sectionTitle}}`, `{{docTitle}}`,
 Canvas and PDF resolve headings from formatted stories in physical page order.
 Master headers are not currently included in EPUB or flipbook output.
 
-Automatic removal of empty pages, keep rules, and widow/orphan controls remain
-follow-up work.
+## Paragraph composition
+
+In **Styles → Edit → Paragraph flow**, control keep-with-next, keep-together,
+minimum lines at column bottom (orphans), and minimum lines at column top
+(widows). These rules apply to formatted stories across columns and linked
+frames in canvas/PDF. Automatic story extension responds to the resulting flow.
+Impossible keep rules fall back to normal flow rather than stalling pagination;
+complex wrap obstacles can produce conservative line estimates. Default styles
+retain their existing flow until controls are enabled.
+
+Automatic hyphenation offers English (US), German, and French dictionaries.
+Displayed break hyphens do not change the saved manuscript text or source offsets.
+Other languages retain ordinary word wrapping. EPUB carries language, hyphenation,
+keep and widow/orphan CSS; the reader decides its final pagination.
+
+Paragraph styles also expose bold/italic and retain the previous font if a new
+font cannot load. Custom fonts continue to use the import system documented in
+FONTS.md. Synthetic custom-font variants and variable-font axes retain the
+existing export limitations; these controls do not imply every face has separate
+bold/italic outlines. Automatic removal of empty pages remains follow-up work.
 
 ## Output and compatibility
 

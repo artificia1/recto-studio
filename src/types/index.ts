@@ -108,6 +108,14 @@ export interface GrepStyleRule {
 }
 
 export interface ParagraphStyle {
+  keepWithNext?: boolean;
+  keepTogether?: boolean;
+  orphanLines?: number;
+  widowLines?: number;
+  hyphenate?: boolean;
+  language?: 'en-US' | 'de' | 'fr';
+  bold?: boolean;
+  italic?: boolean;
   id: string;
   name: string;
   fontFamily: string;

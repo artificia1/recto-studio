@@ -27,6 +27,27 @@ test('loads and opens the editor without uncaught errors', async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test('persists paragraph keep rules, hyphenation language and font emphasis', async ({ page }) => {
+  await importProject(page);
+  await page.getByRole('button', { name: 'Styles', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit', exact: true }).first().click();
+  await page.getByLabel('Keep with next paragraph', { exact: true }).check();
+  await page.getByLabel('Keep paragraph together', { exact: true }).check();
+  await page.getByLabel('Automatic hyphenation', { exact: true }).check();
+  await page.getByLabel('Bold', { exact: true }).check();
+  await page.getByLabel('Minimum lines at column bottom', { exact: true }).selectOption('2');
+  await page.getByLabel('Minimum lines at column top', { exact: true }).selectOption('2');
+  await page.getByLabel('Hyphenation language', { exact: true }).selectOption('de');
+  const saved = await savedProject(page);
+  expect(saved.paragraphStyles[0]).toMatchObject({ keepWithNext: true, keepTogether: true, hyphenate: true, bold: true, orphanLines: 2, widowLines: 2, language: 'de' });
+  await page.reload();
+  await page.getByRole('button', { name: 'Styles', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit', exact: true }).first().click();
+  await expect(page.getByLabel('Automatic hyphenation', { exact: true })).toBeChecked();
+  await expect(page.getByLabel('Hyphenation language', { exact: true })).toHaveValue('de');
+  await page.screenshot({ path: 'test-results/paragraph-flow-controls.png', fullPage: true });
+});
+
 test('keeps footer tool and display controls separate at desktop and narrow widths', async ({ page }) => {
   for (const width of [1440, 1366, 1024, 750]) {
     await page.setViewportSize({ width, height: 900 });
