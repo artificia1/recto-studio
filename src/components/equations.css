@@ -1,0 +1,20 @@
+.equation-overlay { position: fixed; inset: 0; z-index: 10000; display: grid; place-items: center; padding: 20px; background: #0009; }
+.equation-dialog { width: min(650px, 100%); max-height: calc(100dvh - 40px); overflow-y: auto; color: var(--text-primary, #eee); background: var(--panel-bg, #242424); border: 1px solid var(--border-color, #444); border-radius: 10px; box-shadow: 0 20px 70px #0008; }
+.equation-dialog header, .equation-dialog footer { display: flex; align-items: center; gap: 12px; padding: 16px 22px; }
+.equation-dialog header { justify-content: space-between; border-bottom: 1px solid var(--border-color, #444); }
+.equation-dialog h2 { margin: 0 0 6px; font-size: 18px; font-weight: 600; }
+.equation-dialog p { margin: 0; line-height: 1.5; }
+.equation-dialog header p, .equation-help, .equation-size { color: var(--text-secondary, #aaa); font-size: 12px; }
+.equation-body { padding: 18px 22px; display: grid; gap: 14px; }
+.equation-body label { display: flex; flex-direction: column; gap: 7px; font-size: 12px; font-weight: 500; }
+.equation-body input, .equation-body select, .equation-body textarea { width: 100%; box-sizing: border-box; min-height: 32px; }
+.equation-body textarea { resize: vertical; font: 13px/1.6 Consolas, monospace; padding: 10px; }
+.equation-settings { display: grid; grid-template-columns: 1fr 1fr 1.4fr; gap: 14px; }
+.equation-preview { min-height: 120px; padding: 24px; display: grid; place-items: center; overflow: auto; background: #fff; color: #555; border-radius: 6px; }
+.equation-preview img { max-width: 100%; height: auto; }
+.equation-error { color: #ffb3a8; font-size: 12px; }
+.equation-body .equation-check { flex-direction: row; align-items: center; }
+.equation-check input { width: auto; min-height: auto; }
+.equation-dialog footer { border-top: 1px solid var(--border-color, #444); flex-wrap: wrap; }
+.equation-dialog footer span { flex: 1; }
+@media (max-width: 480px) { .equation-overlay { padding: 8px; } .equation-dialog { max-height: calc(100dvh - 16px); } .equation-settings { gap: 8px; } }

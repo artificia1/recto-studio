@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.4] - 2026-10-31
+
+### Added
+- Editable LaTeX equation objects with live previews, formula templates, size, colour and math-style controls.
+- INDD import guidance and an IDML export script for a local InDesign installation.
+- Vector PDF output and standalone SVG downloads with bundled math glyphs.
+- Accessible equation descriptions and source-preserving save/reopen and undo.
+
+### Fixed
+- Honour image alt text in EPUB exports.
+- Clearly separate INDD fragment recovery from editable IDML layout import and retain all detected text fragments.
+- Treat SVG artwork as scalable vectors instead of flagging it as a low-resolution photo.
+- Clear equation metadata when replacing artwork with a regular image.
+
 ## [1.2.3] - 2026-10-31
 
 ### Added

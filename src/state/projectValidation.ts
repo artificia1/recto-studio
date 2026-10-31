@@ -100,6 +100,7 @@ const elementSchemas: Record<string, Schema> = {
     grepStyles: optional(array(grepRule)),
   },
   image: {
+    equation: optional(object({ latex: text, fontSizePt: positive, color: text, displayMode: boolean })),
     src: text, fitMode: choice('fill', 'fit', 'frameToContent', 'contentToFrame', 'center', 'stretch'),
     borderColor: text, borderWidthMm: nonnegative, altText: optional(text), proxySrc: optional(text),
   },

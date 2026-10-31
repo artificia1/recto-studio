@@ -503,7 +503,27 @@ export async function exportDocumentToPdf(
       } else if (el.type === 'image') {
         const img = el as ImageElement;
         const fullResSrc = (assetStore.getFullResolution(img.assetId || img.src) as string) || img.src;
-        if (fullResSrc && (fullResSrc.startsWith('data:image') || fullResSrc.startsWith('http') || fullResSrc.startsWith('blob:'))) {
+        if (img.equation) {
+          if (typeof DOMParser === 'undefined') throw new Error('Equation PDF export requires the Recto desktop app or a browser. Headless exports can use EPUB or SVG.');
+          // Re-typeset the stored source, never inject SVG supplied by an imported project.
+          const { renderEquation } = await import('../engine/equations');
+          const { svg2pdf } = await import('svg2pdf.js');
+          const rendered = renderEquation(img.equation);
+          const svg = new DOMParser().parseFromString(rendered.svg, 'image/svg+xml').documentElement;
+          const fit = calculateImageFitting(elX, elY, img.width, img.height, rendered.widthMm, rendered.heightMm, img.fitMode || 'fit');
+          doc.saveGraphicsState();
+          try {
+            doc.rect(elX, elY, img.width, img.height, null);
+            doc.clip();
+            doc.discardPath();
+            await svg2pdf(svg, doc, { x: fit.drawX, y: fit.drawY, width: fit.drawW, height: fit.drawH });
+          } finally { doc.restoreGraphicsState(); }
+          if (img.borderWidthMm > 0 && img.borderColor !== 'transparent') {
+            applyCmykDrawColor(doc, img.borderColor);
+            doc.setLineWidth(img.borderWidthMm);
+            doc.rect(elX, elY, img.width, img.height, 'S');
+          }
+        } else if (fullResSrc && (fullResSrc.startsWith('data:image') || fullResSrc.startsWith('http') || fullResSrc.startsWith('blob:'))) {
           try {
             let imgW = img.originalWidth || 0;
             let imgH = img.originalHeight || 0;

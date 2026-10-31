@@ -55,6 +55,15 @@ try {
   await page.reload();
   await page.getByTitle('Click to rename document').waitFor();
   if (await page.getByTitle('Click to rename document').inputValue() !== verification.title) throw new Error('Desktop autosave did not recover after reload.');
+  if (expectedVersion.localeCompare('1.2.4', undefined, { numeric: true }) >= 0) {
+    await page.getByTitle('File Management, Project IO, and Document Imports').click();
+    await page.getByTitle('Insert an editable LaTeX equation', { exact: true }).click();
+    const equation = page.getByRole('dialog', { name: 'Insert equation' });
+    await equation.getByLabel('LaTeX source').fill(String.raw`\frac{1}{2} + \sqrt{x}`);
+    await equation.getByRole('button', { name: 'Insert equation', exact: true }).click();
+    const source = await page.evaluate(() => window.recto.stateManager.getActiveSpread().elements.find(element => element.equation)?.equation.latex);
+    if (source !== String.raw`\frac{1}{2} + \sqrt{x}`) throw new Error('Native equation editor did not retain its source.');
+  }
   await mkdir('test-results/desktop', { recursive: true });
   await page.screenshot({ path: 'test-results/desktop/windows-app.png', fullPage: true });
   if (errors.length) throw new Error(errors.join('\n'));

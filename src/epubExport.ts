@@ -7,7 +7,7 @@
 // Assembles semantic XHTML, responsive CSS, OPF packages, and nav documents
 
 import { ProjectState, CanvasElement, TextElement, ImageElement, ShapeElement, TableElement, VectorPathElement, Page } from './types';
-import { createZipArchive } from './zip';
+import { createZipArchive, base64ToUint8Array } from './zip';
 import { formatOpenTypeText } from './canvas';
 import { resolveParagraphStyle, resolveRunStyle } from './engine/storyLayout';
 
@@ -56,6 +56,7 @@ export function generateEpubPackage(state: ProjectState): Record<string, string 
   // OCF requires this to precede every other ZIP entry, including fonts.
   files['mimetype'] = 'application/epub+zip';
   const fontManifest: string[] = [];
+  const equationManifest: string[] = [];
   const fontStyles = (state.embeddedFonts || []).map((font, index) => {
     const extension = font.fileName.match(/\.(ttf|otf|woff2?)$/i)?.[1].toLowerCase() || 'ttf';
     const location = `fonts/font-${index}.${extension}`;
@@ -285,7 +286,14 @@ svg {
       } else if (el.type === 'image') {
         const img = el as ImageElement;
         if (img.src) {
-          bodyContent += `  <figure>\n    <img src="${escapeXml(img.src)}" alt="${escapeXml(img.caption || 'Publication image')}"/>\n`;
+          let imageSource = img.src;
+          if (img.equation && img.src.startsWith('data:image/svg+xml;base64,')) {
+            const id = `equation-${equationManifest.length + 1}`;
+            imageSource = `images/${id}.svg`;
+            files[`OEBPS/${imageSource}`] = base64ToUint8Array(img.src.split(',')[1]);
+            equationManifest.push(`    <item id="${id}" href="${imageSource}" media-type="image/svg+xml"/>`);
+          }
+          bodyContent += `  <figure>\n    <img src="${escapeXml(imageSource)}" alt="${escapeXml(img.altText || img.caption || 'Publication image')}"/>\n`;
           if (img.caption) {
             bodyContent += `    <figcaption class="caption">${escapeXml(img.caption)}</figcaption>\n`;
           }
@@ -361,6 +369,7 @@ ${navLinks}
     '    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>',
     '    <item id="css" href="styles.css" media-type="text/css"/>',
     ...fontManifest,
+    ...equationManifest,
     ...pageItems.map((p) => `    <item id="${p.id}" href="${p.filename}" media-type="application/xhtml+xml"${String(files[`OEBPS/${p.filename}`]).includes("<svg ") ? ' properties="svg"' : ''}/>` ),
   ].join('\n');
 

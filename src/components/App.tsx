@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { lazy, Suspense } from 'preact/compat';
 import type { IngestedStory } from '../contentImport';
-import type { TextElement } from '../types';
+import type { TextElement, ImageElement } from '../types';
 import { storyText } from '../engine/storyContent';
 import { useProjectState } from '../hooks/useProjectState';
 import { TopBar } from './TopBar';
@@ -21,6 +21,8 @@ import { SpreadCanvas } from '../canvas';
 import { stateManager } from '../state';
 import { fontManager } from '../fontManager';
 const ManuscriptImportModal = lazy(() => import('./ManuscriptImportModal').then(module => ({ default: module.ManuscriptImportModal })));
+const EquationModal = lazy(() => import('./EquationModal').then(module => ({ default: module.EquationModal })));
+const InddImportModal = lazy(() => import('./InddImportModal').then(module => ({ default: module.InddImportModal })));
 
 export function App() {
   const state = useProjectState();
@@ -33,6 +35,16 @@ export function App() {
   const [showStoryEditor, setShowStoryEditor] = useState(false);
   const [showBarcodeModal, setShowBarcodeModal] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
+  const [equationEditor, setEquationEditor] = useState<{ element?: ImageElement } | null>(null);
+  const [pendingIndd, setPendingIndd] = useState<File | null>(null);
+  useEffect(() => {
+    const edit = () => {
+      const selected = stateManager.getElementById(stateManager.getState().selectedElementId || '');
+      if (selected?.type === 'image' && selected.equation) setEquationEditor({ element: selected });
+    };
+    window.addEventListener('recto:edit-equation', edit);
+    return () => window.removeEventListener('recto:edit-equation', edit);
+  }, []);
   const [showScriptsModal, setShowScriptsModal] = useState(false);
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const [inspectorTab, setInspectorTab] = useState<'properties' | 'styles' | 'pages' | 'layers' | 'links' | 'templates' | 'setup'>('properties');
@@ -177,11 +189,10 @@ export function App() {
     const name = file.name.toLowerCase();
 
     if (name.endsWith('.idml') || name.endsWith('.indd')) {
-      const buffer = await file.arrayBuffer();
       if (name.endsWith('.indd')) {
-        await stateManager.loadFromIndd(buffer, file.name);
+        setPendingIndd(file);
       } else {
-        await stateManager.loadFromIdml(buffer, file.name);
+        await stateManager.loadFromIdml(await file.arrayBuffer(), file.name);
       }
       return;
     }
@@ -326,6 +337,8 @@ export function App() {
         onOpenStoryEditor={() => setShowStoryEditor(true)}
         onOpenBarcode={() => setShowBarcodeModal(true)}
         onOpenQr={() => setShowQrModal(true)}
+        onOpenEquation={() => setEquationEditor({})}
+        onOpenIndd={setPendingIndd}
         onOpenScripts={() => setShowScriptsModal(true)}
         onOpenDocumentSetup={() => setInspectorTab('setup')}
       />
@@ -515,6 +528,12 @@ export function App() {
         onClose={() => setShowBarcodeModal(false)}
       />
 
+      {equationEditor && <Suspense fallback={<div className="modal-overlay" role="status">Loading equation editor…</div>}>
+        <EquationModal element={equationEditor.element} onClose={() => setEquationEditor(null)} />
+      </Suspense>}
+      {pendingIndd && <Suspense fallback={<div role="status">Loading import options…</div>}>
+        <InddImportModal file={pendingIndd} onClose={() => setPendingIndd(null)} />
+      </Suspense>}
       <QrCodeModal
         isOpen={showQrModal}
         onClose={() => setShowQrModal(false)}

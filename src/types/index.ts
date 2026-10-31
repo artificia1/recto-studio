@@ -353,6 +353,8 @@ export interface CopyfitResult {
 export type ImageFitMode = 'fill' | 'fit' | 'frameToContent' | 'contentToFrame' | 'center' | 'stretch';
 
 export interface ImageElement extends BaseElement {
+  /** Editable math source; src holds its portable, self-contained SVG rendering. */
+  equation?: EquationSource;
   type: 'image';
   src: string;
   proxySrc?: string;
@@ -381,6 +383,13 @@ export interface ImageElement extends BaseElement {
   }[];
   activePsdLayerIds?: number[];
   alphaContour?: Array<{ minX: number; maxX: number }>;
+}
+
+export interface EquationSource {
+  latex: string;
+  fontSizePt: number;
+  color: string;
+  displayMode: boolean;
 }
 
 export type ShapeKind = 'rectangle' | 'ellipse' | 'line';

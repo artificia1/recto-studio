@@ -3,16 +3,13 @@
  * Copyright (c) 2022-2026 Abhinav. All rights reserved.
  * Licensed under the MIT License.
  *
- * Deep Adobe InDesign (.indd) Binary Reverse Engineering & Carving Engine.
- * Implements clean-room binary parsing of:
- * 1. Proprietary 16-byte Master GUID & File Header Subtype
- * 2. Endianness & Internal InDesign Major Version Matrix (CS through CC 2026)
- * 3. Contiguous 4096-byte Database Sector Geometry
- * 4. Plaintext XMP Metadata Stream & Base64 JPEG Thumbnail Decoding
- * 5. Heuristic Sector-Scanning UTF-16LE Story Carving
+ * Limited INDD diagnostics and content recovery. This is not a native layout parser.
+ * XMP and a thumbnail may be readable; text carving is heuristic and incomplete.
+ * Header/version/sector interpretations are diagnostic guesses, not layout records.
  */
 
-import { CanvasElement, ImageElement, TextElement, ProjectState, Spread, ParagraphStyle, DEFAULT_LAYERS } from '../types';
+import { CanvasElement, ImageElement, TextElement, ProjectState } from '../types';
+import { INITIAL_STATE } from '../state/defaults';
 
 export interface InddFontInfo {
   name: string;
@@ -92,29 +89,8 @@ export function isInddBuffer(data: Uint8Array | ArrayBuffer): boolean {
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
   if (bytes.length < 16) return false;
 
-  // 1. Direct 8-byte and 16-byte GUID prefix check
-  let match = true;
-  for (let i = 0; i < 8; i++) {
-    if (bytes[i] !== INDD_MAGIC_GUID[i]) {
-      match = false;
-      break;
-    }
-  }
-  if (match) return true;
-
-  // 2. Subtype identifier check (DOCUMENT / BOOKBOOK / LIBRARY )
-  const headerSlice = new TextDecoder('latin1').decode(bytes.slice(0, 128));
-  if (headerSlice.includes('DOCUMENT') || headerSlice.includes('BOOKBOOK') || headerSlice.includes('LIBRARY ')) {
-    return true;
-  }
-
-  // 3. XMP format signature check
-  const snippet = new TextDecoder('utf-8', { fatal: false }).decode(bytes.slice(0, Math.min(bytes.length, 32768)));
-  if (snippet.includes('application/x-indesign') || (snippet.includes('xmpTPg:') && snippet.includes('Adobe InDesign'))) {
-    return true;
-  }
-
-  return false;
+  // Plain words or an XMP snippet alone do not establish a native document.
+  return INDD_MAGIC_GUID.every((byte, index) => bytes[index] === byte);
 }
 
 export function parseInddBinaryHeader(data: Uint8Array | ArrayBuffer): InddBinaryHeader | null {
@@ -122,10 +98,7 @@ export function parseInddBinaryHeader(data: Uint8Array | ArrayBuffer): InddBinar
   if (bytes.length < 36) return null;
 
   // Verify initial GUID bytes
-  if (bytes[0] !== 0x06 || bytes[1] !== 0x06 || bytes[2] !== 0xed || bytes[3] !== 0xf5) {
-    // If not matching exact GUID at 0, check if file is an INDD variant
-    if (!isInddBuffer(bytes)) return null;
-  }
+  if (!isInddBuffer(bytes)) return null;
 
   const guidHex = Array.from(bytes.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join('');
   const guid = `${guidHex.slice(0, 8)}-${guidHex.slice(8, 12)}-${guidHex.slice(12, 16)}-${guidHex.slice(16, 20)}-${guidHex.slice(20, 32)}`;
@@ -191,7 +164,7 @@ export function parseInddMetadata(data: Uint8Array | ArrayBuffer): InddMetadata 
 
   const result: InddMetadata = {
     isIndd,
-    pageCount: 1,
+    pageCount: 0,
     fonts: [],
     swatches: [],
   };
@@ -282,6 +255,11 @@ export function carveUtf16Stories(data: Uint8Array | ArrayBuffer): string[] {
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
   const stories: string[] = [];
   const minCharLength = 12;
+  const decodeChars = (chars: number[]) => {
+    let result = '';
+    for (let index = 0; index < chars.length; index += 8192) result += String.fromCharCode(...chars.slice(index, index + 8192));
+    return result.trim();
+  };
 
   // Scan both even and odd phase offsets to catch unaligned streams
   for (const startOffset of [0, 1]) {
@@ -304,7 +282,7 @@ export function carveUtf16Stories(data: Uint8Array | ArrayBuffer): string[] {
         inString = true;
       } else {
         if (inString && currentChars.length >= minCharLength) {
-          const str = String.fromCharCode(...currentChars).trim();
+          const str = decodeChars(currentChars);
           if (str.length >= minCharLength && !str.startsWith('<?xml') && !str.startsWith('<x:') && !str.includes('xmlns:')) {
             if (/\b[a-zA-Z]{3,}\b/.test(str)) {
               stories.push(str);
@@ -317,7 +295,7 @@ export function carveUtf16Stories(data: Uint8Array | ArrayBuffer): string[] {
     }
 
     if (currentChars.length >= minCharLength) {
-      const str = String.fromCharCode(...currentChars).trim();
+      const str = decodeChars(currentChars);
       if (str.length >= minCharLength && !str.startsWith('<') && /\b[a-zA-Z]{3,}\b/.test(str)) {
         stories.push(str);
       }
@@ -400,8 +378,8 @@ export function buildInddElements(
 
   // Add metadata annotation banner
   const title = metadata.title || 'InDesign Project';
-  const fontsList = metadata.fonts.map(f => f.name).slice(0, 4).join(', ') || 'Standard OpenType';
-  const swatchesList = metadata.swatches.map(s => s.name).slice(0, 4).join(', ') || 'CMYK Process';
+  const fontsList = metadata.fonts.map(f => f.name).slice(0, 4).join(', ') || '(not listed)';
+  const swatchesList = metadata.swatches.map(s => s.name).slice(0, 4).join(', ') || '(not listed)';
 
   const metaEl: TextElement = {
     id: `indd-meta-${Date.now()}`,
@@ -416,7 +394,7 @@ export function buildInddElements(
     opacity: 1,
     zIndex: 2,
     locked: false,
-    text: `ADOBE INDESIGN INGESTION: ${title.toUpperCase()}\nPages: ${metadata.pageCount} | Tool: ${metadata.creatorTool || 'Adobe InDesign'}\nFonts: ${fontsList}\nColors: ${swatchesList}`,
+    text: `RECOVERED CONTENT: ${title}\nOriginal layout unavailable. XMP page count: ${metadata.pageCount || 'unknown'}. This is an A4 recovery workspace.\nFonts listed in metadata: ${fontsList}\nColours listed in metadata: ${swatchesList}`,
     fontFamily: 'sans-serif',
     fontSizePt: 8,
     lineHeight: 1.35,
@@ -435,226 +413,53 @@ export function buildInddElements(
   return elements;
 }
 
-/**
- * Parses a native binary Adobe InDesign (.indd) file directly into a full ProjectState,
- * extracting page geometry, embedded visual previews, carved UTF-16LE stories,
- * paragraph styles, swatches, and metadata.
- */
-export function parseInddToProjectState(
-  data: Uint8Array | ArrayBuffer,
-  fileName?: string
-): ProjectState {
+/** Build a labelled recovery workspace, never an imitation of the original layout. */
+export function parseInddToProjectState(data: Uint8Array | ArrayBuffer, fileName?: string): ProjectState {
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  if (!isInddBuffer(bytes) || bytes.length < 36) throw new Error('This file has no valid INDD signature.');
+  if (bytes.length > 128 * 1024 * 1024) throw new Error('Recovery supports files up to 128 MB. Export IDML for larger documents.');
   const metadata = parseInddMetadata(bytes);
-  const stories = carveUtf16Stories(bytes);
-
-  const docTitle = metadata.title || fileName?.replace(/\.[^/.]+$/, '') || 'InDesign Project';
-  const pageWidthMm = 210;
-  const pageHeightMm = 297;
-  const facingPages = (metadata.pageCount || 1) > 1;
-
-  const spreads: Spread[] = [];
-
-  // Spread 0: Page 1 (Cover / Recto)
-  const page1Id = 'indd-p-1';
-  const page1Elements: CanvasElement[] = buildInddElements(metadata, page1Id, pageWidthMm, pageHeightMm);
-
-  if (stories.length > 0 && !metadata.thumbnailDataUrl) {
-    page1Elements.push({
-      id: `indd-story-1-${Date.now()}`,
-      name: 'InDesign Carved Story',
-      type: 'text',
-      pageId: page1Id,
-      x: 20,
-      y: 20,
-      width: pageWidthMm - 40,
-      height: pageHeightMm - 70,
-      rotation: 0,
-      opacity: 1,
-      zIndex: 5,
-      locked: false,
-      text: stories[0],
-      fontFamily: metadata.fonts[0]?.family || 'Merriweather, Georgia, serif',
-      fontSizePt: 10,
-      lineHeight: 1.4,
-      letterSpacingPt: 0,
-      color: '#1a1a1a',
-      alignment: 'justify',
-      columns: 2,
-      columnGutterMm: 5,
-      backgroundColor: 'transparent',
-      borderColor: 'transparent',
-      borderWidthMm: 0,
-      paddingMm: 2,
-    });
+  const fragments = carveUtf16Stories(bytes);
+  if (!fragments.length && !metadata.thumbnailDataUrl) {
+    throw new Error('No readable text fragments or preview were recovered. Export IDML from InDesign to import the document.');
   }
-
-  spreads.push({
-    id: 'indd-spread-0',
-    spreadIndex: 0,
-    pages: [{ id: page1Id, pageNumber: 1, side: facingPages ? 'right' : 'single' }],
-    elements: page1Elements,
-  });
-
-  // If facing pages or pageCount > 1, create Spread 1 (Pages 2 & 3)
-  if (facingPages) {
-    const page2Id = 'indd-p-2';
-    const page3Id = 'indd-p-3';
-    const spread1Elements: CanvasElement[] = [];
-
-    const storyP2 = stories.length > 0 ? (metadata.thumbnailDataUrl ? stories[0] : stories[1] || stories[0]) : '';
-    const storyP3 = stories.length > 1 ? (metadata.thumbnailDataUrl ? stories[1] : stories[2] || '') : '';
-
-    if (storyP2) {
-      spread1Elements.push({
-        id: `indd-story-p2-${Date.now()}`,
-        name: 'InDesign Feature Article (Left)',
-        type: 'text',
-        pageId: page2Id,
-        x: 18,
-        y: 20,
-        width: pageWidthMm - 43,
-        height: pageHeightMm - 40,
-        rotation: 0,
-        opacity: 1,
-        zIndex: 5,
-        locked: false,
-        text: storyP2,
-        fontFamily: metadata.fonts[0]?.family || 'Merriweather, Georgia, serif',
-        fontSizePt: 10,
-        lineHeight: 1.4,
-        letterSpacingPt: 0,
-        color: '#1a1a1a',
-        alignment: 'justify',
-        columns: 2,
-        columnGutterMm: 5,
-        backgroundColor: 'transparent',
-        borderColor: 'transparent',
-        borderWidthMm: 0,
-        paddingMm: 2,
-      });
-    }
-
-    if (storyP3) {
-      spread1Elements.push({
-        id: `indd-story-p3-${Date.now()}`,
-        name: 'InDesign Feature Article (Right)',
-        type: 'text',
-        pageId: page3Id,
-        x: 25,
-        y: 20,
-        width: pageWidthMm - 43,
-        height: pageHeightMm - 40,
-        rotation: 0,
-        opacity: 1,
-        zIndex: 5,
-        locked: false,
-        text: storyP3,
-        fontFamily: metadata.fonts[1]?.family || metadata.fonts[0]?.family || 'Merriweather, Georgia, serif',
-        fontSizePt: 10,
-        lineHeight: 1.4,
-        letterSpacingPt: 0,
-        color: '#1a1a1a',
-        alignment: 'justify',
-        columns: 2,
-        columnGutterMm: 5,
-        backgroundColor: 'transparent',
-        borderColor: 'transparent',
-        borderWidthMm: 0,
-        paddingMm: 2,
-      });
-    }
-
-    spreads.push({
-      id: 'indd-spread-1',
-      spreadIndex: 1,
-      pages: [
-        { id: page2Id, pageNumber: 2, side: 'left' },
-        { id: page3Id, pageNumber: 3, side: 'right' },
-      ],
-      elements: spread1Elements,
-    });
+  const state = structuredClone(INITIAL_STATE);
+  state.settings = { ...state.settings, title: `${metadata.title || fileName?.replace(/\.[^/.]+$/, '') || 'InDesign document'} (Recovered content)`,
+    preset: 'A4', widthMm: 210, heightMm: 297, facingPages: false,
+    columnCount: 1, baselineGrid: { enabled: false, incrementPt: 12, startMm: 20 } };
+  state.spreads = [];
+  state.masterSpreads = [];
+  state.paragraphStyles = [];
+  state.characterStyles = [];
+  state.embeddedFonts = [];
+  state.crossReferences = [];
+  state.indexEntries = [];
+  state.comments = [];
+  state.selectedElementId = null;
+  state.selectedElementIds = [];
+  state.activeSpreadIndex = 0;
+  state.panX = 0; state.panY = 0; state.zoom = 0.85;
+  state.showBaselineGrid = false;
+  if (metadata.thumbnailDataUrl) {
+    state.spreads.push({ id: 'indd-preview', spreadIndex: 0,
+      pages: [{ id: 'indd-preview-page', pageNumber: 1, side: 'single' }],
+      elements: buildInddElements(metadata, 'indd-preview-page') });
   }
-
-  const paragraphStyles: ParagraphStyle[] = [
-    {
-      id: 'style-h1',
-      name: 'Headline (InDesign)',
-      fontFamily: metadata.fonts.find(f => f.name.includes('Bold') || f.name.includes('Black'))?.name || 'sans-serif',
-      fontSizePt: 24,
-      lineHeight: 1.2,
-      letterSpacingPt: -0.5,
-      color: '#0d99ff',
-      alignment: 'left',
-      snapToBaseline: true,
-      dropCapLines: 0,
-    },
-    {
-      id: 'style-body',
-      name: 'Body Text (InDesign)',
-      fontFamily: metadata.fonts[0]?.name || 'serif',
-      fontSizePt: 10,
-      lineHeight: 1.4,
-      letterSpacingPt: 0,
-      color: '#1a1a1a',
-      alignment: 'justify',
-      snapToBaseline: true,
-      dropCapLines: 0,
-    },
-  ];
-
-  return {
-    settings: {
-      title: docTitle,
-      preset: 'A4',
-      widthMm: pageWidthMm,
-      heightMm: pageHeightMm,
-      facingPages,
-      bleedMm: 3,
-      margins: {
-        topMm: 20,
-        bottomMm: 20,
-        insideMm: 25,
-        outsideMm: 18,
-      },
-      columnCount: 2,
-      columnGutterMm: 5,
-      colorMode: 'cmyk',
-      iccProfile: 'FOGRA39',
-      baselineGrid: {
-        enabled: true,
-        incrementPt: 12,
-        startMm: 20,
-      },
-    },
-    spreads,
-    activeSpreadIndex: 0,
-    selectedElementId: null,
-    selectedElementIds: [],
-    activeTool: 'select',
-    zoom: 0.85,
-    panX: 0,
-    panY: 0,
-    showGuides: true,
-    showBleed: true,
-    showBaselineGrid: true,
-    snapToGuides: true,
-    displayQuality: 'typical',
-    paragraphStyles,
-    masterSpreads: [
-      {
-        id: 'master-a',
-        name: 'A-Master',
-        prefix: 'A',
-        pages: [
-          { id: 'master-p-1', pageNumber: 1, side: 'left' },
-          { id: 'master-p-2', pageNumber: 2, side: 'right' },
-        ],
-        elements: [],
-      },
-    ],
-    linkingFromFrameId: null,
-    layers: DEFAULT_LAYERS,
-    activeLayerId: 'layer-1',
-  };
+  if (fragments.length) {
+    const pageId = 'indd-fragments-page';
+    const text = fragments.map((fragment, index) => `[Recovered fragment ${index + 1}]\n${fragment}`).join('\n\n');
+    const frame: TextElement = {
+      id: 'indd-recovered-text', name: 'Recovered fragments (original order unknown)', type: 'text', pageId,
+      x: 20, y: 20, width: 170, height: 235, rotation: 0, opacity: 1, zIndex: 1, locked: false,
+      text, rawStoryText: text, fontFamily: 'serif', fontSizePt: 11, lineHeight: 1.4,
+      letterSpacingPt: 0, color: '#111111', alignment: 'left', columns: 1, columnGutterMm: 4,
+      paddingMm: 2, backgroundColor: 'transparent', borderColor: 'transparent', borderWidthMm: 0,
+    };
+    const report = buildInddElements({ ...metadata, thumbnailDataUrl: undefined }, pageId);
+    state.spreads.push({ id: 'indd-fragments', spreadIndex: state.spreads.length,
+      pages: [{ id: pageId, pageNumber: state.spreads.length + 1, side: 'single' }], elements: [frame, ...report] });
+    state.activeSpreadIndex = state.spreads.length - 1;
+    state.selectedElementId = frame.id; state.selectedElementIds = [frame.id];
+  }
+  return state;
 }

@@ -757,6 +757,8 @@ export class StateManager {
       if (spread.elements[idx].locked && updates.locked === undefined) return;
       spread.elements[idx] = { ...spread.elements[idx], ...updates } as CanvasElement;
       const el = spread.elements[idx];
+      // Replacing artwork turns an equation frame into a regular image frame.
+      if (el.type === 'image' && 'src' in updates && !('equation' in updates)) el.equation = undefined;
       if (el.type === 'text') {
         const textEl = el as TextElement;
         const textUpdates = updates as Partial<TextElement>;
@@ -936,7 +938,8 @@ export class StateManager {
           const heightInches = Math.max(0.1, img.height / 25.4);
           const effectiveDpi = Math.round(pixelW / widthInches);
           const effectiveDpiY = Math.round(pixelH / heightInches);
-          const isLowRes = effectiveDpi < 250;
+          const isVector = img.format?.toLowerCase() === 'svg' || img.src.startsWith('data:image/svg+xml');
+          const isLowRes = !isVector && effectiveDpi < 250;
 
           let format = img.format || cached?.format || 'JPG';
           if (img.src) {
@@ -1005,6 +1008,7 @@ export class StateManager {
       if (elIdx !== -1 && spread.elements[elIdx].type === 'image') {
         const updates: Partial<ImageElement> = {
           src: newSrc,
+          equation: undefined,
           ...(metadata?.name ? { name: metadata.name, caption: metadata.name } : {}),
           ...(metadata?.fileSize ? { fileSize: metadata.fileSize } : {}),
           ...(metadata?.format ? { format: metadata.format } : {}),
@@ -1743,6 +1747,7 @@ export class StateManager {
     const meta = await assetStore.registerAsset(data, { name });
     const img = el as ImageElement;
     img.assetId = meta.id;
+    img.equation = undefined;
     img.proxySrc = meta.proxyDataUrl;
     img.name = meta.name;
     img.originalWidth = meta.width;
@@ -2363,7 +2368,8 @@ export class StateManager {
     return updates.length;
   }
 
-  public async loadFromIndd(inddBuffer: ArrayBuffer | Uint8Array, fileName?: string) {
+  public async loadFromIndd(inddBuffer: ArrayBuffer | Uint8Array, fileName?: string, options?: { recoverContent: boolean }) {
+    if (!options?.recoverContent) throw new Error('Native INDD layout import is unavailable. Export IDML from InDesign, or explicitly choose content recovery.');
     try {
       const { parseInddToProjectState } = await import('../engine/inddParser');
       const newState = parseInddToProjectState(inddBuffer, fileName);
@@ -2386,7 +2392,7 @@ export class StateManager {
   public async loadFromIdml(idmlBuffer: ArrayBuffer | Uint8Array, fileName?: string) {
     const { isInddBuffer } = await import('../engine/inddParser');
     if (isInddBuffer(idmlBuffer)) {
-      return this.loadFromIndd(idmlBuffer, fileName);
+      throw new Error('This is a native INDD file. Export IDML from InDesign for editable layout import.');
     }
     try {
       const { parseIdmlPackage } = await import('../idmlImport');
@@ -3740,6 +3746,7 @@ export class StateManager {
     const img = el as ImageElement;
 
     const psdData = psdEngine.parse(psdBuffer);
+    img.equation = undefined;
     img.isPsd = true;
     img.format = 'PSD';
     img.name = fileName || img.name || 'document.psd';

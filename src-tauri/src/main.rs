@@ -42,7 +42,7 @@ async fn desktop_save_file(window: tauri::Window, suggested_name: String, bytes:
     if bytes.len() as u64 > MAX_FILE_BYTES { return Err("This export exceeds the 128 MB desktop save limit.".into()); }
     let extension = std::path::Path::new(&suggested_name).extension()
         .and_then(|value| value.to_str()).unwrap_or("").to_lowercase();
-    if !["recto", "pdf", "epub", "html", "zip", "idml", "png"].contains(&extension.as_str()) {
+    if !["recto", "pdf", "epub", "html", "zip", "idml", "png", "svg"].contains(&extension.as_str()) {
         return Err("Unsupported export format.".into());
     }
     tauri::async_runtime::spawn_blocking(move || {

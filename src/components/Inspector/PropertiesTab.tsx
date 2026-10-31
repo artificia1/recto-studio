@@ -1277,7 +1277,9 @@ function ImageInspector({ element }: { element: ImageElement }) {
 
   return (
     <div className="inspector-section">
-      <div className="section-header">IMAGE FRAME</div>
+      <div className="section-header">{element.equation ? 'EQUATION' : 'IMAGE FRAME'}</div>
+      {element.equation && <button className="action-btn-primary" style={{ width: '100%', marginBottom: '8px' }}
+        disabled={element.locked} onClick={() => window.dispatchEvent(new Event('recto:edit-equation'))}>Edit equation…</button>}
       <div
         style={{
           display: 'flex',
@@ -1291,8 +1293,8 @@ function ImageInspector({ element }: { element: ImageElement }) {
           color: '#888',
         }}
       >
-        <span>Memory Pipeline:</span>
-        <span style={{ color: '#0d99ff', fontWeight: 600 }}>72 DPI Proxy · 300 DPI Stream</span>
+        <span>{element.equation ? 'Math artwork:' : 'Memory Pipeline:'}</span>
+        <span style={{ color: '#0d99ff', fontWeight: 600 }}>{element.equation ? 'Scalable vector SVG' : '72 DPI Proxy · 300 DPI Stream'}</span>
       </div>
       <button
         className="action-btn-primary"

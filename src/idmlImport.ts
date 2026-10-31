@@ -12,7 +12,7 @@ import {
 } from './types';
 import { readZip, uint8ArrayToBase64 } from './zip';
 import { DEFAULT_PARAGRAPH_STYLES, DEFAULT_MASTER_SPREADS } from './state';
-import { isInddBuffer, parseInddToProjectState } from './engine/inddParser';
+import { isInddBuffer } from './engine/inddParser';
 
 const PT_TO_MM = 25.4 / 72; // 1 point = 0.352778 mm
 
@@ -427,7 +427,7 @@ export function resolveIdmlColor(
 
 export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fileName?: string): Promise<ProjectState> {
   if (isInddBuffer(idmlBuffer)) {
-    return parseInddToProjectState(idmlBuffer, fileName);
+    throw new Error('This is a native INDD file, not an IDML package. Export IDML from InDesign first.');
   }
   const files = await readZip(idmlBuffer);
   const textDecoder = new TextDecoder();

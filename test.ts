@@ -3859,17 +3859,20 @@ const ingestedIndd = await ingestManuscript('magazine.indd', inddBuffer);
 assert(ingestedIndd.formattedText.includes('The Paris Monograph'));
 assert.strictEqual(ingestedIndd.inddMetadata?.pageCount, 48);
 
-// Full .indd Project State Parsing & Ingestion
+// Limited INDD recovery uses labelled workspaces, not reconstructed original pages.
 const inddProject = parseInddToProjectState(inddBuffer, 'sample_magazine.indd');
-assert(inddProject.spreads.length >= 2, 'Must generate publication spreads for multi-page INDD');
-assert(inddProject.spreads[0].elements.length >= 2, 'Cover spread must contain visual thumbnail and metadata card');
-assert(inddProject.spreads[1].elements.length >= 1, 'Spread 1 must contain carved story text frames');
-assert.strictEqual(inddProject.settings.title, 'The Paris Monograph');
+assert.strictEqual(inddProject.spreads.length, 2, 'Recovery separates the preview from the text fragments');
+assert(inddProject.spreads[0].elements.length >= 2, 'Preview workspace contains the thumbnail and recovery report');
+assert(inddProject.spreads[1].elements.some(el => el.id === 'indd-recovered-text'), 'Recovery retains the carved text');
+assert.strictEqual(inddProject.settings.title, 'The Paris Monograph (Recovered content)');
+assert.strictEqual(inddProject.settings.facingPages, false, 'Recovery must not fabricate original facing-page layouts');
+assert.deepStrictEqual(inddProject.paragraphStyles, [], 'Recovery must not invent original paragraph styles');
 
-await stateManager.loadFromIndd(inddBuffer, 'sample_magazine.indd');
+await assert.rejects(() => stateManager.loadFromIndd(inddBuffer, 'sample_magazine.indd'), /IDML/);
+await stateManager.loadFromIndd(inddBuffer, 'sample_magazine.indd', { recoverContent: true });
 const loadedInddState = stateManager.getState();
-assert.strictEqual(loadedInddState.settings.title, 'The Paris Monograph');
-assert(loadedInddState.spreads[0].elements.length >= 2, 'Loaded INDD state must have populated cover elements');
+assert.strictEqual(loadedInddState.settings.title, 'The Paris Monograph (Recovered content)');
+assert(loadedInddState.spreads[0].elements.length >= 2, 'Recovered workspace retains the preview and report');
 
 console.log('✓ Advanced Publishing Superpowers (Object Styles, Dynamic Xrefs, Span Columns, Multi-Level Index & Smart .indd Ingestion) verified.');
 

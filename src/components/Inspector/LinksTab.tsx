@@ -229,10 +229,10 @@ export function LinksTab({ state }: LinksTabProps) {
                         color: link.isLowRes ? '#f59e0b' : '#10b981',
                       }}
                     >
-                      {link.effectiveDpi} DPI
+                        {link.format.toUpperCase() === 'SVG' ? 'Vector' : `${link.effectiveDpi} DPI`}
                     </span>
                     <span style={{ color: '#666', fontSize: '9px', marginLeft: '4px' }}>
-                      (Actual: {link.actualDpi})
+                        {link.format.toUpperCase() === 'SVG' ? '(scalable)' : `(Actual: ${link.actualDpi})`}
                     </span>
                   </div>
 

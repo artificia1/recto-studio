@@ -27,6 +27,8 @@ interface TopBarProps {
   onOpenStoryEditor?: () => void;
   onOpenBarcode?: () => void;
   onOpenQr?: () => void;
+  onOpenEquation?: () => void;
+  onOpenIndd?: (file: File) => void;
   onOpenScripts?: () => void;
   onOpenDocumentSetup?: () => void;
 }
@@ -42,6 +44,8 @@ export function TopBar({
   onOpenStoryEditor,
   onOpenBarcode,
   onOpenQr,
+  onOpenEquation,
+  onOpenIndd,
   onOpenScripts,
   onOpenDocumentSetup,
 }: TopBarProps) {
@@ -234,11 +238,10 @@ export function TopBar({
       try {
         const lower = file.name.toLowerCase();
         if (lower.endsWith('.idml') || lower.endsWith('.indd')) {
-          const buffer = await file.arrayBuffer();
           if (lower.endsWith('.indd')) {
-            await stateManager.loadFromIndd(buffer, file.name);
+            onOpenIndd?.(file);
           } else {
-            await stateManager.loadFromIdml(buffer, file.name);
+            await stateManager.loadFromIdml(await file.arrayBuffer(), file.name);
           }
           return;
         }
@@ -257,11 +260,10 @@ export function TopBar({
     const file = target.files?.[0];
     if (file) {
       try {
-        const buffer = await file.arrayBuffer();
         if (file.name.toLowerCase().endsWith('.indd')) {
-          await stateManager.loadFromIndd(buffer, file.name);
+          onOpenIndd?.(file);
         } else {
-          await stateManager.loadFromIdml(buffer, file.name);
+          await stateManager.loadFromIdml(await file.arrayBuffer(), file.name);
         }
       } catch (err) {
         console.error('Failed to import InDesign document:', err);
@@ -277,8 +279,7 @@ export function TopBar({
     const file = target.files?.[0];
     if (file) {
       try {
-        const buffer = await file.arrayBuffer();
-        await stateManager.loadFromIndd(buffer, file.name);
+        onOpenIndd?.(file);
       } catch (err) {
         console.error('Failed to import InDesign .indd document:', err);
         alert('Failed to import InDesign document: ' + (err instanceof Error ? err.message : String(err)));
@@ -866,11 +867,11 @@ export function TopBar({
                   setShowFileMenu(false);
                   handleInddClick();
                 }}
-                title="Import native binary Adobe InDesign (.indd) layout, spreads, stories and previews"
+                title="Convert INDD through IDML or recover content fragments"
               >
                 <div>
                   <div className="dropdown-item-title">Import InDesign Document (.indd)...</div>
-                  <div className="dropdown-item-sub">Native binary layout, previews, stories & typography</div>
+                  <div className="dropdown-item-sub">IDML conversion guide or limited content recovery</div>
                 </div>
               </button>
               <button
@@ -947,6 +948,10 @@ export function TopBar({
                 title="Generate native vector ISO/IEC 18004 QR code"
               >
                 <span>Insert Vector QR Code...</span>
+              </button>
+              <button className="top-dropdown-item" onClick={() => { setShowFileMenu(false); onOpenEquation?.(); }}
+                title="Insert an editable LaTeX equation">
+                <span>Insert Equation (LaTeX)…</span>
               </button>
               <button
                 className="top-dropdown-item"

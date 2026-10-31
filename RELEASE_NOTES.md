@@ -1,49 +1,46 @@
-## Recto Studio 1.2.3
+## Recto Studio 1.2.4
 
-- Paragraph keep-with-next and keep-together controls for formatted stories.
-- Configurable widow/orphan minimums across columns and linked text frames.
-- Dictionary hyphenation for English (US), German and French, preserving manuscript text.
-- Paragraph bold/italic controls and safer font loading with visible failure feedback.
-- EPUB language and flow hints for compatible readers.
+### Editable mathematics
 
-**Updater test:** install 1.2.2 first, then choose **Check for updates → Install update** to reach 1.2.3.
+- **File → Insert Equation (LaTeX)** opens a live equation editor.
+- Templates for quadratic formulas, integrals, sums, matrices, aligned equations and cases.
+- Type size, colour, display/compact math style and accessible descriptions.
+- Select an equation and choose **Properties → Edit equation** to revise it.
+- Source survives save/reopen, undo/redo and duplication.
+- Sharp vector PDF output and standalone SVG downloads, with bundled math glyphs.
+- Works offline in the desktop app; no LaTeX installation or remote renderer required.
 
-## Included from 1.2.2
+### Publishing fixes
 
-- Signed in-app updates: check, download, save pending work, install and restart.
-- Automatic story extension, paired facing spreads, chapter openings, sections and running headers.
-- Responsive footer controls with clear spacing at smaller window widths.
-- Story edits and generated pages undo together; overflow pages stay with their chapter.
+- EPUB exports use accessible image descriptions and package equations as SVG assets.
+- SVG artwork is identified as scalable vector content, avoiding false low-resolution warnings.
+- Replacing equation artwork with a photo clears obsolete math metadata.
 
-Install this version manually once. Future releases can be installed through **Check for updates**.
+### InDesign import corrections
 
-## Bug fixes
+- INDD now offers an IDML conversion kit for your installed InDesign.
+- Content recovery is explicitly labelled and requires confirmation before replacing a project.
+- Recovery retains all detected fragments instead of fabricating original layouts or discarding later fragments.
+- Binary files cannot silently enter the IDML importer as a simulated layout.
+- See `INDESIGN_IMPORT.md` for workflow and limitations. Native standalone INDD decoding is not included.
 
-- Clicking empty canvas with the text tool clears the previous text-frame selection.
-- Fit Frame to Content and Auto Copyfit use measured text layout to avoid clipping content.
-- Formatted stories retain their text and linked frames are protected from accidental resizing.
+Equations are separate layout objects. This release supports mathematical LaTeX
+with base/AMS notation, not full `.tex` documents or inline story equations.
+PDF math tagging and MathML are not included; equation vector colours are RGB.
+See `EQUATIONS.md` for syntax, workflow and output details.
 
-## Windows desktop app
+### Installation and updates
 
-Recto Studio now runs as a standalone Windows application with its own window,
-app icon, and Start menu entry. End users do not need Node.js, npm, or a terminal.
+Users on **1.2.2 or 1.2.3** can choose **Check for updates → Install update**.
+The updater downloads the package, saves pending work, and installs the update.
 
-- **Recommended:** download `Recto-Studio-1.2.3-Windows-x64-setup.exe`, install it, and open Recto Studio from the Start menu.
-- **Portable:** extract `Recto-Studio-1.2.3-Windows-x64-portable.zip` and open `Recto Studio.exe`. Requires an existing WebView2 runtime.
-- Native Open/Save dialogs for publications and exports, with safe replacement of saved files.
-- Local autosave and bundled editor assets; no local server or browser tab is required.
+- Installer: `Recto-Studio-1.2.4-Windows-x64-setup.exe`
+- Portable: `Recto-Studio-1.2.4-Windows-x64-portable.zip`
 
-The installer can install WebView2 when missing; this initial setup may need a
-connection. Online fonts and collaboration remain optional network features.
-Windows x64 is the supported desktop target for this release. The app is unsigned,
-so Windows may show a publisher/reputation warning. SHA-256 checksums are provided.
+Windows x64 is supported. The installer can install WebView2 if needed; that
+initial setup may require a connection. The portable app needs an existing
+WebView2 runtime. No Node.js, npm or terminal is needed.
 
-## Publishing improvements
-
-- Formatted stories with paragraph styles, inline emphasis, and reusable character styles.
-- Text threading that preserves paragraph boundaries and retains copy when frames are removed.
-- Word, Markdown, and text import with previews, style mapping, and review warnings.
-- Formatted PDF/EPUB output, persistence fixes, and expanded regression coverage.
-
-See `MANUSCRIPTS.md` and `PUBLISHING.md` for import and output limitations. File
-associations are not included in this release.
+Update packages have updater signatures. The executable does not have a Windows
+publisher certificate, so Windows may show a reputation warning. SHA-256
+checksums are included with the release.
