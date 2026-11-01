@@ -311,6 +311,55 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * Resolves InDesign Text Variables (Type > Text Variables) to their current text value.
+ *
+ * Definitions live in designmap.xml as <TextVariable Self="..." Name="..." VariableType="...">.
+ * Custom Text variables carry their value in <CustomTextVariablePreference><Properties><Contents>.
+ * Usage sites in story XML are <TextVariableInstance AssociatedTextVariable="<Self>" ResultText="..."/>,
+ * where ResultText is the value InDesign last computed and cached for that instance.
+ *
+ * Returned map is keyed by the TextVariable's Self id (what AssociatedTextVariable points to),
+ * not by its Name, since Self is what instances actually reference.
+ */
+export function parseIdmlTextVariables(files: Map<string, Uint8Array>): Map<string, string> {
+  const variablesMap = new Map<string, string>();
+  const designmapFile = files.get('designmap.xml');
+  if (!designmapFile) return variablesMap;
+
+  const xml = new TextDecoder().decode(designmapFile);
+  const varTags = extractXmlTags(xml, 'TextVariable');
+
+  for (const tag of varTags) {
+    const selfId = extractXmlAttr(tag, 'Self');
+    if (!selfId) continue;
+
+    // Custom Text is the only type with a static, pre-known value. Other types
+    // (chapter/page number, running header, dates, …) depend on live layout or the current
+    // date, which this importer doesn't compute — those are left unresolved here so callers
+    // fall back to the instance's cached ResultText instead.
+    if (extractXmlAttr(tag, 'VariableType') !== 'CustomTextType') continue;
+
+    // The value lives specifically in <CustomTextVariablePreference>…<Contents>; don't read
+    // a <Contents> that might belong to some other preference block.
+    const prefMatch = tag.match(/<CustomTextVariablePreference\b[^>]*>([\s\S]*?)<\/CustomTextVariablePreference>/i);
+    if (!prefMatch) continue;
+    const pref = prefMatch[1];
+
+    // <Contents>value</Contents> → that value; self-closing <Contents/> → an explicitly empty
+    // value. Both are recorded (empty string included) so a cleared variable overrides the
+    // instance's stale cached ResultText rather than falling back to it.
+    const contentsMatch = pref.match(/<Contents\b[^>]*>([\s\S]*?)<\/Contents>/i);
+    if (contentsMatch) {
+      variablesMap.set(selfId, contentsMatch[1]);
+    } else if (/<Contents\b[^>]*\/>/i.test(pref)) {
+      variablesMap.set(selfId, '');
+    }
+  }
+
+  return variablesMap;
+}
+
 export function parseIdmlColors(files: Map<string, Uint8Array>): Map<string, string> {
   const colorsMap = new Map<string, string>();
   colorsMap.set('Color/Black', '#000000');
@@ -432,6 +481,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
   const files = await readZip(idmlBuffer);
   const textDecoder = new TextDecoder();
   const colorsMap = parseIdmlColors(files);
+  const textVariablesMap = parseIdmlTextVariables(files);
 
   // 1. Parse Preferences & Document Settings
   let pageWidthMm = 210; // Default A4
@@ -535,6 +585,11 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
       const xml = textDecoder.decode(content);
       const storyId = extractXmlAttr(xml, 'Self') || filename.replace('Stories/', '').replace('.xml', '');
 
+      // Whether the story carries any real text markup. If it does, an empty result is
+      // intentional (e.g. a custom text variable cleared to an empty string) and must be
+      // kept as-is; the placeholder below is only for stories with no content at all.
+      const hasRenderableContent = /<Content\b|<TextVariableInstance\b/i.test(xml);
+
       const pRanges = extractXmlTags(xml, 'ParagraphStyleRange');
       const paragraphs: string[] = [];
       let detectedStyleId: string | undefined;
@@ -586,13 +641,30 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
             detectedColor = crResolvedColor;
           }
 
-          // Read Content and Br
-          const tokens = cr.match(/<Content[^>]*>([\s\S]*?)<\/Content>|<Br\s*\/?>/gi) || [];
+          // Read Content, Br, and Text Variable instances (Type > Text Variables > Insert Variable)
+          const tokens =
+            cr.match(/<Content[^>]*>([\s\S]*?)<\/Content>|<Br\s*\/?>|<TextVariableInstance\b[^>]*\/?>/gi) || [];
           const rangeTokens: string[] = [];
           for (const tok of tokens) {
-            if (tok.toLowerCase().startsWith('<br')) {
+            const lowerTok = tok.toLowerCase();
+            if (lowerTok.startsWith('<br')) {
               paraTokens.push('\n');
               rangeTokens.push('\n');
+            } else if (lowerTok.startsWith('<textvariableinstance')) {
+              // Prefer the live definition from designmap.xml (reflects Define > Edit changes),
+              // including a variable deliberately cleared to an empty string. Fall back to the
+              // instance's own cached ResultText only when there is no resolved definition —
+              // an empty/missing AssociatedTextVariable, or a variable type we don't resolve
+              // (page/chapter numbers, running headers, dates, etc.). `has` is used so that a
+              // resolved-but-empty value is not mistaken for "unresolved".
+              const associated = extractXmlAttr(tok, 'AssociatedTextVariable');
+              const resultText = extractXmlAttr(tok, 'ResultText') ?? '';
+              const resolved =
+                associated && textVariablesMap.has(associated)
+                  ? textVariablesMap.get(associated)!
+                  : resultText;
+              paraTokens.push(resolved);
+              rangeTokens.push(resolved);
             } else {
               const textContent = tok.replace(/<Content[^>]*>/, '').replace(/<\/Content>/, '');
               paraTokens.push(textContent);
@@ -627,7 +699,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
         .replace(/&quot;/g, '"')
         .replace(/&apos;/g, "'");
 
-      if (!fullText.trim()) {
+      if (!fullText.trim() && !hasRenderableContent) {
         fullText = 'Imported text frame content';
       }
 
