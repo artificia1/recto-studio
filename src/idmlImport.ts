@@ -17,7 +17,9 @@ import { isInddBuffer } from './engine/inddParser';
 const PT_TO_MM = 25.4 / 72; // 1 point = 0.352778 mm
 
 export function extractXmlAttr(xml: string, attr: string): string | null {
-  const re = new RegExp(`${attr}\\s*=\\s*["']([^"']*)["']`, 'i');
+  // The lookbehind keeps the attribute name from matching the tail of a longer one — e.g.
+  // asking for `Justification` must not match InDesign's `SingleWordJustification="LeftAlign"`.
+  const re = new RegExp(`(?<![\\w-])${attr}\\s*=\\s*["']([^"']*)["']`, 'i');
   const m = xml.match(re);
   return m ? m[1] : null;
 }
@@ -684,6 +686,14 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
           }
         }
 
+        // InDesign ends each paragraph's ParagraphStyleRange with a <Br/> paragraph return. The
+        // paragraph boundary is already the range boundary, so drop that single trailing break;
+        // otherwise every paragraph gains a spurious empty line. A <Br/> in the middle of a
+        // paragraph is a real forced line break and is kept.
+        if (paraTokens.length > 0 && paraTokens[paraTokens.length - 1] === '\n') {
+          paraTokens.pop();
+        }
+
         const paraStr = paraTokens.join('');
         if (paraStr.length > 0) {
           paragraphs.push(paraStr);
@@ -886,10 +896,15 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
         (textEl as any).parentStoryId = parentStory;
       }
 
+      // InDesign writes "n" (and "kInvalidRef") for "no linked frame". Treat both as no link —
+      // otherwise a standalone frame gets a dangling prevFrameId/nextFrameId ("idml-n"), which
+      // breaks reflow and story operations that walk the (non-existent) thread.
+      const isFrameRef = (ref: string | null): ref is string =>
+        !!ref && ref !== 'n' && ref !== 'kInvalidRef';
       const nextFrame = extractXmlAttr(tfXml, 'NextTextFrame');
       const prevFrame = extractXmlAttr(tfXml, 'PreviousTextFrame');
-      if (nextFrame && nextFrame !== 'kInvalidRef') textEl.nextFrameId = `idml-${nextFrame}`;
-      if (prevFrame && prevFrame !== 'kInvalidRef') textEl.prevFrameId = `idml-${prevFrame}`;
+      if (isFrameRef(nextFrame)) textEl.nextFrameId = `idml-${nextFrame}`;
+      if (isFrameRef(prevFrame)) textEl.prevFrameId = `idml-${prevFrame}`;
 
       spreadElements.push(textEl);
     }
