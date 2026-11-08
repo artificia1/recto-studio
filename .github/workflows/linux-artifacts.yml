@@ -25,6 +25,7 @@ jobs:
           rustup default stable
       - run: npm ci
       - name: Cache native build dependencies
+        id: native-cache
         uses: actions/cache@v4
         with:
           path: |
@@ -39,7 +40,7 @@ jobs:
       - name: Prepare AppImage helpers
         run: node scripts/prepare-bundler-tools.mjs
       - name: Build Linux packages
-        run: node scripts/build-linux.mjs
+        run: node scripts/build-linux.mjs 2>&1 | tee linux-build.log
       - name: Test native file operations
         working-directory: src-tauri
         run: cargo test --locked
@@ -57,10 +58,22 @@ jobs:
           fi
           gh release upload "v$version" release-artifacts/* --repo "$GITHUB_REPOSITORY" --clobber
       - name: Retain packages for manual testing
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: recto-linux-x64-test-packages
           if-no-files-found: error
           path: |
+            linux-build.log
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/appimage/*.AppImage
+      - name: Retain native cache after packaging failures
+        if: failure() && steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/tauri
+            src-tauri/target
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
