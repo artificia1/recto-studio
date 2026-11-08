@@ -197,12 +197,15 @@ export class AssetStore {
     slices: number = 32,
     alphaThreshold: number = 15
   ): Array<{ minX: number; maxX: number }> {
+    if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || width * height * 4 !== pixelData.length) throw new Error('Provide a complete RGBA image for contour tracing.');
+    if (!Number.isFinite(slices) || !Number.isFinite(alphaThreshold)) throw new Error('Choose finite contour settings.');
     const contour: Array<{ minX: number; maxX: number }> = [];
-    const rowsPerSlice = Math.max(1, Math.floor(height / slices));
+    slices = Math.max(1, Math.min(512, height, Math.floor(slices)));
+    alphaThreshold = Math.max(0, Math.min(254, alphaThreshold));
 
     for (let s = 0; s < slices; s++) {
-      const startY = s * rowsPerSlice;
-      const endY = Math.min(height, (s + 1) * rowsPerSlice);
+      const startY = Math.floor(s * height / slices);
+      const endY = Math.floor((s + 1) * height / slices);
       let minX = width;
       let maxX = -1;
 
@@ -219,8 +222,8 @@ export class AssetStore {
 
       if (maxX >= minX) {
         contour.push({
-          minX: Math.round((minX / width) * 1000) / 1000,
-          maxX: Math.round((maxX / width) * 1000) / 1000,
+          minX: minX / width,
+          maxX: (maxX + 1) / width,
         });
       } else {
         contour.push({ minX: 1, maxX: 0 }); // Fully transparent slice

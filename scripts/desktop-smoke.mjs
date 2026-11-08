@@ -65,6 +65,14 @@ try {
     if (source !== String.raw`\frac{1}{2} + \sqrt{x}`) throw new Error('Native equation editor did not retain its source.');
   }
   await mkdir('test-results/desktop', { recursive: true });
+  if (expectedVersion.localeCompare('1.3.2', undefined, { numeric: true }) >= 0) {
+    await page.getByRole('button', { name: 'Setup', exact: true }).click();
+    await page.getByText('ICC colour management', { exact: true }).click();
+    await page.getByLabel('CMYK output ICC profile', { exact: true }).setInputFiles('tests/fixtures/icc/lcms-test-output.icc');
+    await page.getByText('Output profile loaded.', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Test ICC conversion', exact: true }).click();
+    await page.getByRole('status').filter({ hasText: /C [\d.]+% · M/ }).waitFor();
+  }
   await page.screenshot({ path: 'test-results/desktop/windows-app.png', fullPage: true });
   if (errors.length) throw new Error(errors.join('\n'));
   console.log('Windows app opened, rendered the editor, recovered autosave, and verified native file-command restrictions.');

@@ -15,6 +15,11 @@ export async function savePublicationFile(name: string, data: Blob | Uint8Array 
     const { invoke } = await import('@tauri-apps/api/core');
     return invoke<boolean>('desktop_save_file', { suggestedName: name, bytes: Array.from(new Uint8Array(await blob.arrayBuffer())) });
   }
+  if (typeof document === 'undefined') {
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(name, new Uint8Array(await blob.arrayBuffer()));
+    return true;
+  }
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;

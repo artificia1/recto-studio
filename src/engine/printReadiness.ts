@@ -30,11 +30,11 @@ export function printReadiness(state: ProjectState) {
     }
   }
   return {
-    format: 'Ordinary PDF', certifiedPdfX: false, iccConversion: false,
+    format: 'Ordinary PDF', certifiedPdfX: false, iccConversion: !!state.settings.colorManagement?.convertPdf,
     automaticTrapping: false, transparencyFlattening: false, items,
     requirements: [
       'PDF/X-4 needs a supported colour-managed PDF pipeline, an appropriate ICC output intent, complete font handling and independent conformance validation.',
-      'A profile name is not ICC conversion. Obtain printer approval for separations, live transparency, overprint and trapping.',
+      state.settings.colorManagement?.convertPdf ? 'Vector RGB colours and supported sRGB raster assets are converted through LittleCMS using the embedded output profile. Explicit CMYK values remain unchanged.' : 'A profile name is not ICC conversion. Import a CMYK output ICC profile and enable PDF conversion for managed output.',
       'Trap widths depend on the press, substrate, ink and object geometry. No universal automatic trap width is applied.',
     ],
   };

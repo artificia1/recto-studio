@@ -8,6 +8,7 @@ export default function ReferencesPanel({ state }: { state: ProjectState }) {
   const [text, setText] = useState('');
   const [targetPage, setTargetPage] = useState('');
   const [entryQuery, setEntryQuery] = useState('');
+  const [concordance, setConcordance] = useState(''), [wholeWords, setWholeWords] = useState(true);
   const markedEntries = (state.indexEntries || []).filter(entry => `${entry.topic} ${entry.authorityCategory || 'index'}`.toLocaleLowerCase().includes(entryQuery.trim().toLocaleLowerCase()));
   const act = (action: () => void, message = 'Publication updated.') => {
     try { action(); setMessage(message); } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
@@ -39,6 +40,17 @@ export default function ReferencesPanel({ state }: { state: ProjectState }) {
     </div>
     {head?.generated && <button className="sm-btn" onClick={() => act(() => stateManager.makePublicationListStatic(head.id), 'List is now ordinary editable text and will no longer refresh.')}>Make selected list static</button>}
     <details><summary>Marked text references</summary>
+      <label>Index concordance<textarea aria-label="Index concordance" rows={5} value={concordance} onInput={event => setConcordance(event.currentTarget.value)} placeholder={'term\tTopic > Subtopic > Detail\tSee also: Related topic'}/></label>
+      <p>One term per line. Optional tab-separated topic hierarchy and “See:” or “See also:” targets. Existing index markers, notes and references are preserved.</p>
+      <label><input type="checkbox" checked={wholeWords} onChange={event => setWholeWords(event.currentTarget.checked)}/>Match whole words</label>
+      <button className="sm-btn" onClick={async () => {
+        try { const { parseConcordance, concordanceMatches } = await import('../../engine/indexConcordance'); setMessage(`${concordanceMatches(state, parseConcordance(concordance), wholeWords).length} unmarked occurrences found.`); }
+        catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
+      }}>Preview concordance matches</button>
+      <button className="sm-btn" onClick={async () => {
+        try { setMessage(`${await stateManager.applyIndexConcordance(concordance, wholeWords)} occurrences marked. Undo removes this batch.`); }
+        catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
+      }}>Apply index concordance</button>
       <p>Unmark removes an authority or index marker while keeping the manuscript text.</p>
       <label>Search marked text references<input value={entryQuery} onInput={event => setEntryQuery(event.currentTarget.value)}/></label>
       <p>Showing {Math.min(100, markedEntries.length)} of {markedEntries.length} matches. Refine the search to find an entry.</p>

@@ -155,8 +155,7 @@ export function TopBar({
         if (roomParam) {
           setCollabRoom(roomParam);
           if (pwdParam) setCollabPassword(pwdParam);
-          collabSession.connect(roomParam, undefined, pwdParam || undefined);
-          setIsConnected(true);
+          void collabSession.connect(roomParam, undefined, pwdParam || undefined).catch(error => alert(`Could not start collaboration: ${error instanceof Error ? error.message : String(error)}`));
         }
       }
     } catch {}
@@ -469,17 +468,17 @@ export function TopBar({
     }
   };
 
-  const handleToggleCollab = () => {
+  const handleToggleCollab = async () => {
     if (isConnected) {
       collabSession.disconnect();
       setIsConnected(false);
       setCollabPeers([]);
     } else {
-      collabSession.connect(
+      try { await collabSession.connect(
         collabRoom.trim() || 'recto-live',
         collabUserName.trim(),
         collabPassword.trim()
-      );
+      ); } catch (error) { alert(`Could not start collaboration: ${error instanceof Error ? error.message : String(error)}`); return; }
       setIsConnected(true);
       setCollabPeers(collabSession.getPeers());
     }
@@ -1887,7 +1886,7 @@ export function TopBar({
                 />
                 <span style={{ fontSize: '12px', fontWeight: 600 }}>
                   {isConnected
-                    ? `Connected to '${collabSession.getSessionId()}' ${collabSession.isPasswordProtected() ? '(Protected)' : '(Public)'} · WebRTC P2P`
+                    ? `Connected to '${collabSession.getSessionId()}' ${collabSession.isPasswordProtected() ? '(Protected)' : '(Public)'} · Yjs collaboration`
                     : 'Disconnected'}
                 </span>
               </div>
@@ -1902,6 +1901,7 @@ export function TopBar({
                 {isConnected ? 'Disconnect' : 'Connect Session'}
               </button>
             </div>
+            {collabSession.getProtocolError() && <p role="alert">{collabSession.getProtocolError()}</p>}
 
             {/* Active Peers List */}
             {isConnected && (

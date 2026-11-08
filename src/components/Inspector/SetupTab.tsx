@@ -1,6 +1,9 @@
 import { stateManager } from '../../state';
 import { ProjectState, PAGE_PRESETS, PagePreset } from '../../types';
 import { MathInput } from '../common/MathInput';
+import { lazy, Suspense } from 'preact/compat';
+const ColorManagementPanel = lazy(() => import('./ColorManagementPanel'));
+const SeparationsPanel = lazy(() => import('./SeparationsPanel'));
 
 interface SetupTabProps {
   state: ProjectState;
@@ -39,6 +42,8 @@ export function SetupTab({ state }: SetupTabProps) {
   return (
     <div className="setup-view">
       <div className="section-header">DOCUMENT SETUP & PREFERENCES</div>
+      <Suspense fallback={<p role="status">Loading colour settings…</p>}><ColorManagementPanel state={state} /></Suspense>
+      <Suspense fallback={<p role="status">Loading ink preview…</p>}><SeparationsPanel state={state} /></Suspense>
 
       {/* Page Geometry & Spreads */}
       <div className="setup-group">

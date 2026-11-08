@@ -2,6 +2,7 @@ import type { CanvasElement, CharacterStyle, ParagraphStyle, StoryContent, Story
 import { fontManager } from '../fontManager';
 import { hyphenateLanguage } from './languageHyphenation';
 import { cjkRunTokens, graphemes } from './globalTypography';
+import { prepareWrapObstacles, availableTextInterval } from './wrapGeometry';
 
 export interface RunStyle extends TextFormatting {
   fontFamily: string;
@@ -66,6 +67,7 @@ function composeStory(content: StoryContent, frame: TextElement, styles: Paragra
   const width = Math.max(0, (frame.width - padding * 2 - (cols - 1) * gutter) / cols);
   const bottom = frame.height - padding - reserveBottom;
   const lines: StoryLine[] = [];
+  const wrapObstacles = prepareWrapObstacles(options.obstacles || [], frame);
   let column = 0, y = padding, offset = 0, consumed = 0;
   const appliedBreaks = new Set<number>();
   const total = content.paragraphs.reduce((n, p) => n + p.runs.reduce((m, r) => m + r.text.length, 0) + 1, -1);
@@ -82,12 +84,14 @@ function composeStory(content: StoryContent, frame: TextElement, styles: Paragra
     let availableWidth = width, inset = 0;
     const prepare = (): boolean => {
       if (segments.length) return true;
+      let probes = 0;
       if (breaks.has(lineStart) && !appliedBreaks.has(lineStart)) {
         appliedBreaks.add(lineStart);
         column++;
         y = padding;
       }
       for (;;) {
+        if (++probes > 4096) return false;
         const grid = options.baselineGrid;
         if ((style?.snapToBaseline ?? frame.snapToBaseline) && grid?.enabled) {
           const pitch = grid.incrementPt * PT;
@@ -96,23 +100,8 @@ function composeStory(content: StoryContent, frame: TextElement, styles: Paragra
         if (y + height > bottom + 0.0001) { column++; y = padding; }
         if (column >= cols || y + height > bottom + 0.0001) return false;
         const left = frame.x + padding + column * (width + gutter);
-        let a = 0, b = width;
-        for (const obstacle of options.obstacles || []) {
-          if (obstacle.id === frame.id || obstacle.pageId !== frame.pageId || !obstacle.textWrap || obstacle.textWrap.mode === 'none') continue;
-          const gap = obstacle.textWrap.standoffMm;
-          if (frame.y + y + height <= obstacle.y - gap || frame.y + y >= obstacle.y + obstacle.height + gap) continue;
-          let min = obstacle.x - gap, max = obstacle.x + obstacle.width + gap;
-          if (obstacle.textWrap.mode === 'contour' && obstacle.type === 'shape' && obstacle.shapeKind === 'ellipse') {
-            const ry = (obstacle.height + gap * 2) / 2;
-            const normalized = (frame.y + y + height / 2 - obstacle.y - obstacle.height / 2) / ry;
-            const radius = (obstacle.width + gap * 2) / 2 * Math.sqrt(Math.max(0, 1 - normalized * normalized));
-            min = obstacle.x + obstacle.width / 2 - radius; max = obstacle.x + obstacle.width / 2 + radius;
-          }
-          if (max <= left + a || min >= left + b) continue;
-          if (min - (left + a) > left + b - max) b = Math.max(a, min - left);
-          else a = Math.min(b, max - left);
-        }
-        inset = a; availableWidth = b - a;
+        const space = availableTextInterval(wrapObstacles, left, width, frame.y + y, height);
+        inset = space.left - left; availableWidth = space.width;
         if (availableWidth > 1) return true;
         y += height;
       }
@@ -120,9 +109,13 @@ function composeStory(content: StoryContent, frame: TextElement, styles: Paragra
     const flush = (last: boolean): boolean => {
       if (!prepare()) return false;
       const alignment = style?.alignment || frame.alignment;
-      let shift = alignment === 'right' ? availableWidth - lineWidth : alignment === 'center' ? (availableWidth - lineWidth) / 2 : 0;
+      const lineText = segments.map(segment => segment.text).join('');
+      const first = lineText.trimStart()[0], lastCharacter = lineText.trimEnd().at(-1);
+      const leadingHang = frame.opticalMarginAlignment && first && '“‘"\'«‹(['.includes(first) ? measure(first, segments[0].style) / 2 : 0;
+      const trailingHang = frame.opticalMarginAlignment && lastCharacter && '.,-–—:;”’"\'»›!?)]'.includes(lastCharacter) ? measure(lastCharacter, segments.at(-1)!.style) / 2 : 0;
+      let shift = alignment === 'right' ? availableWidth - lineWidth + trailingHang : alignment === 'center' ? (availableWidth - lineWidth - leadingHang + trailingHang) / 2 : -leadingHang;
       const spaces = segments.reduce((n, s) => n + (s.text.match(/ /g)?.length || 0), 0);
-      const extra = alignment === 'justify' && !last && spaces ? Math.max(0, availableWidth - lineWidth) / spaces : 0;
+      const extra = alignment === 'justify' && !last && spaces ? Math.max(0, availableWidth - lineWidth + leadingHang + trailingHang) / spaces : 0;
       const positioned: StorySegment[] = [];
       for (const segment of segments) {
         // Split at spaces for explicit justification, shared by canvas and PDF.

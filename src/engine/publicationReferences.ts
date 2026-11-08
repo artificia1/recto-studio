@@ -2,6 +2,8 @@ import type { Footnote, ProjectState, StoryContent, StoryRun, TextElement } from
 import { plainStory, sliceStory, storyText } from './storyContent';
 import { pageLabel } from './pageLabels';
 import { layoutStory, measureStoryText } from './storyLayout';
+import { publicationWrapObjects } from './publicationWrap';
+import { hierarchicalIndex } from './indexLayout';
 
 export const noteMarker = (number: number) => String(number).replace(/\d/g, digit => '⁰¹²³⁴⁵⁶⁷⁸⁹'[Number(digit)]);
 export const textFrames = (state: ProjectState) => state.spreads.flatMap(spread => spread.elements).filter((item): item is TextElement => item.type === 'text');
@@ -97,7 +99,8 @@ export function reflowStoryState(state: ProjectState, frameId: string) {
   let offset = 0;
   for (const [index, frame] of chain.entries()) {
     const remaining = sliceStory(content, offset, head.rawStoryText.length);
-    const options = { obstacles: state.spreads.find(spread => spread.elements.some(element => element.id === frame.id))?.elements, baselineGrid: state.settings.baselineGrid };
+    const spread = state.spreads.find(spread => spread.elements.some(element => element.id === frame.id));
+    const options = { obstacles: spread ? publicationWrapObjects(state, spread) : [], baselineGrid: state.settings.baselineGrid };
     let reserved = 0;
     let layout = layoutStory(remaining, frame, state.paragraphStyles, state.characterStyles, undefined, reserved, options);
     for (let pass = 0; pass < 8; pass++) {
@@ -152,25 +155,59 @@ export function layoutFrameNotes(state: ProjectState, frame: TextElement, notes 
   const settings = state.settings.footnoteSettings;
   const size = settings?.fontSizePt || 8;
   const family = settings?.fontFamily || frame.fontFamily;
-  const width = Math.max(1, frame.width - 2 * (frame.paddingMm ?? 2));
+  const columns = frame.spanColumns ? 1 : Math.max(1, frame.splitColumns || frame.columns || 1);
+  const gutter = frame.columnGutterMm ?? 4;
+  const width = Math.max(1, (frame.width - 2 * (frame.paddingMm ?? 2) - gutter * (columns - 1)) / columns);
   const lineHeight = size * 25.4 / 72 * 1.35;
   const style = { fontFamily: family, fontSizePt: size, letterSpacingPt: 0, color: frame.color };
-  const lines: { text: string; noteId: string }[] = [];
+  const lines: { text: string; noteId: string; column: number; x: number; y: number }[] = [];
+  if (!notes.length) return { lines, size, family, lineHeight, height: 0, columnWidth: width };
+  const content = frame.textContent || frame.storyContent || plainStory(frame.text);
+  const anchors = new Map<string, number>();
+  let offset = 0;
+  for (const paragraph of content.paragraphs) {
+    for (const run of paragraph.runs) { if (run.noteId) anchors.set(run.noteId, offset); offset += run.text.length; }
+    offset++;
+  }
+  let placements = new Map<string, number>();
+  const wrapped = new Map<string, string[]>();
   for (const note of notes) {
+    const noteLines: string[] = [];
     for (const paragraph of `${note.number}. ${note.text}`.split('\n')) {
       let line = '';
       for (const token of paragraph.match(/\s+|\S+/g) || []) {
-        if (line && !/^\s+$/.test(token) && measureStoryText(line + token, style) > width) { lines.push({ text: line.trimEnd(), noteId: note.id }); line = ''; }
+        if (line && !/^\s+$/.test(token) && measureStoryText(line + token, style) > width) { noteLines.push(line.trimEnd()); line = ''; }
         for (const character of Array.from(token)) {
           if (!line && /\s/.test(character)) continue;
-          if (line && measureStoryText(line + character, style) > width) { lines.push({ text: line.trimEnd(), noteId: note.id }); line = ''; }
+          if (line && measureStoryText(line + character, style) > width) { noteLines.push(line.trimEnd()); line = ''; }
           if (line || !/\s/.test(character)) line += character;
         }
       }
-      lines.push({ text: line, noteId: note.id });
+      noteLines.push(line);
     }
+    wrapped.set(note.id, noteLines);
   }
-  return { lines, size, family, lineHeight, height: notes.length ? lines.length * lineHeight + 3 : 0 };
+  let height = 0;
+  const spread = state.spreads.find(spread => spread.elements.some(element => element.id === frame.id));
+  const options = { obstacles: spread ? publicationWrapObjects(state, spread) : [], baselineGrid: state.settings.baselineGrid };
+  for (let pass = 0; pass < 8 && notes.length; pass++) {
+    const layout = layoutStory(content, frame, state.paragraphStyles, state.characterStyles, undefined, height, options);
+    placements = new Map(notes.map(note => {
+      const anchor = anchors.get(note.id);
+      const line = anchor === undefined ? undefined : layout.lines.find(line => anchor >= line.start && anchor < line.end);
+      return [note.id, Math.min(columns - 1, line?.column ?? columns - 1)];
+    }));
+    const counts = Array.from({ length: columns }, (_, column) => notes.filter(note => placements.get(note.id) === column).reduce((sum, note) => sum + wrapped.get(note.id)!.length, 0));
+    const required = Math.max(...counts) * lineHeight + 3;
+    if (required <= height + 0.0001) break;
+    height = required;
+  }
+  const rows = new Array(columns).fill(0);
+  for (const note of notes) {
+    const column = placements.get(note.id) ?? 0;
+    for (const text of wrapped.get(note.id)!) lines.push({ text, noteId: note.id, column, x: column * (width + gutter), y: rows[column]++ * lineHeight });
+  }
+  return { lines, size, family, lineHeight, height, columnWidth: width };
 }
 
 /** Refresh derived references only. The caller reflows between bounded passes. */
@@ -268,7 +305,7 @@ export function refreshPublication(state: ProjectState): boolean {
         }
         paragraphs.push({ runs });
       }
-      content = { version: 1, paragraphs };
+      content = { version: 1, paragraphs: authorities ? paragraphs : [{ runs: [{ text: generated.title }] }, ...hierarchicalIndex(entries, pages)] };
     }
     // Paragraph IDs on generated lists are not reference targets.
     const comparable = (value: StoryContent) => JSON.stringify(value.paragraphs.map(({ id: _, ...paragraph }) => paragraph));

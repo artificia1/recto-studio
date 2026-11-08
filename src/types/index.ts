@@ -37,6 +37,7 @@ export interface BaselineGridSettings {
 }
 
 export interface DocumentSettings {
+  colorManagement?: ColorManagementSettings;
   language?: string;
   author?: string;
   identifier?: string;
@@ -55,6 +56,22 @@ export interface DocumentSettings {
   overprintBlack?: boolean;
   footnotes?: Footnote[];
   footnoteSettings?: FootnoteSettings;
+}
+
+export type RenderingIntent = 'perceptual' | 'relative' | 'saturation' | 'absolute';
+export interface IccProfileAsset {
+  id: string;
+  name: string;
+  description: string;
+  data: string;
+}
+export interface ColorManagementSettings {
+  outputProfile: IccProfileAsset;
+  intent: RenderingIntent;
+  blackPointCompensation: boolean;
+  preservePureBlack: boolean;
+  convertPdf: boolean;
+  tacLimit: number;
 }
 
 export interface FootnoteSettings {
@@ -202,6 +219,9 @@ export interface IndexEntry {
   id: string;
   topic: string;
   subtopic?: string;
+  subtopics?: string[];
+  see?: string;
+  seeAlso?: string[];
   pageNumber: number;
   elementId?: string;
 }
@@ -624,6 +644,8 @@ export interface PeerPresence {
 }
 
 type CollabPayload =
+  | { type: 'crdt_update'; peerId: string; baselineId: string; update: Uint8Array }
+  | { type: 'crdt_sync'; peerId: string; baselineId: string; baseline: Partial<ProjectState>; update: Uint8Array }
   | { type: 'presence'; peer: PeerPresence; authHash?: string }
   | { type: 'op_update'; peerId: string; elementId: string; updates: Partial<CanvasElement>; element?: CanvasElement; timestamp: number; authHash?: string }
   | { type: 'op_add'; peerId: string; element: CanvasElement; timestamp: number; authHash?: string }

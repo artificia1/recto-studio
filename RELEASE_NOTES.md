@@ -1,4 +1,62 @@
-# Recto Studio 1.3.1
+# Recto Studio 1.3.2
+
+Colour-managed publishing, shared manuscripts, improved runaround and academic references for Windows and Linux.
+
+## Desktop downloads
+
+- Windows x64: installer EXE and portable ZIP. WebView2 is required; the installer can bootstrap it.
+- Linux x64: Debian package and AppImage. Install the Debian package with your package manager to resolve dependencies; mark the AppImage executable before launching it.
+- Source ZIP and tar.gz contain the tagged project source. Development builds require Node.js, Rust and the native prerequisites described in DESKTOP.md.
+- SHA256SUMS.txt lists release asset checksums. The Windows installer also has an updater signature and a latest.json update manifest. Linux updates remain manual in this release.
+
+## Colour management
+
+- Added a real LittleCMS WebAssembly engine, loaded on demand in a worker.
+- Import a printer-supplied CMYK ICC v2/v4 output profile in Setup → ICC colour management. Profile names alone do not perform conversions. The selected profile is stored with the document.
+- Perceptual, relative colorimetric, saturation and absolute colorimetric intents; optional black-point compensation and exact-black preservation.
+- Managed PDF export converts supported sRGB raster assets and vector RGB colours into output CMYK and embeds the actual ICC profile in an OutputIntent. Explicit CMYK values remain unchanged. Raster transparency is preserved as a soft mask.
+- Profile validation, conversion size limits, bounded worker requests and timeouts protect imports and keep expensive conversions off the interface thread.
+
+## Ink preview
+
+- Setup → Separations preview samples the visible artwork without selection handles or guides. Toggle C, M, Y and K independently and set the TAC warning threshold from 100–400%.
+- The preview uses the imported ICC profile when available; otherwise it clearly identifies approximate CMYK conversion.
+- Named spot isolation follows painted artwork, paths, text and image alpha rather than highlighting frame rectangles.
+- This is a composite simulation, not a RIP proof. It cannot recover original CMYK separations or certify trapping, knockout, overprint or finishing interactions. Verify final plates with the printer.
+
+## Text layout and long documents
+
+- Arbitrary Bézier, rotated-object and cropped-image-alpha runaround share the same geometry in manuscript flow, canvas rendering and PDF output.
+- Trace image transparency from the Inspector with a configurable alpha threshold and wrap gutter. Replacing an image clears stale contour metadata.
+- Fixed contour edge sampling, incomplete last rows and overlapping obstacles that previously produced incorrect available line widths.
+- Concordance-driven indexing marks matching manuscript occurrences in one undoable batch while preserving inline formatting. Supports nested topics, See/See also targets, duplicate suppression and page ranges.
+- Footnotes wrap within columns and reserve the maximum note stack, with matching positions and separator rules in canvas and PDF. Notes larger than the available layout still require editorial adjustment.
+- Existing dynamic contents, note numbering and page references continue to refresh after document changes.
+
+## Collaboration
+
+- Replaced whole-element last-writer updates with a Yjs shared-document engine. Character edits merge independently from geometry, typography, styles and document settings.
+- Shared collections use stable object identities and deletion markers. Repeated updates are idempotent, and late peers receive the original baseline plus accumulated operations.
+- Undo affects local operations rather than reverting another participant's changes. Local viewport and selection remain local.
+- Baseline checks prevent late initial synchronization from overwriting new work. Invalid shared edits are rejected and the replica is restored from its last validated checkpoint.
+- All participants must use 1.3.2 or newer. Sessions remain peer-to-peer; persistent hosted rooms, offline reconnection history and shared cursor positions inside text are not included.
+
+## PDF resources and accessibility groundwork
+
+- Fixed spot /Separation colour spaces being written outside the PDF Resources dictionary; inherited master artwork is included.
+- The tagged screen preset writes a connected StructTreeRoot, parent tree, document language, reading order and ActualText, with alternate text for described images.
+- These changes do **not** certify PDF/X or PDF/UA compliance. Complete table/link/form tagging, font and glyph guarantees, external conformance validation and PDF/X-1a transparency flattening remain unfinished. Use an independently validated production workflow when those standards are required.
+
+## Compatibility
+
+- Existing documents can be opened without selecting an ICC profile. New colour and contour settings persist in saved projects and support undo.
+- Large optional panels, the colour engine and the collaboration engine load on demand. The existing compressed startup size limit is retained.
+- Headless publishing receives the same finalized PDF resources as desktop and browser downloads.
+- Project planning, private signing keys, local release tools and generated build artifacts are excluded from the source archive.
+
+---
+
+# Previous release: Recto Studio 1.3.1
 
 Expanded publishing workflows for books, magazines, editorial layouts and marketing documents, with Windows and Linux desktop packages.
 

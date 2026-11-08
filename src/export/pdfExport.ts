@@ -23,9 +23,14 @@ import { calculateImageFitting } from '../canvas';
 import { assetStore } from '../engine/assetStore';
 import { tableEngine } from '../engine/tableEngine';
 import { tableThread } from '../engine/tableCells';
+import { prepareManagedPdf } from './iccPdf';
+import { publicationWrapObjects, wrappedPlainContent } from '../engine/publicationWrap';
+import { formatOpenTypeText } from '../engine/legacyTypography';
+import type { PdfContentTag } from './pdfStructure';
 import { getFreeToneColor, getSafeSpotName, generatePdfSeparationDict, FreeToneSpotColor } from '../engine/spotColors';
 
 export interface ExportOptions {
+  tagged?: boolean;
   strict?: boolean;
   fetchExternalAssets?: boolean;
   download?: boolean;
@@ -121,6 +126,7 @@ export async function exportDocumentToPdf(
     format: [pdfPageWidth, pdfPageHeight],
     compress: options.compress !== undefined ? options.compress : true,
   });
+  const managedPdf = await prepareManagedPdf(doc, state);
 
   // Helpers always emit the knockout state, including when overprint is disabled.
   (doc as any).__private__.setPdfVersion('1.7');
@@ -168,17 +174,10 @@ export async function exportDocumentToPdf(
     }
   }
 
-  if (usedSpotColors.size > 0) {
-    (doc.internal.events as any).subscribe('putResources', () => {
-      let csDict = '/ColorSpace << ';
-      for (const [_, spot] of usedSpotColors) {
-        const safeName = getSafeSpotName(spot.name);
-        csDict += `/CS_${safeName} ${generatePdfSeparationDict(spot)} `;
-      }
-      csDict += '>>';
-      (doc.internal as any).write(csDict);
-    });
-  }
+  // Colour spaces belong inside Resources, never as floating serialization tokens.
+  // The final object pass installs spot resources after jsPDF has finished writing.
+  const structure = options.tagged ? await import('./pdfStructure') : undefined;
+  const tags: PdfContentTag[] = [];
 
   const pagesToExport: { page: Page; spread: Spread }[] = [];
   for (const spread of targetSpreads) {
@@ -208,6 +207,7 @@ export async function exportDocumentToPdf(
     const pageContext = (doc.internal as any).getCurrentPageInfo().pageContext;
     pageContext.trimBox = box(slug + bleed);
     pageContext.bleedBox = box(slug);
+    if (structure) (doc.internal as any).write('/Artifact BMC');
 
     // 1. Fill page background (DeviceCMYK 0%)
     doc.setFillColor(0, 0, 0, 0);
@@ -237,6 +237,7 @@ export async function exportDocumentToPdf(
         state.settings.iccProfile || 'FOGRA39'
       );
     }
+    if (structure) (doc.internal as any).write('EMC');
 
     // Use the same renderer for master and page artwork, keeping masters behind page objects.
     const master = resolveMaster(state.masterSpreads, spread.masterSpreadId);
@@ -250,6 +251,17 @@ export async function exportDocumentToPdf(
       .filter(element => !element.pasteboard && !element.editorialOnly && state.layers?.find(layer => layer.id === element.layerId)?.visible !== false);
 
     for (const el of pageElements) {
+      if (el.spotColor) { const spot = getFreeToneColor(el.spotColor); if (spot) usedSpotColors.set(spot.name, spot); }
+      if (structure) {
+        const pageNumber = doc.getNumberOfPages();
+        const mcid = tags.filter(tag => tag.page === pageNumber).length;
+        const tag = structure.elementPdfTag(state, el, pageNumber, mcid);
+        if (tag) {
+          tags.push(tag);
+          const actualText = tag.text === undefined ? '' : ` /ActualText <FEFF${Array.from({ length: tag.text.length }, (_, index) => tag.text!.charCodeAt(index).toString(16).padStart(4, '0')).join('')}>`;
+          (doc.internal as any).write(`/${tag.role} << /MCID ${tag.mcid}${actualText} >> BDC`);
+        } else (doc.internal as any).write('/Artifact BMC');
+      }
       const elX = originX + el.x;
       const elY = originY + el.y;
       doc.saveGraphicsState();
@@ -359,9 +371,12 @@ export async function exportDocumentToPdf(
         const lineSpacingMm = (text.fontSizePt * lineHeight * 25.4) / 72;
         const maxLinesPerCol = Math.max(1, Math.floor((availableHeight - (text.fontSizePt * 0.3527)) / lineSpacingMm) + 1);
 
-        if (text.textContent) {
-          const layout = layoutStory(text.textContent, text, state.paragraphStyles, state.characterStyles, undefined, totalFnHtMm,
-            { obstacles: spread.elements, baselineGrid: state.settings.baselineGrid });
+        const wrapObjects = publicationWrapObjects(state, spread);
+        const hasWrap = wrapObjects.some(object => object.id !== text.id && object.pageId === text.pageId);
+        const flowContent = text.textContent || (hasWrap ? wrappedPlainContent(text, formatOpenTypeText(publicationText(state, text.text || '', page.pageNumber).replace(/\{index:[^}]+\}/g, ''), text.openTypeFeatures)) : undefined);
+        if (flowContent) {
+          const layout = layoutStory(flowContent, text, state.paragraphStyles, state.characterStyles, undefined, totalFnHtMm,
+            { obstacles: wrapObjects, baselineGrid: state.settings.baselineGrid });
           for (const line of layout.lines) for (const segment of line.segments) {
             const style = segment.style;
             const font = fontManager.getFont(style.fontFamily);
@@ -464,22 +479,22 @@ export async function exportDocumentToPdf(
         }
         if (footnotes.length > 0) {
           const fnStartY = elY + text.height - padding - totalFnHtMm;
-          const ruleWidthMm = Math.min(availableWidth * 0.45, fnSettings.separatorRuleWidthMm || 30);
+          const ruleWidthMm = Math.min(noteLayout.columnWidth * 0.45, fnSettings.separatorRuleWidthMm || 30);
 
           applyCmykDrawColor(doc, '#808080');
           doc.setLineWidth((fnSettings.separatorRuleThicknessPt || 0.5) * 0.3527);
-          doc.line(elX + padding, fnStartY, elX + padding + ruleWidthMm, fnStartY);
+          for (const x of new Set(noteLayout.lines.map(line => line.x))) doc.line(elX + padding + x, fnStartY, elX + padding + x + ruleWidthMm, fnStartY);
 
           doc.setFontSize(fnFontSizePt);
           applyCmykTextColor(doc, text.color || '#222222');
           const noteFont = fontManager.getFont(noteLayout.family);
           applyFont(doc, noteLayout.family);
-          noteLayout.lines.forEach((line, idx) => {
-            const lineY = fnStartY + 3 + noteLayout.size * 25.4 / 72 + idx * noteLayout.lineHeight;
+          noteLayout.lines.forEach(line => {
+            const lineY = fnStartY + 3 + noteLayout.size * 25.4 / 72 + line.y;
             if (noteFont) {
               applyCmykFillColor(doc, text.color || '#222222');
-              drawFontText(doc, noteFont, line.text, elX + padding, lineY, noteLayout.size);
-            } else doc.text(line.text, elX + padding, lineY);
+              drawFontText(doc, noteFont, line.text, elX + padding + line.x, lineY, noteLayout.size);
+            } else doc.text(line.text, elX + padding + line.x, lineY);
           });
         }
       } else if (el.type === 'image') {
@@ -500,16 +515,17 @@ export async function exportDocumentToPdf(
           }
         } else if (fullResSrc && (fullResSrc.startsWith('data:image') || fullResSrc.startsWith('http') || fullResSrc.startsWith('blob:'))) {
           try {
+            const managedImage = managedPdf ? await managedPdf.raster(fullResSrc) : undefined;
             let imgW = img.originalWidth || 0;
             let imgH = img.originalHeight || 0;
             let fileType = 'JPEG';
 
             try {
-              const props = doc.getImageProperties(fullResSrc);
+              const props = managedImage || doc.getImageProperties(fullResSrc);
               if (props && props.width > 0 && props.height > 0) {
                 imgW = props.width;
                 imgH = props.height;
-                if (props.fileType) fileType = props.fileType;
+                if ('fileType' in props && props.fileType) fileType = props.fileType;
               }
             } catch {
               // Ignore jsPDF inspection errors for unsupported types
@@ -536,7 +552,8 @@ export async function exportDocumentToPdf(
               doc.discardPath();
             }
 
-            doc.addImage(fullResSrc, fileType, fit.drawX, fit.drawY, fit.drawW, fit.drawH);
+            if (managedImage) doc.addImage(managedImage.bytes, 'RECTOCMYK', fit.drawX, fit.drawY, fit.drawW, fit.drawH, managedImage.alias);
+            else doc.addImage(fullResSrc, fileType, fit.drawX, fit.drawY, fit.drawW, fit.drawH);
 
             if (needsClipping) {
               doc.restoreGraphicsState();
@@ -593,6 +610,7 @@ export async function exportDocumentToPdf(
         }
       }
       doc.restoreGraphicsState();
+      if (structure) (doc.internal as any).write('EMC');
     }
 
   }
@@ -602,9 +620,11 @@ export async function exportDocumentToPdf(
   }
   for (const warning of preflightWarnings) options.onWarning?.(warning);
 
+  const finalized = (structure || usedSpotColors.size) ? await (structure || await import('./pdfStructure')).finishPdf(doc, state, [...usedSpotColors.values()], structure ? tags : undefined, options.compress !== false) : undefined;
+
   const filename = `${state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'recto-document'}.pdf`;
   if (options.download !== false) {
-    if (isDesktop()) await savePublicationFile(filename, doc.output('arraybuffer'), 'application/pdf');
+    if (isDesktop() || finalized) await savePublicationFile(filename, doc.output('arraybuffer'), 'application/pdf');
     else doc.save(filename);
   }
   return doc;

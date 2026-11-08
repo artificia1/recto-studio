@@ -1,4 +1,10 @@
 import { getFreeToneColor, getSafeSpotName } from '../engine/spotColors';
+import { explicitCmyk, type Cmyk } from '../engine/inkColors';
+
+const managedColors = new WeakMap<object, ReadonlyMap<string, Cmyk>>();
+export const setManagedPdfColors = (doc: object, colors: ReadonlyMap<string, Cmyk>) => managedColors.set(doc, colors);
+const documentColor = (doc: object, color: string) => managedColors.get(doc)?.get(color.trim().toLowerCase()) || colorToCmyk(color);
+const pdfChannel = (doc: object, value: number) => managedColors.has(doc) ? String(Number((value / 100).toFixed(6))) : value / 100;
 
 /**
  * Converts a hex or CSS color string to DeviceCMYK percentages (0-100).
@@ -9,6 +15,8 @@ export function colorToCmyk(colorStr: string | undefined): [number, number, numb
     return [0, 0, 0, 0];
   }
   const clean = colorStr.trim().toLowerCase();
+  const explicit = explicitCmyk(clean);
+  if (explicit) return explicit;
 
   // Pure Black Golden Rule for offset press plates
   if (
@@ -75,8 +83,8 @@ export function colorToCmyk(colorStr: string | undefined): [number, number, numb
 }
 
 export function applyCmykTextColor(doc: any, colorStr: string | undefined, overprint: boolean = true): void {
-  const [c, m, y, k] = colorToCmyk(colorStr || '#000000');
-  doc.setTextColor(c / 100, m / 100, y / 100, k / 100);
+  const [c, m, y, k] = documentColor(doc, colorStr || '#000000');
+  doc.setTextColor(...[c, m, y, k].map(value => pdfChannel(doc, value)));
   if (overprint && c === 0 && m === 0 && y === 0 && k === 100) {
     if (typeof (doc.internal as any).out === 'function') {
       (doc.internal as any).out('/GSOverprint gs');
@@ -89,16 +97,16 @@ export function applyCmykTextColor(doc: any, colorStr: string | undefined, overp
 }
 
 export function applyCmykFillColor(doc: any, colorStr: string | undefined): void {
-  const [c, m, y, k] = colorToCmyk(colorStr || '#ffffff');
-  doc.setFillColor(c / 100, m / 100, y / 100, k / 100);
+  const [c, m, y, k] = documentColor(doc, colorStr || '#ffffff');
+  doc.setFillColor(...[c, m, y, k].map(value => pdfChannel(doc, value)));
   if (typeof (doc.internal as any).out === 'function') {
     (doc.internal as any).out('/GSKnockout gs');
   }
 }
 
 export function applyCmykDrawColor(doc: any, colorStr: string | undefined): void {
-  const [c, m, y, k] = colorToCmyk(colorStr || '#000000');
-  doc.setDrawColor(c / 100, m / 100, y / 100, k / 100);
+  const [c, m, y, k] = documentColor(doc, colorStr || '#000000');
+  doc.setDrawColor(...[c, m, y, k].map(value => pdfChannel(doc, value)));
 }
 
 export function applySpotColor(doc: any, spotName: string, isStroke: boolean = false, tint: number = 1.0): void {
@@ -107,9 +115,9 @@ export function applySpotColor(doc: any, spotName: string, isStroke: boolean = f
   const safeName = getSafeSpotName(spot.name);
   if (typeof (doc.internal as any).out === 'function') {
     if (isStroke) {
-      (doc.internal as any).out(`/CS_${safeName} CS ${tint.toFixed(3)} SC`);
+      (doc.internal as any).out(`/CS_${safeName} CS ${tint.toFixed(3)} SCN`);
     } else {
-      (doc.internal as any).out(`/CS_${safeName} cs ${tint.toFixed(3)} sc`);
+      (doc.internal as any).out(`/CS_${safeName} cs ${tint.toFixed(3)} scn`);
     }
   } else {
     const [c, m, y, k] = spot.cmyk;

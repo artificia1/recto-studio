@@ -2,6 +2,7 @@ import type { ProjectState } from '../types';
 import { resolveMaster } from '../engine/masterInheritance';
 import { cascadeStyles } from '../engine/styleInheritance';
 import { revisedStory } from '../engine/storyRevisions';
+import { profileBytes } from '../engine/iccProfiles';
 
 type Validator = (value: unknown, path: string) => void;
 type Schema = Record<string, Validator>;
@@ -135,6 +136,18 @@ const elementSchemas: Record<string, Schema> = {
 
 const element: Validator = (value, path) => {
   const data = record(value, path);
+  if (data.textWrap && typeof data.textWrap === 'object' && !Array.isArray(data.textWrap)) {
+    const wrap = data.textWrap as Record<string, unknown>;
+    if (wrap.standoffMm === undefined) wrap.standoffMm = 3;
+  }
+  optional(object({ mode: choice('none', 'boundingBox', 'contour'), standoffMm: nonnegative }))(data.textWrap, `${path}.textWrap`);
+  if (data.type === 'image' && data.alphaContour !== undefined) {
+    if (!Array.isArray(data.alphaContour) || data.alphaContour.length > 512) fail(path, 'expected up to 512 alpha contour slices');
+    for (const row of data.alphaContour) {
+      object({ minX: nonnegative, maxX: nonnegative })(row, path);
+      if (row.minX > 1 || row.maxX > 1) fail(path, 'alpha contour coordinates must be normalized');
+    }
+  }
   optional(identifier)(data.groupId, `${path}.groupId`);
   optional(boolean)(data.pasteboard, `${path}.pasteboard`);
   optional(choice('normal', 'multiply', 'screen', 'overlay'))(data.blendMode, `${path}.blendMode`);
@@ -198,6 +211,15 @@ export function parseProject(json: string, defaults: ProjectState): ProjectState
       margins: object({ topMm: nonnegative, bottomMm: nonnegative, insideMm: nonnegative, outsideMm: nonnegative }),
       baselineGrid: object({ enabled: boolean, incrementPt: positive, startMm: number }),
       colorMode: optional(choice('cmyk', 'rgb')),
+      colorManagement: optional((value, path) => {
+        object({ outputProfile: object({ id: identifier, name: text, description: text, data: text }),
+          intent: choice('perceptual', 'relative', 'saturation', 'absolute'), blackPointCompensation: boolean,
+          preservePureBlack: boolean, convertPdf: boolean, tacLimit: number })(value, path);
+        const settings = value as NonNullable<ProjectState['settings']['colorManagement']>;
+        if (settings.tacLimit < 100 || settings.tacLimit > 400) fail(path, 'TAC must be between 100% and 400%');
+        if (settings.outputProfile.name.length > 200 || settings.outputProfile.description.length > 500) fail(path, 'profile metadata is too long');
+        profileBytes(settings.outputProfile);
+      }),
       language: optional(text), author: optional(text), identifier: optional(text),
       footnotes: optional(array(object({ id: identifier, number: count, text, kind: optional(choice('footnote', 'endnote')),
         anchorVersion: optional((value, path) => { if (value !== 1) fail(path, 'unsupported note anchor'); }), elementId: optional(identifier), pageId: optional(identifier) }))),
@@ -227,7 +249,7 @@ export function parseProject(json: string, defaults: ProjectState): ProjectState
     objectStyles: optional(array(object({ id: identifier, name: text }))),
     conditions: optional(array(object({ id: identifier, name: text, visible: boolean, colorHex: text }))),
     crossReferences: optional(array(object({ id: identifier }))),
-    indexEntries: optional(array(object({ id: identifier, topic: text, pageNumber: number, authorityCategory: optional(choice('cases', 'statutes', 'treatises')) }))),
+    indexEntries: optional(array(object({ id: identifier, topic: text, subtopics: optional(array(text)), see: optional(text), seeAlso: optional(array(text)), pageNumber: number, authorityCategory: optional(choice('cases', 'statutes', 'treatises')) }))),
     comments: optional(array(object({ id: identifier, spreadId: optional(identifier), text, author: text, x: number, y: number, spreadIndex: integer, timestamp: number, resolved: boolean }))),
     activeSpreadIndex: integer, selectedElementIds: array(identifier),
     activeTool: choice('select', 'text', 'frame', 'table', 'pen', 'pencil', 'shape-rect', 'shape-ellipse', 'shape-line', 'measure', 'hand', 'zoom'),

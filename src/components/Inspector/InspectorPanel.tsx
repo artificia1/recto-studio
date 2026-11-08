@@ -1,6 +1,6 @@
 import { useState } from 'preact/hooks';
-import { PropertiesTab } from './PropertiesTab';
 import { lazy, Suspense } from 'preact/compat';
+const PropertiesTab = lazy(() => import('./PropertiesTab').then(module => ({ default: module.PropertiesTab })));
 const PagesTab = lazy(() => import('./PagesTab').then(module => ({ default: module.PagesTab })));
 const LinksTab = lazy(() => import('./LinksTab').then(module => ({ default: module.LinksTab })));
 const TemplatesTab = lazy(() => import('./TemplatesTab').then(module => ({ default: module.TemplatesTab })));
@@ -65,7 +65,7 @@ export function InspectorPanel({ state, activeTab: propActiveTab, onTabChange, i
       </div>
 
       <div className="inspector-content">
-        {activeTab === 'properties' && <PropertiesTab state={state} />}
+        {activeTab === 'properties' && <Suspense fallback={<p role="status">Loading properties…</p>}><PropertiesTab state={state} /></Suspense>}
         {activeTab === 'styles' && <Suspense fallback={<p role="status">Loading styles…</p>}><StylesTab state={state} /></Suspense>}
         {activeTab === 'pages' && <Suspense fallback={<p role="status">Loading pages…</p>}><PagesTab state={state} /></Suspense>}
         {activeTab === 'layers' && <Suspense fallback={<p role="status">Loading layers…</p>}><LayersTab state={state} /></Suspense>}

@@ -1,5 +1,10 @@
 import { instantiateMasterItem, resolveMaster } from './engine/masterInheritance';
 import { lockedArtworkIds } from './engine/selectionGeometry';
+import { calculateImageFitting } from './engine/imageFitting';
+import { formatOpenTypeText, segmentTextWithGrep } from './engine/legacyTypography';
+export { formatOpenTypeText, segmentTextWithGrep, type TextRunSegment } from './engine/legacyTypography';
+import { publicationWrapObjects, wrappedPlainContent } from './engine/publicationWrap';
+export { calculateImageFitting, type ImageFitTransform } from './engine/imageFitting';
 import { layoutFrameNotes, publicationText } from './engine/publicationReferences';
 import { handleCanvasKeyDown } from './engine/interaction/keyboard';
 import { masterTargetPage } from './engine/pageLabels';
@@ -22,6 +27,8 @@ import {
 } from './types';
 import { stateManager, numberToSuperscript } from './state';
 import { collabSession } from './collab';
+import { registerProofCapture } from './engine/proofCapture';
+import { spotProofContext } from './engine/spotProofContext';
 import { assetStore } from './engine/assetStore';
 import { tableEngine } from './engine/tableEngine';
 import { tableThread } from './engine/tableCells';
@@ -29,31 +36,6 @@ import { canvasRunFont, layoutStory } from './engine/storyLayout';
 
 export const MM_TO_PX = 3.7795275591;
 
-export function formatOpenTypeText(str: string, features?: OpenTypeFeatures): string {
-  if (!features || !str) return str;
-  let res = str;
-  if (features.fractions) {
-    res = res
-      .replace(/\b1\/2\b/g, '½')
-      .replace(/\b1\/4\b/g, '¼')
-      .replace(/\b3\/4\b/g, '¾')
-      .replace(/\b1\/3\b/g, '⅓')
-      .replace(/\b2\/3\b/g, '⅔')
-      .replace(/\b1\/8\b/g, '⅛')
-      .replace(/\b3\/8\b/g, '⅜')
-      .replace(/\b5\/8\b/g, '⅝')
-      .replace(/\b7\/8\b/g, '⅞');
-  }
-  if (features.ligatures) {
-    res = res
-      .replace(/ffi/g, 'ﬃ')
-      .replace(/ffl/g, 'ﬄ')
-      .replace(/fi/g, 'ﬁ')
-      .replace(/fl/g, 'ﬂ')
-      .replace(/ff/g, 'ﬀ');
-  }
-  return res;
-}
 
 const LEADING_HANG_CHARS = new Set(['“', '‘', '"', "'", '«', '‹', '(', '[']);
 const TRAILING_HANG_CHARS = new Set(['.', ',', '-', '–', '—', ':', ';', '”', '’', '"', "'", '»', '›', '!', '?', ')', ']']);
@@ -80,69 +62,6 @@ export function getTrailingHangOffset(lineText: string, ctx: CanvasRenderingCont
   return 0;
 }
 
-export interface TextRunSegment {
-  text: string;
-  bold?: boolean;
-  italic?: boolean;
-  color?: string;
-}
-
-/**
- * Splits a text line into styled runs according to active GREP rules.
- */
-export function segmentTextWithGrep(
-  lineText: string,
-  grepRules?: GrepStyleRule[],
-  defaultColor?: string
-): TextRunSegment[] {
-  if (!grepRules || grepRules.length === 0 || !lineText) {
-    return [{ text: lineText, color: defaultColor }];
-  }
-
-  const matches: { start: number; end: number; rule: GrepStyleRule }[] = [];
-  for (const rule of grepRules) {
-    if (!rule.pattern) continue;
-    try {
-      const rx = new RegExp(rule.pattern, 'g');
-      let m: RegExpExecArray | null;
-      while ((m = rx.exec(lineText)) !== null) {
-        matches.push({ start: m.index, end: m.index + m[0].length, rule });
-        if (m.index === rx.lastIndex) rx.lastIndex++;
-      }
-    } catch {
-      // Ignore malformed regex
-    }
-  }
-
-  if (matches.length === 0) {
-    return [{ text: lineText, color: defaultColor }];
-  }
-
-  matches.sort((a, b) => a.start - b.start);
-
-  const segments: TextRunSegment[] = [];
-  let curr = 0;
-  for (const m of matches) {
-    if (m.start > curr) {
-      segments.push({ text: lineText.slice(curr, m.start), color: defaultColor });
-    }
-    if (m.end > curr) {
-      const start = Math.max(curr, m.start);
-      segments.push({
-        text: lineText.slice(start, m.end),
-        bold: m.rule.bold,
-        italic: m.rule.italic,
-        color: m.rule.color || defaultColor,
-      });
-      curr = m.end;
-    }
-  }
-  if (curr < lineText.length) {
-    segments.push({ text: lineText.slice(curr), color: defaultColor });
-  }
-
-  return segments;
-}
 
 export function splitWordIntoFitChunks(word: string, maxW: number, ctx: CanvasRenderingContext2D): string[] {
   if (maxW <= 10 || !word || (ctx.measureText && ctx.measureText(word).width <= maxW)) {
@@ -198,92 +117,6 @@ export function isTextFrameOverset(textEl: TextElement): boolean {
   return approxRenderedLines > totalLinesCapacity || textContent.length > totalCapacity * 1.15;
 }
 
-export interface ImageFitTransform {
-  drawX: number;
-  drawY: number;
-  drawW: number;
-  drawH: number;
-  scaleX?: number;
-  scaleY?: number;
-}
-
-export function calculateImageFitting(
-  frameX: number,
-  frameY: number,
-  frameW: number,
-  frameH: number,
-  imgW: number,
-  imgH: number,
-  fitMode: ImageFitMode = 'fill',
-  focalPoint?: { x: number; y: number }
-): ImageFitTransform {
-  if (imgW <= 0 || imgH <= 0 || frameW <= 0 || frameH <= 0) {
-    return { drawX: frameX, drawY: frameY, drawW: frameW, drawH: frameH, scaleX: 1, scaleY: 1 };
-  }
-
-  switch (fitMode) {
-    case 'fill': {
-      // 1. Fill Frame Proportionally (Ctrl+Alt+Shift+C):
-      // Scales image proportionally to fill the frame; crops excess. Centered in frame.
-      const scale = Math.max(frameW / imgW, frameH / imgH);
-      const drawW = imgW * scale;
-      const drawH = imgH * scale;
-      const focal = (value: number | undefined) => Number.isFinite(value) ? Math.max(0, Math.min(1, value!)) : 0.5;
-      const drawX = frameX + Math.max(frameW - drawW, Math.min(0, frameW / 2 - drawW * focal(focalPoint?.x)));
-      const drawY = frameY + Math.max(frameH - drawH, Math.min(0, frameH / 2 - drawH * focal(focalPoint?.y)));
-      return { drawX, drawY, drawW, drawH, scaleX: scale, scaleY: scale };
-    }
-
-    case 'fit': {
-      // 2. Fit Content Proportionally (Ctrl+Alt+Shift+E):
-      // Scales image proportionally so entire content fits within frame; no crop. Centered in frame.
-      const scale = Math.min(frameW / imgW, frameH / imgH);
-      const drawW = imgW * scale;
-      const drawH = imgH * scale;
-      const drawX = frameX + (frameW - drawW) / 2;
-      const drawY = frameY + (frameH - drawH) / 2;
-      return { drawX, drawY, drawW, drawH, scaleX: scale, scaleY: scale };
-    }
-
-    case 'frameToContent': {
-      // 3. Fit Frame to Content (Ctrl+Alt+C):
-      // Proportional content fit matching adjusted frame bounds.
-      const scale = Math.min(frameW / imgW, frameH / imgH);
-      const drawW = imgW * scale;
-      const drawH = imgH * scale;
-      const drawX = frameX + (frameW - drawW) / 2;
-      const drawY = frameY + (frameH - drawH) / 2;
-      return { drawX, drawY, drawW, drawH, scaleX: scale, scaleY: scale };
-    }
-
-    case 'contentToFrame':
-    case 'stretch': {
-      // 4. Fit Content to Frame (Ctrl+Alt+E):
-      // Anamorphic stretch: content dimensions match frame bounds exactly.
-      return {
-        drawX: frameX,
-        drawY: frameY,
-        drawW: frameW,
-        drawH: frameH,
-        scaleX: frameW / imgW,
-        scaleY: frameH / imgH,
-      };
-    }
-
-    case 'center': {
-      // 5. Center Content (Ctrl+Shift+E):
-      // Centers content within frame without altering intrinsic scale.
-      const drawW = imgW;
-      const drawH = imgH;
-      const drawX = frameX + (frameW - drawW) / 2;
-      const drawY = frameY + (frameH - drawH) / 2;
-      return { drawX, drawY, drawW, drawH, scaleX: 1, scaleY: 1 };
-    }
-
-    default:
-      return { drawX: frameX, drawY: frameY, drawW: frameW, drawH: frameH, scaleX: 1, scaleY: 1 };
-  }
-}
 
 export class SpreadCanvas {
   private container: HTMLElement;
@@ -441,6 +274,17 @@ export class SpreadCanvas {
     this.ctxLeft = rulerLeft.getContext('2d')!;
 
     this.initEvents();
+    this.windowCleanups.push(registerProofCapture(spot => {
+      const proof = document.createElement('canvas');
+      const ratio = Math.min(1, 1280 / Math.max(this.canvas.width, this.canvas.height));
+      proof.width = Math.max(1, Math.round(this.canvas.width * ratio));
+      proof.height = Math.max(1, Math.round(this.canvas.height * ratio));
+      const context = proof.getContext('2d', { willReadFrequently: true })!;
+      const transform = this.ctx.getTransform();
+      context.setTransform(transform.a * ratio, transform.b * ratio, transform.c * ratio, transform.d * ratio, transform.e * ratio, transform.f * ratio);
+      this.render({ context, spot });
+      return proof;
+    }));
     this.resizeCanvas();
 
     this.addWindowListener('resize', () => {
@@ -2993,9 +2837,10 @@ export class SpreadCanvas {
     }
   }
 
-  public render() {
-    this.overflownTextFrameIds.clear();
-    const state = stateManager.getState();
+  public render(proof?: { context: CanvasRenderingContext2D; spot?: string }) {
+    if (!proof) this.overflownTextFrameIds.clear();
+    const original = stateManager.getState();
+    const state = proof ? { ...original, previewMode: true, displayQuality: 'high' as const, selectedElementId: null, selectedElementIds: [] } : original;
     const rect = this.canvas.getBoundingClientRect();
     const {
       numPages,
@@ -3007,7 +2852,7 @@ export class SpreadCanvas {
 
     const canvasW = rect.width > 0 ? rect.width : (this.canvas.width || spreadWidthPx);
     const canvasH = rect.height > 0 ? rect.height : (this.canvas.height || spreadHeightPx);
-    const ctx = this.ctx;
+    let ctx = proof?.context || this.ctx;
 
     ctx.fillStyle = state.previewMode ? '#ffffff' : '#1e1e1e';
     ctx.fillRect(0, 0, canvasW, canvasH);
@@ -3016,7 +2861,7 @@ export class SpreadCanvas {
     const pxPerMm = MM_TO_PX * state.zoom;
     const spread = stateManager.getActiveSpread();
 
-    this.updateStaticBuffer(
+    if (!proof) this.updateStaticBuffer(
       state,
       spread,
       pxPerMm,
@@ -3027,7 +2872,7 @@ export class SpreadCanvas {
       spreadHeightPx
     );
 
-    ctx.drawImage(this.staticCanvas, origin.x - this.staticBleedPx, origin.y - this.staticBleedPx);
+    if (!proof) ctx.drawImage(this.staticCanvas, origin.x - this.staticBleedPx, origin.y - this.staticBleedPx);
 
     // In preview mode, clip all artwork to the pristine page trim rect
     if (state.previewMode) {
@@ -3049,6 +2894,7 @@ export class SpreadCanvas {
     });
     const inheritedIds = new Set(masterElements.map(element => element.id));
     const visibleElements = [...masterElements, ...spread.elements].filter(el => {
+      if (proof && (el.editorialOnly || el.pasteboard || (proof.spot && el.spotColor !== proof.spot))) return false;
       if (state.previewMode && el.pasteboard) return false;
       const elLayer = layerMap.get(el.layerId || 'layer-1');
       return !elLayer || elLayer.visible !== false;
@@ -3064,6 +2910,7 @@ export class SpreadCanvas {
       }
       return a.zIndex - b.zIndex;
     });
+    if (proof?.spot) ctx = spotProofContext(ctx);
     for (const el of sortedElements) {
       const pageIdx = spread.pages.findIndex(p => p.id === el.pageId);
       if (pageIdx === -1) continue;
@@ -3143,8 +2990,7 @@ export class SpreadCanvas {
           const label = img.caption ? `[FAST] ${img.caption}` : (img.src ? '[FAST] Raster Proxy Bypassed' : 'Image Frame');
           ctx.fillText(label, elScreenX + elScreenW / 2, elScreenY + elScreenH / 2);
         } else {
-          ctx.fillStyle = '#f8f8f8';
-          ctx.fillRect(elScreenX, elScreenY, elScreenW, elScreenH);
+          if (!proof) { ctx.fillStyle = '#f8f8f8'; ctx.fillRect(elScreenX, elScreenY, elScreenW, elScreenH); }
 
           if (img.src || img.proxySrc) {
             const displayBitmap = this.getDisplayImage(img.src, quality, img.proxySrc, img.assetId);
@@ -3208,7 +3054,7 @@ export class SpreadCanvas {
         tableEngine.renderCanvasTable(ctx, table, elScreenX, elScreenY, elScreenW, elScreenH, pxPerMm, state.zoom, tableThread(state.spreads, table));
       } else if (el.type === 'text') {
         const text = el as TextElement;
-        if (this.activeInlineEditor && this.activeInlineEditor.elementId === el.id) {
+        if (!proof && this.activeInlineEditor && this.activeInlineEditor.elementId === el.id) {
           ctx.restore();
           continue;
         }
@@ -3294,12 +3140,7 @@ export class SpreadCanvas {
         const startMm = grid?.startMm ?? state.settings.margins.topMm;
         const gridStartY = origin.y + (startMm * pxPerMm);
 
-        const obstacles = spread.elements.filter(
-          (other) =>
-            other.id !== text.id &&
-            other.pageId === text.pageId &&
-            Boolean(other.textWrap && other.textWrap.mode && other.textWrap.mode !== 'none')
-        );
+        const obstacles = publicationWrapObjects(state, spread).filter(other => other.id !== text.id && other.pageId === text.pageId);
 
         const footnotes = stateManager.getFootnotesForElement(text.id);
         const fnSettings = state.settings.footnoteSettings || {
@@ -3329,9 +3170,10 @@ export class SpreadCanvas {
         }
         const processedText = formatOpenTypeText(rawCleanedText, text.openTypeFeatures);
 
-        if (text.textContent) {
-          const layout = layoutStory(text.textContent, text, state.paragraphStyles, state.characterStyles,
-            undefined, totalFootnoteHeightPx / pxPerMm, { obstacles: spread.elements, baselineGrid: state.settings.baselineGrid });
+        const flowContent = text.textContent || (obstacles.length ? wrappedPlainContent(text, processedText) : undefined);
+        if (flowContent) {
+          const layout = layoutStory(flowContent, text, state.paragraphStyles, state.characterStyles,
+            undefined, totalFootnoteHeightPx / pxPerMm, { obstacles, baselineGrid: state.settings.baselineGrid });
           ctx.textAlign = 'left';
           ctx.textBaseline = 'alphabetic';
           for (const line of layout.lines) for (const segment of line.segments) {
@@ -3346,203 +3188,6 @@ export class SpreadCanvas {
             }
           }
           isOverflowing = layout.overset;
-        } else if (obstacles.length > 0) {
-          const paragraphs = processedText.split('\n');
-          let pIdx = 0;
-          let wordList: string[] = paragraphs[0] ? paragraphs[0].trim().split(/\s+/).filter(Boolean) : [];
-
-          for (let c = 0; c < colCount; c++) {
-            const colX = elScreenX + paddingPx + (c * (singleColWidthPx + colGutterPx));
-            let currentY = elScreenY + paddingPx;
-
-            if (useBaselineGrid) {
-              if (currentY < gridStartY) {
-                currentY = gridStartY;
-              } else {
-                const k = Math.ceil((currentY - gridStartY) / pitchPx);
-                currentY = gridStartY + (k * pitchPx);
-              }
-            }
-
-            while (currentY + fontSizePx <= bottomLimit && (pIdx < paragraphs.length || wordList.length > 0)) {
-              if (wordList.length === 0) {
-                pIdx++;
-                if (pIdx >= paragraphs.length) break;
-                const nextPara = paragraphs[pIdx].trim();
-                if (!nextPara) {
-                  if (useBaselineGrid) {
-                    const nextTentative = currentY + Math.max(lineSpacingPx, pitchPx * 0.8);
-                    const k = Math.ceil((nextTentative - gridStartY) / pitchPx);
-                    currentY = gridStartY + (k * pitchPx);
-                  } else {
-                    currentY += lineSpacingPx;
-                  }
-                  continue;
-                }
-                wordList = nextPara.split(/\s+/).filter(Boolean);
-              }
-
-              let lineIndent = 0;
-              let lineAvailW = singleColWidthPx;
-              let isLineBlocked = false;
-
-              for (const obs of obstacles) {
-                const obsStandoffPx = (obs.textWrap?.standoffMm || 0) * pxPerMm;
-                const obsMinX = origin.x + ((pageStartMm + obs.x) * pxPerMm) - obsStandoffPx;
-                const obsMaxX = origin.x + ((pageStartMm + obs.x + obs.width) * pxPerMm) + obsStandoffPx;
-                const obsMinY = origin.y + (obs.y * pxPerMm) - obsStandoffPx;
-                const obsMaxY = origin.y + ((obs.y + obs.height) * pxPerMm) + obsStandoffPx;
-
-                if (currentY + fontSizePx > obsMinY && currentY < obsMaxY) {
-                  let obsL = obsMinX;
-                  let obsR = obsMaxX;
-
-                  if (obs.textWrap?.mode === 'contour') {
-                    const midY = currentY + fontSizePx / 2;
-                    if (obs.type === 'shape' && (obs as ShapeElement).shapeKind === 'ellipse') {
-                      const cy = (obsMinY + obsMaxY) / 2;
-                      const ry = (obsMaxY - obsMinY) / 2;
-                      if (Math.abs(midY - cy) < ry && ry > 0) {
-                        const rx = (obsMaxX - obsMinX) / 2;
-                        const dx = rx * Math.sqrt(Math.max(0, 1 - Math.pow((midY - cy) / ry, 2)));
-                        const cx = (obsMinX + obsMaxX) / 2;
-                        obsL = cx - dx;
-                        obsR = cx + dx;
-                      } else {
-                        continue;
-                      }
-                    } else if (obs.type === 'image') {
-                      const img = obs as ImageElement;
-                      if (img.alphaContour && img.alphaContour.length > 0) {
-                        const yNorm = Math.max(0, Math.min(1, (midY - obsMinY) / (obsMaxY - obsMinY || 1)));
-                        const sliceIdx = Math.min(img.alphaContour.length - 1, Math.floor(yNorm * img.alphaContour.length));
-                        const slice = img.alphaContour[sliceIdx];
-                        if (slice && slice.minX <= slice.maxX) {
-                          obsL = obsMinX + (slice.minX * (obsMaxX - obsMinX));
-                          obsR = obsMinX + (slice.maxX * (obsMaxX - obsMinX));
-                        } else {
-                          continue;
-                        }
-                      }
-                    }
-                  }
-
-                  const colLeft = colX;
-                  const colRight = colX + singleColWidthPx;
-                  const overlapL = Math.max(colLeft, obsL);
-                  const overlapR = Math.min(colRight, obsR);
-
-                  if (overlapL < overlapR) {
-                    const spaceLeft = Math.max(0, obsL - colLeft);
-                    const spaceRight = Math.max(0, colRight - obsR);
-
-                    if (spaceLeft < 20 && spaceRight < 20) {
-                      isLineBlocked = true;
-                      break;
-                    } else if (spaceLeft >= spaceRight && spaceLeft >= 20) {
-                      lineAvailW = Math.min(lineAvailW, spaceLeft);
-                    } else {
-                      lineIndent = Math.max(lineIndent, obsR - colLeft);
-                      lineAvailW = Math.min(lineAvailW, colRight - (colLeft + lineIndent));
-                    }
-                  }
-                }
-              }
-
-              if (isLineBlocked || lineAvailW < 20) {
-                if (useBaselineGrid) {
-                  const nextTentative = currentY + Math.max(lineSpacingPx, pitchPx * 0.8);
-                  const k = Math.ceil((nextTentative - gridStartY) / pitchPx);
-                  currentY = gridStartY + (k * pitchPx);
-                } else {
-                  currentY += lineSpacingPx;
-                }
-                continue;
-              }
-
-              const lineWords: string[] = [];
-              while (wordList.length > 0) {
-                const nextWord = wordList[0];
-                const testText = lineWords.length === 0 ? nextWord : lineWords.join(' ') + ' ' + nextWord;
-                const testWidth = ctx.measureText(testText).width;
-                const trailingHang = getTrailingHangOffset(testText, ctx, Boolean(text.opticalMarginAlignment));
-                if (testWidth - trailingHang <= lineAvailW) {
-                  lineWords.push(wordList.shift()!);
-                } else {
-                  if (lineWords.length === 0) {
-                    const chunks = splitWordIntoFitChunks(nextWord, lineAvailW, ctx);
-                    if (chunks.length > 1) {
-                      lineWords.push(chunks[0]);
-                      wordList[0] = chunks.slice(1).join('');
-                    } else {
-                      lineWords.push(wordList.shift()!);
-                    }
-                  }
-                  break;
-                }
-              }
-
-              const isParaEnd = wordList.length === 0;
-              const lineStr = lineWords.join(' ');
-
-              if (lineStr) {
-                const hangL = getLeadingHangOffset(lineStr, ctx, Boolean(text.opticalMarginAlignment));
-                const hangR = getTrailingHangOffset(lineStr, ctx, Boolean(text.opticalMarginAlignment));
-
-                if (text.alignment === 'center') {
-                  if (activeGrepRules && activeGrepRules.length > 0) {
-                    ctx.textAlign = 'left';
-                    const totalW = ctx.measureText(lineStr).width;
-                    this.drawLineWithGrep(ctx, lineStr, colX + lineIndent + (lineAvailW - hangL + hangR) / 2 - totalW / 2, currentY, fontSizePx, text.fontFamily || 'serif', text.color || '#111111', activeGrepRules);
-                  } else {
-                    ctx.textAlign = 'center';
-                    ctx.fillText(lineStr, colX + lineIndent + (lineAvailW - hangL + hangR) / 2, currentY);
-                  }
-                } else if (text.alignment === 'right') {
-                  if (activeGrepRules && activeGrepRules.length > 0) {
-                    ctx.textAlign = 'left';
-                    const totalW = ctx.measureText(lineStr).width;
-                    this.drawLineWithGrep(ctx, lineStr, colX + lineIndent + lineAvailW + hangR - totalW, currentY, fontSizePx, text.fontFamily || 'serif', text.color || '#111111', activeGrepRules);
-                  } else {
-                    ctx.textAlign = 'right';
-                    ctx.fillText(lineStr, colX + lineIndent + lineAvailW + hangR, currentY);
-                  }
-                } else if (text.alignment === 'justify' && !isParaEnd && lineWords.length > 1) {
-                  let totalWordsW = 0;
-                  const wWidths: number[] = [];
-                  for (const w of lineWords) {
-                    const wW = ctx.measureText(w).width;
-                    wWidths.push(wW);
-                    totalWordsW += wW;
-                  }
-                  const totalTargetW = lineAvailW + hangL + hangR;
-                  const excess = totalTargetW - totalWordsW;
-                  const gap = Math.max(0, excess / (lineWords.length - 1));
-                  let curWordX = colX + lineIndent - hangL;
-                  ctx.textAlign = 'left';
-                  for (let w = 0; w < lineWords.length; w++) {
-                    this.drawLineWithGrep(ctx, lineWords[w], curWordX, currentY, fontSizePx, text.fontFamily || 'serif', text.color || '#111111', activeGrepRules);
-                    curWordX += wWidths[w] + gap;
-                  }
-                } else {
-                  ctx.textAlign = 'left';
-                  this.drawLineWithGrep(ctx, lineStr, colX + lineIndent - hangL, currentY, fontSizePx, text.fontFamily || 'serif', text.color || '#111111', activeGrepRules);
-                }
-              }
-
-              if (useBaselineGrid) {
-                const nextTentative = currentY + Math.max(lineSpacingPx, pitchPx * 0.8);
-                const k = Math.ceil((nextTentative - gridStartY) / pitchPx);
-                currentY = gridStartY + (k * pitchPx);
-              } else {
-                currentY += lineSpacingPx;
-              }
-            }
-          }
-
-          if (pIdx < paragraphs.length || wordList.length > 0) {
-            isOverflowing = true;
-          }
         } else {
           interface FormattedLine {
             text: string;
@@ -3812,15 +3457,17 @@ export class SpreadCanvas {
           const fnStartY = elScreenY + elScreenH - paddingPx - totalFootnoteHeightPx;
           const ruleThicknessPx = (fnSettings.separatorRuleThicknessPt || 0.5) * (96 / 72) * state.zoom;
           const maxRuleW = (fnSettings.separatorRuleWidthMm || 30) * pxPerMm;
-          const ruleW = Math.min(availWidthPx * 0.45, maxRuleW);
+          const ruleW = Math.min(noteLayout.columnWidth * pxPerMm * 0.45, maxRuleW);
 
           ctx.save();
           // Separator rule
           ctx.strokeStyle = '#888888';
           ctx.lineWidth = Math.max(0.5, ruleThicknessPx);
           ctx.beginPath();
-          ctx.moveTo(elScreenX + paddingPx, fnStartY);
-          ctx.lineTo(elScreenX + paddingPx + ruleW, fnStartY);
+          for (const x of new Set(noteLayout.lines.map(line => line.x))) {
+            ctx.moveTo(elScreenX + paddingPx + x * pxPerMm, fnStartY);
+            ctx.lineTo(elScreenX + paddingPx + x * pxPerMm + ruleW, fnStartY);
+          }
           ctx.stroke();
 
           // Footnote lines
@@ -3829,16 +3476,16 @@ export class SpreadCanvas {
           ctx.textAlign = 'left';
           ctx.textBaseline = 'alphabetic';
 
-          noteLayout.lines.forEach((line, idx) => {
-            const lineY = fnStartY + (3 + noteLayout.size * 25.4 / 72 + noteLayout.lineHeight * idx) * pxPerMm;
-            ctx.fillText(line.text, elScreenX + paddingPx, lineY);
+          noteLayout.lines.forEach(line => {
+            const lineY = fnStartY + (3 + noteLayout.size * 25.4 / 72 + line.y) * pxPerMm;
+            ctx.fillText(line.text, elScreenX + paddingPx + line.x * pxPerMm, lineY);
           });
           ctx.restore();
         }
 
         ctx.restore();
 
-        if (isOverflowing) {
+        if (isOverflowing && !proof) {
           this.overflownTextFrameIds.add(text.id);
         }
 
@@ -3971,6 +3618,8 @@ export class SpreadCanvas {
         }
       }
     }
+
+    if (proof) { ctx.restore(); return; }
 
     // Render Thread Vectors for linked frames
     for (const el of spread.elements) {

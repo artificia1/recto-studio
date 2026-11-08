@@ -346,6 +346,7 @@ export class StateManager {
   }
 
   public undo() {
+    if (this.collaborativeHistory) { this.collaborativeHistory.undo(); return; }
     const state = this.history.undo();
     if (state) {
       this.state = state;
@@ -354,6 +355,7 @@ export class StateManager {
   }
 
   public redo() {
+    if (this.collaborativeHistory) { this.collaborativeHistory.redo(); return; }
     const state = this.history.redo();
     if (state) {
       this.state = state;
@@ -807,6 +809,9 @@ export class StateManager {
       if ('x' in updates || 'y' in updates) restorePlacedPasteboard(this.state, el);
       // Replacing artwork turns an equation frame into a regular image frame.
       if (el.type === 'image' && 'src' in updates && !('equation' in updates)) el.equation = undefined;
+      if (el.type === 'image' && current.type === 'image' && 'src' in updates && updates.src !== current.src) {
+        for (const key of ['alphaContour', 'originalWidth', 'originalHeight', 'actualDpi', 'assetId', 'proxySrc'] as const) if (!(key in updates)) delete el[key];
+      }
       if (el.type === 'text') {
         const textEl = el as TextElement;
         const textUpdates = updates as Partial<TextElement>;
@@ -2520,6 +2525,27 @@ export class StateManager {
     this.reflowFormattedStories();
     this.pushHistory();
     this.notify();
+  }
+
+  private collaborativeHistory: { undo(): void; redo(): void } | null = null;
+
+  public setCollaborativeHistory(history: { undo(): void; redo(): void } | null) {
+    this.collaborativeHistory = history;
+    // A pre-session snapshot must never undo another participant's work later.
+    this.history.clear(); this.history.push(this.state);
+  }
+
+  /** Validate the complete shared publication before replacing any local state. */
+  public applySharedPublication(document: Partial<ProjectState>) {
+    const activeId = this.getActiveSpread().id;
+    const candidate = parseProject(JSON.stringify({ ...this.state, ...document }), INITIAL_STATE);
+    const index = candidate.spreads.findIndex(spread => spread.id === activeId);
+    candidate.activeSpreadIndex = index < 0 ? Math.min(this.state.activeSpreadIndex, candidate.spreads.length - 1) : index;
+    const ids = new Set(candidate.spreads[candidate.activeSpreadIndex].elements.map(element => element.id));
+    candidate.selectedElementIds = this.state.selectedElementIds.filter(id => ids.has(id));
+    candidate.selectedElementId = this.state.selectedElementId && ids.has(this.state.selectedElementId) ? this.state.selectedElementId : null;
+    this.state = candidate;
+    this.reflowFormattedStories(); this.refreshPublicationReferences(false); this.notify();
   }
 
   /** Validate remote edits before committing, without changing the local viewport. */
@@ -4250,6 +4276,14 @@ export class StateManager {
     return entry;
   }
 
+  public async applyIndexConcordance(source: string, wholeWords = true): Promise<number> {
+    const { parseConcordance, applyConcordance } = await import('../engine/indexConcordance');
+    const candidate = structuredClone(this.state);
+    const count = applyConcordance(candidate, parseConcordance(source), wholeWords);
+    if (count) { this.state = parseProject(JSON.stringify(candidate), INITIAL_STATE); this.pushHistory(); this.notify(); }
+    return count;
+  }
+
   public scanDocumentForIndexEntries(): IndexEntry[] {
     const entries: IndexEntry[] = [];
     let pageCounter = 1;
@@ -4477,11 +4511,15 @@ export class StateManager {
   /**
    * Generates and assigns an organic alpha silhouette contour to an image element for contour text wrapping.
    */
-  public setElementAlphaContour(elementId: string, contour: Array<{ minX: number; maxX: number }>): void {
+  public setElementAlphaContour(elementId: string, contour: Array<{ minX: number; maxX: number }>, dimensions?: { width: number; height: number }): void {
     const el = this.getElementById(elementId);
     if (!el || el.type !== 'image') return;
+    if (el.locked || this.state.layers.some(layer => layer.id === el.layerId && layer.locked)) throw new Error('Unlock the image and its layer before tracing.');
+    if (!contour.length || contour.length > 512 || contour.some(row => !Number.isFinite(row.minX) || !Number.isFinite(row.maxX) || row.minX < 0 || row.maxX < 0 || row.minX > 1 || row.maxX > 1)) throw new Error('The alpha outline is invalid. Trace the image again.');
+    if (dimensions && (!Number.isInteger(dimensions.width) || !Number.isInteger(dimensions.height) || dimensions.width < 1 || dimensions.height < 1)) throw new Error('Invalid source image dimensions.');
     this.updateElement(elementId, {
       alphaContour: contour,
+      ...(dimensions ? { originalWidth: dimensions.width, originalHeight: dimensions.height } : {}),
       textWrap: {
         mode: 'contour',
         standoffMm: el.textWrap?.standoffMm ?? 3,
