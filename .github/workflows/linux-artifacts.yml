@@ -24,8 +24,20 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf
           rustup default stable
       - run: npm ci
+      - name: Cache native build dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/tauri
+            src-tauri/target
+          key: linux-22-rust-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml', 'src-tauri/src/**') }}
+          restore-keys: linux-22-rust-
       - run: npm audit --audit-level=moderate
       - run: npm test -- --maxWorkers=2
+      - name: Prepare AppImage helpers
+        run: node scripts/prepare-bundler-tools.mjs
       - name: Build Linux packages
         run: node scripts/build-linux.mjs
       - name: Test native file operations

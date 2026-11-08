@@ -40,6 +40,8 @@ jobs:
             src-tauri/target
           key: windows-2022-rust-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml', 'src-tauri/src/**', 'src-tauri/tauri.conf.json') }}
           restore-keys: windows-2022-rust-
+      - name: Prepare installer helpers
+        run: node scripts/prepare-bundler-tools.mjs
       - name: Build Windows app and installer
         shell: pwsh
         env:
