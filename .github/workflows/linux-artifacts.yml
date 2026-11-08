@@ -50,8 +50,15 @@ jobs:
           set -euo pipefail
           version=$(node -p "require('./package.json').version")
           mkdir -p release-artifacts
-          cp src-tauri/target/release/bundle/deb/*.deb "release-artifacts/Recto-Studio-$version-Linux-x64.deb"
-          cp src-tauri/target/release/bundle/appimage/*.AppImage "release-artifacts/Recto-Studio-$version-Linux-x64.AppImage"
+          shopt -s nullglob
+          debs=(src-tauri/target/release/bundle/deb/*_"$version"_*.deb)
+          appimages=(src-tauri/target/release/bundle/appimage/*_"$version"_*.AppImage)
+          if [[ ${#debs[@]} -ne 1 || ${#appimages[@]} -ne 1 ]]; then
+            echo "Expected exactly one Debian package and AppImage for $version." >&2
+            exit 1
+          fi
+          cp -- "${debs[0]}" "release-artifacts/Recto-Studio-$version-Linux-x64.deb"
+          cp -- "${appimages[0]}" "release-artifacts/Recto-Studio-$version-Linux-x64.AppImage"
           (cd release-artifacts && sha256sum *.deb *.AppImage > SHA256SUMS-linux.txt)
           if ! gh release view "v$version" --repo "$GITHUB_REPOSITORY"; then
             gh release create "v$version" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --title "Recto Studio $version" --notes-file RELEASE_NOTES.md || gh release view "v$version" --repo "$GITHUB_REPOSITORY"
@@ -76,4 +83,4 @@ jobs:
             ~/.cargo/git
             ~/.cache/tauri
             src-tauri/target
-          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+          key: linux-22-rust-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml', 'src-tauri/src/**') }}
