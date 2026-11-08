@@ -1,0 +1,39 @@
+name: Build Linux test packages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf
+          rustup default stable
+      - run: npm ci
+      - run: npm audit --audit-level=moderate
+      - run: npm test -- --maxWorkers=2
+      - name: Build Linux packages
+        run: node scripts/build-linux.mjs
+      - name: Test native file operations
+        working-directory: src-tauri
+        run: cargo test --locked
+      - name: Retain packages for manual testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: recto-linux-x64-test-packages
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage

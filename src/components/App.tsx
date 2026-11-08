@@ -9,32 +9,48 @@ import { ControlBar } from './ControlBar';
 import { Toolbar } from './Toolbar';
 import { InspectorPanel } from './Inspector/InspectorPanel';
 import { StatusBar } from './StatusBar';
-import { FindChangeModal } from './FindChangeModal';
-import { QuickApply } from './QuickApply';
 import { BookletImpositionModal, CoverSpineModal } from './LazyPrintDialogs';
-import { ShortcutsModal } from './ShortcutsModal';
-import { StoryEditorModal } from './StoryEditorModal';
-import { BarcodeModal } from './BarcodeModal';
-import { QrCodeModal } from './QrCodeModal';
-import { ScriptsModal } from './ScriptsModal';
 import { SpreadCanvas } from '../canvas';
 import { stateManager } from '../state';
 import { fontManager } from '../fontManager';
 const ManuscriptImportModal = lazy(() => import('./ManuscriptImportModal').then(module => ({ default: module.ManuscriptImportModal })));
 const EquationModal = lazy(() => import('./EquationModal').then(module => ({ default: module.EquationModal })));
 const InddImportModal = lazy(() => import('./InddImportModal').then(module => ({ default: module.InddImportModal })));
+const StoryEditorModal = lazy(() => import('./StoryEditorModal').then(module => ({ default: module.StoryEditorModal })));
+const BarcodeModal = lazy(() => import('./BarcodeModal').then(module => ({ default: module.BarcodeModal })));
+const QrCodeModal = lazy(() => import('./QrCodeModal').then(module => ({ default: module.QrCodeModal })));
+const ShortcutsModal = lazy(() => import('./ShortcutsModal').then(module => ({ default: module.ShortcutsModal })));
+const ScriptsModal = lazy(() => import('./ScriptsModal').then(module => ({ default: module.ScriptsModal })));
+const FindChangeModal = lazy(() => import('./FindChangeModal').then(module => ({ default: module.FindChangeModal })));
+const QuickApply = lazy(() => import('./QuickApply').then(module => ({ default: module.QuickApply })));
+const SpatialWorkspace = lazy(() => import('./SpatialWorkspace'));
 
 export function App() {
+  const [showWorkspace, setShowWorkspace] = useState(false);
   const state = useProjectState();
   const [pendingManuscript, setPendingManuscript] = useState<{ story: IngestedStory; fileName: string; frame: TextElement; createFrame?: boolean } | null>(null);
   const [showFindChange, setShowFindChange] = useState(false);
+  const findChangeMounted = useRef(false);
+  if (showFindChange) findChangeMounted.current = true;
   const [showQuickApply, setShowQuickApply] = useState(false);
+  const quickApplyMounted = useRef(false);
+  if (showQuickApply) quickApplyMounted.current = true;
   const [showImposition, setShowImposition] = useState(false);
   const [showCoverSpine, setShowCoverSpine] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showStoryEditor, setShowStoryEditor] = useState(false);
+  const storyEditorMounted = useRef(false);
+  if (showStoryEditor) storyEditorMounted.current = true;
+  useEffect(() => {
+    const open = () => setShowStoryEditor(true);
+    window.addEventListener('recto:open-story-editor', open);
+    return () => window.removeEventListener('recto:open-story-editor', open);
+  }, []);
   const [showBarcodeModal, setShowBarcodeModal] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
+  const barcodeMounted = useRef(false), qrMounted = useRef(false);
+  if (showBarcodeModal) barcodeMounted.current = true;
+  if (showQrModal) qrMounted.current = true;
   const [equationEditor, setEquationEditor] = useState<{ element?: ImageElement } | null>(null);
   const [pendingIndd, setPendingIndd] = useState<File | null>(null);
   useEffect(() => {
@@ -46,6 +62,9 @@ export function App() {
     return () => window.removeEventListener('recto:edit-equation', edit);
   }, []);
   const [showScriptsModal, setShowScriptsModal] = useState(false);
+  const shortcutsMounted = useRef(false), scriptsMounted = useRef(false);
+  if (showShortcuts) shortcutsMounted.current = true;
+  if (showScriptsModal) scriptsMounted.current = true;
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const [inspectorTab, setInspectorTab] = useState<'properties' | 'styles' | 'pages' | 'layers' | 'links' | 'templates' | 'setup'>('properties');
   const containerRef = useRef<HTMLDivElement>(null);
@@ -56,7 +75,7 @@ export function App() {
 
   useEffect(() => {
     const unsubscribe = fontManager.subscribe(() => {
-      stateManager.reflowFormattedStories();
+      stateManager.refreshPublicationReferences(false);
       spreadCanvasRef.current?.render();
     });
     const families = new Set(state.paragraphStyles.map(style => style.fontFamily));
@@ -77,7 +96,11 @@ export function App() {
       const target = e.target as HTMLElement;
       const isEditing = Boolean(target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable));
 
-      if (isMod && e.shiftKey && (e.key === 'i' || e.key === 'I')) {
+      if (isMod && !isEditing && !e.altKey && e.key.toLowerCase() === 'g') {
+        e.preventDefault();
+        try { if (e.shiftKey) stateManager.ungroupSelection(); else stateManager.groupSelection(); }
+        catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
+      } else if (isMod && e.shiftKey && (e.key === 'i' || e.key === 'I')) {
         e.preventDefault();
         setShowImposition((prev) => !prev);
       } else if (isMod && e.shiftKey && (e.key === 'b' || e.key === 'B')) {
@@ -319,11 +342,7 @@ export function App() {
       {pendingManuscript && <Suspense fallback={null}><ManuscriptImportModal manuscript={pendingManuscript.story}
         fileName={pendingManuscript.fileName} frame={pendingManuscript.frame} state={state}
         onClose={() => setPendingManuscript(null)} onPlace={content => {
-          if (pendingManuscript.createFrame) {
-            const text = storyText(content);
-            stateManager.addElement({ ...pendingManuscript.frame, text, rawStoryText: text,
-              storyContent: content, textContent: content, storyStart: 0, storyEnd: text.length });
-          } else stateManager.setStoryContent(pendingManuscript.frame.id, content);
+          stateManager.placeManuscript(pendingManuscript.createFrame ? pendingManuscript.frame : pendingManuscript.frame.id, content, pendingManuscript.story.notes);
           setPendingManuscript(null);
         }} /></Suspense>}
       <TopBar
@@ -348,6 +367,7 @@ export function App() {
         <Toolbar state={state} />
 
         <main className="canvas-viewport" id="canvas-container" ref={containerRef}>
+          <button className="workspace-map-toggle sm-btn" onClick={() => setShowWorkspace(true)}>All spreads</button>
           <div className="ruler-corner"></div>
           <div className="ruler-top-container">
             <canvas id="ruler-top" ref={rulerTopRef}></canvas>
@@ -474,13 +494,14 @@ export function App() {
       </div>
 
       <StatusBar state={state} />
+      {showWorkspace && <Suspense fallback={<div role="status">Loading multi-spread workspace…</div>}><SpatialWorkspace state={state} onClose={() => { const id = stateManager.getState().selectedElementId; if (id) stateManager.zoomToElement(id); setShowWorkspace(false); }}/></Suspense>}
 
-      <FindChangeModal
+      {findChangeMounted.current && <Suspense fallback={null}><FindChangeModal
         isOpen={showFindChange}
         onClose={() => setShowFindChange(false)}
-      />
+      /></Suspense>}
 
-      <QuickApply
+      {quickApplyMounted.current && <Suspense fallback={null}><QuickApply
         isOpen={showQuickApply}
         onClose={() => setShowQuickApply(false)}
         state={state}
@@ -496,7 +517,7 @@ export function App() {
           setShowQuickApply(false);
           setShowCoverSpine(true);
         }}
-      />
+      /></Suspense>}
 
       {showImposition && (
         <BookletImpositionModal
@@ -512,21 +533,21 @@ export function App() {
         />
       )}
 
-      <ShortcutsModal
+      {shortcutsMounted.current && <Suspense fallback={<div role="status">Loading shortcuts…</div>}><ShortcutsModal
         isOpen={showShortcuts}
         onClose={() => setShowShortcuts(false)}
-      />
+      /></Suspense>}
 
-      <StoryEditorModal
+      {storyEditorMounted.current && <Suspense fallback={<div role="status">Loading Story Editor…</div>}><StoryEditorModal
         isOpen={showStoryEditor}
         onClose={() => setShowStoryEditor(false)}
         state={state}
-      />
+      /></Suspense>}
 
-      <BarcodeModal
+      {barcodeMounted.current && <Suspense fallback={<div role="status">Loading barcode editor…</div>}><BarcodeModal
         isOpen={showBarcodeModal}
         onClose={() => setShowBarcodeModal(false)}
-      />
+      /></Suspense>}
 
       {equationEditor && <Suspense fallback={<div className="modal-overlay" role="status">Loading equation editor…</div>}>
         <EquationModal element={equationEditor.element} onClose={() => setEquationEditor(null)} />
@@ -534,15 +555,15 @@ export function App() {
       {pendingIndd && <Suspense fallback={<div role="status">Loading import options…</div>}>
         <InddImportModal file={pendingIndd} onClose={() => setPendingIndd(null)} />
       </Suspense>}
-      <QrCodeModal
+      {qrMounted.current && <Suspense fallback={<div role="status">Loading QR editor…</div>}><QrCodeModal
         isOpen={showQrModal}
         onClose={() => setShowQrModal(false)}
-      />
+      /></Suspense>}
 
-      <ScriptsModal
+      {scriptsMounted.current && <Suspense fallback={<div role="status">Loading scripts…</div>}><ScriptsModal
         isOpen={showScriptsModal}
         onClose={() => setShowScriptsModal(false)}
-      />
+      /></Suspense>}
     </div>
   );
 }

@@ -1975,7 +1975,8 @@ const testAssetImg: ImageElement = {
 };
 stateManager.addElement(testAssetImg);
 
-const pkg = await packageDocument(stateManager.getState(), { download: false });
+// This accumulated design fixture contains intentionally empty image placeholders.
+const pkg = await packageDocument(stateManager.getState(), { download: false, strict: false });
 assert(pkg.buffer instanceof Uint8Array, 'packageDocument must return a binary Uint8Array buffer');
 assert(pkg.buffer.length > 0, 'Package buffer must not be empty');
 assert(pkg.filename.endsWith('.zip'), 'Package filename must have .zip extension');
@@ -2000,8 +2001,8 @@ const pdfMagic = new TextDecoder().decode(pdfBytes.subarray(0, 5));
 assert(pdfMagic.startsWith('%PDF'), 'PDF file must have valid %PDF magic header');
 
 // c) Verify Assets/ subfolder
-const assetFile = zipFiles.find((f) => f === 'Assets/test-hero.png');
-assert(assetFile, 'Package archive must contain Assets/test-hero.png');
+const assetFile = zipFiles.find((f) => /^Assets\/image-\d+\.png$/.test(f));
+assert(assetFile, 'Package archive must contain the PNG under a safe generated asset path');
 const assetBytes = unzipped.get(assetFile!)!;
 assert.strictEqual(assetBytes.length, 70, 'Extracted asset bytes must match base64 decoded PNG size');
 
@@ -2488,7 +2489,7 @@ assert(tocResult.entries.some(e => e.title.includes('Chapter 1')), 'TOC must con
 assert(tocResult.tocText.includes('.'), 'TOC text must contain dot leaders');
 assert(tocResult.elementId, 'TOC element should be inserted when targetPageId is supplied');
 const tocElem = stateManager.getElementById(tocResult.elementId!) as TextElement;
-assert(tocElem && tocElem.text.includes('TABLE OF CONTENTS'), 'Generated element must contain TOC title and entries');
+assert(tocElem?.generated?.kind === 'toc' && tocElem.rawStoryText?.includes('Contents') && tocElem.rawStoryText.includes('Chapter 1'), 'Generated story must contain the contents title and live heading entries');
 
 // Clean up generated elements
 stateManager.deleteElement(headingEl.id);

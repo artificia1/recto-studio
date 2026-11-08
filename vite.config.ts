@@ -11,7 +11,7 @@ export default defineConfig({
   build: {
     manifest: true,
     rollupOptions: {
-      external: [/^core-js/, 'canvg', 'html2canvas', 'dompurify'],
+      external: [/^core-js/, /^node:/, '@resvg/resvg-js', 'canvg', 'html2canvas', 'dompurify'],
     },
   },
 });

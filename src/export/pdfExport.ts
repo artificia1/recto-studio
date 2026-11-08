@@ -1,3 +1,8 @@
+import { instantiateMasterItem, resolveMaster } from '../engine/masterInheritance';
+import { layoutFrameNotes, notesForFrame, publicationSnapshot, publicationText } from '../engine/publicationReferences';
+import { publicationPreflight } from '../engine/publicationPreflight';
+import { embeddedAsset, prepareExportAssets } from './publicationAssets';
+import { registerPdfFonts } from './pdfFonts';
 /**
  * Recto Studio — High-Precision Desktop Publishing Engine
  * Copyright (c) 2022-2026 Abhinav. All rights reserved.
@@ -12,14 +17,17 @@ import { fontManager } from '../fontManager';
 import { isDesktop, savePublicationFile } from '../desktop';
 import { layoutStory } from '../engine/storyLayout';
 import { drawFontText, fontTextWidth, wrapFontText } from './fontOutlines';
-import { ProjectState, Page, Spread, TextElement, ImageElement, ShapeElement, VectorPathElement, TableElement } from '../types/index';
+import { ProjectState, Page, Spread, TextElement, ImageElement, ShapeElement, VectorPathElement, TableElement, CanvasElement } from '../types/index';
 import { stateManager, numberToSuperscript } from '../state';
 import { calculateImageFitting } from '../canvas';
 import { assetStore } from '../engine/assetStore';
 import { tableEngine } from '../engine/tableEngine';
+import { tableThread } from '../engine/tableCells';
 import { getFreeToneColor, getSafeSpotName, generatePdfSeparationDict, FreeToneSpotColor } from '../engine/spotColors';
 
 export interface ExportOptions {
+  strict?: boolean;
+  fetchExternalAssets?: boolean;
   download?: boolean;
   includeCropMarks?: boolean;
   includeBleed?: boolean;
@@ -72,10 +80,22 @@ function drawBezierSegmentInPdf(
 }
 
 export async function exportDocumentToPdf(
-  state: ProjectState,
+  source: ProjectState,
   options: ExportOptions = {}
 ): Promise<jsPDF> {
-  await fontManager.restoreFonts(state.embeddedFonts);
+  if (options.exportFormat === 'spreads') throw new Error('Spread PDF output is not implemented. Export individual pages or use booklet imposition.');
+  await fontManager.restoreFonts(source.embeddedFonts);
+  const state = publicationSnapshot(await prepareExportAssets(source, options.fetchExternalAssets ?? typeof window !== 'undefined'));
+  const publicationIssues = publicationPreflight(state, options.strict ? 'print' : 'editor');
+  const tableErrors = publicationIssues.filter(issue => issue.code === 'TABLE_LAYOUT' && issue.severity === 'error');
+  if (tableErrors.length) throw new Error(tableErrors.map(issue => `Page ${issue.pageNumber}: ${issue.message}`).join('\n'));
+  if (options.strict) {
+    const errors = publicationIssues.filter(issue => issue.severity === 'error');
+    if (errors.length) throw new Error(errors.map(issue => `Page ${issue.pageNumber}: ${issue.message}`).join('\n'));
+    if (state.settings.footnotes?.some(note => note.kind === 'endnote') && !state.spreads.some(spread => spread.elements.some(element => element.type === 'text' && element.generated?.kind === 'endnotes'))) {
+      throw new Error('Create the endnotes list in Pages before exporting print PDF.');
+    }
+  }
   const {
     includeCropMarks = false,
     includeBleed = false,
@@ -103,10 +123,12 @@ export async function exportDocumentToPdf(
   });
 
   // Helpers always emit the knockout state, including when overprint is disabled.
+  (doc as any).__private__.setPdfVersion('1.7');
   {
     const baseGState = new (doc as any).GState({ opacity: 1 });
     (doc as any).setGState(baseGState);
     (doc.internal.events as any).subscribe('putGStateDict', () => {
+      for (const name of ['Normal', 'Multiply', 'Screen', 'Overlay']) (doc.internal as any).write(`/GSBlend${name} << /Type /ExtGState /BM /${name} >>`);
       (doc.internal as any).write('/GSOverprint << /Type /ExtGState /OP true /op true /OPM 1 >>');
       (doc.internal as any).write('/GSKnockout << /Type /ExtGState /OP false /op false /OPM 0 >>');
     });
@@ -115,13 +137,14 @@ export async function exportDocumentToPdf(
   doc.setDocumentProperties({
     title: state.settings.title || 'Recto Document',
     subject: 'Publication exported from Recto Studio',
-    author: 'Recto Studio',
+    author: state.settings.author || 'Recto Studio',
     keywords: 'publication, desktop publishing',
     creator: 'Recto Studio (Open-Source DTP Architecture)',
   });
 
   const storyOverflowMap = new Map<string, string[]>();
-  const preflightWarnings: string[] = [];
+  doc.setLanguage((state.settings.language || 'en-US') as Parameters<typeof doc.setLanguage>[0]);
+  const preflightWarnings: string[] = registerPdfFonts(doc, state.embeddedFonts);
   (doc as any).preflightWarnings = preflightWarnings;
 
   let isFirstPage = true;
@@ -215,74 +238,31 @@ export async function exportDocumentToPdf(
       );
     }
 
-    // 3. Render Master Spread Elements (rendered behind page elements)
-    if (spread.masterSpreadId) {
-      const master = state.masterSpreads?.find(m => m.id === spread.masterSpreadId);
-      if (master) {
-        for (const mEl of master.elements) {
-          if (spread.detachedMasterElementIds?.includes(mEl.id)) {
-            continue;
-          }
-          if (spread.elements.some(e => e.masterSourceId === mEl.id && e.pageId === page.id)) {
-            continue;
-          }
-          if (masterTargetPage(master.pages, spread.pages, mEl.pageId)?.id !== page.id) {
-            continue;
-          }
-
-          const mX = originX + mEl.x;
-          let mY = originY + mEl.y;
-          if (mEl.y + (mEl.height || 0) > heightMm - 2) {
-            mY = originY + Math.max(0, heightMm - (state.settings.margins.bottomMm || 15) + 2);
-          }
-
-          if (mEl.type === 'shape') {
-            const shape = mEl as ShapeElement;
-            applyCmykFillColor(doc, shape.fillColor);
-            applyCmykDrawColor(doc, shape.strokeColor);
-            doc.setLineWidth(shape.strokeWidthMm || 0.2);
-            if (shape.shapeKind === 'line') {
-              doc.line(mX, mY, mX + shape.width, mY + shape.height);
-            } else if (shape.shapeKind === 'rectangle') {
-              doc.rect(mX, mY, shape.width, shape.height, shape.fillColor ? 'FD' : 'S');
-            }
-          } else if (mEl.type === 'text') {
-            const textEl = mEl as TextElement;
-            const evalText = stateManager.evaluateTokens(textEl.text, page.pageNumber);
-            applyCmykTextColor(doc, textEl.color || '#000000', overprintBlack);
-            doc.setFontSize(textEl.fontSizePt);
-            applyFont(doc, textEl.fontFamily);
-            let mTargetX = mX;
-            let mAlign: 'left' | 'center' | 'right' = 'left';
-            if (textEl.alignment === 'center') {
-              mTargetX = mX + textEl.width / 2;
-              mAlign = 'center';
-            } else if (textEl.alignment === 'right') {
-              mTargetX = mX + textEl.width;
-              mAlign = 'right';
-            }
-            const masterFont = fontManager.getFont(textEl.fontFamily);
-            if (masterFont) {
-              applyCmykFillColor(doc, textEl.color || '#000000');
-              const width = fontTextWidth(masterFont, evalText, textEl.fontSizePt);
-              const x = mAlign === 'center' ? mTargetX - width / 2 : mAlign === 'right' ? mTargetX - width : mTargetX;
-              drawFontText(doc, masterFont, evalText, x, mY + textEl.fontSizePt * 0.3527, textEl.fontSizePt);
-            } else doc.text(evalText, mTargetX, mY + (textEl.fontSizePt * 0.3527), {
-              maxWidth: textEl.width,
-              align: mAlign,
-            });
-          }
-        }
-      }
-    }
-
-    // 4. Render Page Elements
-    const pageElements = spread.elements.filter(el => el.pageId === page.id);
-    pageElements.sort((a, b) => a.zIndex - b.zIndex);
+    // Use the same renderer for master and page artwork, keeping masters behind page objects.
+    const master = resolveMaster(state.masterSpreads, spread.masterSpreadId);
+    const masterElements = (master?.elements || []).filter(element =>
+      masterTargetPage(master!.pages, spread.pages, element.pageId)?.id === page.id &&
+      !spread.detachedMasterElementIds?.includes(element.id) &&
+      !spread.elements.some(candidate => candidate.masterSourceId === element.id && candidate.pageId === page.id))
+      .map(element => instantiateMasterItem(element, page.id, text => publicationText(state, text, page.pageNumber)));
+    const paintOrder = (a: CanvasElement, b: CanvasElement) => (state.layers.find(layer => layer.id === a.layerId)?.order || 0) - (state.layers.find(layer => layer.id === b.layerId)?.order || 0) || a.zIndex - b.zIndex;
+    const pageElements = [...masterElements.sort(paintOrder), ...spread.elements.filter(element => element.pageId === page.id).sort(paintOrder)]
+      .filter(element => !element.pasteboard && !element.editorialOnly && state.layers?.find(layer => layer.id === element.layerId)?.visible !== false);
 
     for (const el of pageElements) {
       const elX = originX + el.x;
       const elY = originY + el.y;
+      doc.saveGraphicsState();
+      if (el.opacity !== 1) doc.setGState(doc.GState({ opacity: el.opacity, 'stroke-opacity': el.opacity }));
+      const blend = ({ normal: 'Normal', multiply: 'Multiply', screen: 'Screen', overlay: 'Overlay' } as const)[el.blendMode || 'normal'];
+      if (!blend) throw new Error('Unsupported object blend mode. Choose Normal, Multiply, Screen or Overlay.');
+      (doc.internal as any).write(`/GSBlend${blend} gs`);
+      if (el.rotation) {
+        const angle = -el.rotation * Math.PI / 180, a = Math.cos(angle), b = Math.sin(angle), c = -b, d = a;
+        const scale = doc.internal.scaleFactor;
+        const cx = (elX + el.width / 2) * scale, cy = (pdfPageHeight - elY - el.height / 2) * scale;
+        doc.setCurrentTransformationMatrix(doc.Matrix(a, b, c, d, cx - a * cx - c * cy, cy - b * cx - d * cy));
+      }
 
       if (el.type === 'shape') {
         const shape = el as ShapeElement;
@@ -353,7 +333,7 @@ export async function exportDocumentToPdf(
         const padding = text.paddingMm ?? 0;
         const availableWidth = Math.max(2, text.width - (padding * 2));
 
-        const footnotes = stateManager.getFootnotesForElement(text.id);
+        const footnotes = notesForFrame(state, text);
         const fnSettings = state.settings.footnoteSettings || {
           numberingStyle: 'superscript',
           separatorRuleWidthMm: 30,
@@ -362,7 +342,8 @@ export async function exportDocumentToPdf(
         };
         const fnFontSizePt = fnSettings.fontSizePt || 8;
         const fnLineHeightMm = fnFontSizePt * 0.3527 * 1.35;
-        const totalFnHtMm = footnotes.length > 0 ? (footnotes.length * fnLineHeightMm) + 3 : 0;
+        const noteLayout = layoutFrameNotes(state, text, footnotes);
+        const totalFnHtMm = noteLayout.height;
         const availableHeight = Math.max(0, text.height - (padding * 2) - totalFnHtMm);
 
         const colCount = text.spanColumns
@@ -407,19 +388,19 @@ export async function exportDocumentToPdf(
           if (layout.overset && !text.nextFrameId) {
             const warning = `Page ${page.pageNumber}: Text frame "${text.id}" has overset manuscript text.`;
             preflightWarnings.push(warning);
-            options.onWarning?.(warning);
+
           }
         } else {
         let linesToRender: string[];
         if (text.prevFrameId && storyOverflowMap.has(text.id)) {
           linesToRender = storyOverflowMap.get(text.id)!;
         } else {
-          let evalText = stateManager.evaluateTokens(text.text || '', page.pageNumber);
+          let evalText = publicationText(state, text.text || '', page.pageNumber);
           if (evalText.includes('{cond:')) {
-            evalText = stateManager.evaluateConditions(evalText);
+            evalText = publicationText(state, evalText, page.pageNumber);
           }
           if (evalText.includes('{xref:')) {
-            evalText = stateManager.resolveCrossReferences(evalText);
+            evalText = publicationText(state, evalText, page.pageNumber);
           }
           if (evalText.includes('{index:')) {
             evalText = evalText.replace(/\{index:[^}]+\}/g, '');
@@ -439,7 +420,7 @@ export async function exportDocumentToPdf(
           } else {
             const warningMsg = `Page ${page.pageNumber}: Text frame "${text.id}" overset by ${overflowLines.length} lines.`;
             preflightWarnings.push(warningMsg);
-            if (options.onWarning) options.onWarning(warningMsg);
+
           }
         }
 
@@ -482,7 +463,7 @@ export async function exportDocumentToPdf(
 
         }
         if (footnotes.length > 0) {
-          const fnStartY = elY + text.height - padding - totalFnHtMm + 1;
+          const fnStartY = elY + text.height - padding - totalFnHtMm;
           const ruleWidthMm = Math.min(availableWidth * 0.45, fnSettings.separatorRuleWidthMm || 30);
 
           applyCmykDrawColor(doc, '#808080');
@@ -491,32 +472,26 @@ export async function exportDocumentToPdf(
 
           doc.setFontSize(fnFontSizePt);
           applyCmykTextColor(doc, text.color || '#222222');
-          footnotes.forEach((fn, idx) => {
-            const lineY = fnStartY + 2 + (idx * fnLineHeightMm);
-            const marker = numberToSuperscript(fn.number);
-            if (customFont) {
+          const noteFont = fontManager.getFont(noteLayout.family);
+          applyFont(doc, noteLayout.family);
+          noteLayout.lines.forEach((line, idx) => {
+            const lineY = fnStartY + 3 + noteLayout.size * 25.4 / 72 + idx * noteLayout.lineHeight;
+            if (noteFont) {
               applyCmykFillColor(doc, text.color || '#222222');
-              drawFontText(doc, customFont, `${marker} ${fn.text}`, elX + padding, lineY, fnFontSizePt);
-            } else doc.text(`${marker} ${fn.text}`, elX + padding, lineY);
+              drawFontText(doc, noteFont, line.text, elX + padding, lineY, noteLayout.size);
+            } else doc.text(line.text, elX + padding, lineY);
           });
         }
       } else if (el.type === 'image') {
         const img = el as ImageElement;
         const fullResSrc = (assetStore.getFullResolution(img.assetId || img.src) as string) || img.src;
-        if (img.equation) {
-          if (typeof DOMParser === 'undefined') throw new Error('Equation PDF export requires the Recto desktop app or a browser. Headless exports can use EPUB or SVG.');
-          // Re-typeset the stored source, never inject SVG supplied by an imported project.
-          const { renderEquation } = await import('../engine/equations');
-          const { svg2pdf } = await import('svg2pdf.js');
-          const rendered = renderEquation(img.equation);
-          const svg = new DOMParser().parseFromString(rendered.svg, 'image/svg+xml').documentElement;
-          const fit = calculateImageFitting(elX, elY, img.width, img.height, rendered.widthMm, rendered.heightMm, img.fitMode || 'fit');
+        if (img.equation || fullResSrc.startsWith('data:image/svg+xml')) {
+          const svgSource = img.equation ? (await import('../engine/equations')).renderEquation(img.equation).svg : new TextDecoder().decode(embeddedAsset(fullResSrc).bytes);
           doc.saveGraphicsState();
           try {
-            doc.rect(elX, elY, img.width, img.height, null);
-            doc.clip();
-            doc.discardPath();
-            await svg2pdf(svg, doc, { x: fit.drawX, y: fit.drawY, width: fit.drawW, height: fit.drawH });
+            doc.rect(elX, elY, img.width, img.height, null); doc.clip(); doc.discardPath();
+            const { drawSvgPdf } = await import('./svgPdf');
+            await drawSvgPdf(doc, svgSource, img, elX, elY);
           } finally { doc.restoreGraphicsState(); }
           if (img.borderWidthMm > 0 && img.borderColor !== 'transparent') {
             applyCmykDrawColor(doc, img.borderColor);
@@ -551,7 +526,7 @@ export async function exportDocumentToPdf(
             const imgWMm = imgW > 0 ? imgW / 3.7795275591 : img.width;
             const imgHMm = imgH > 0 ? imgH / 3.7795275591 : img.height;
             const fitMode = img.fitMode || 'fill';
-            const fit = calculateImageFitting(elX, elY, img.width, img.height, imgWMm, imgHMm, fitMode);
+            const fit = calculateImageFitting(elX, elY, img.width, img.height, imgWMm, imgHMm, fitMode, img.focalPoint);
 
             const needsClipping = fitMode === 'fill' || fitMode === 'center';
             if (needsClipping) {
@@ -575,14 +550,14 @@ export async function exportDocumentToPdf(
 
             assetStore.flushPageExportBuffer(img.assetId || img.src);
           } catch (e) {
-            drawPlaceholderImage(doc, elX, elY, img.width, img.height, img.caption);
+            throw new Error(`Image “${img.name || img.id}” could not be rendered. Relink it before exporting. ${e instanceof Error ? e.message : String(e)}`);
           }
         } else {
           drawPlaceholderImage(doc, elX, elY, img.width, img.height, img.caption);
         }
       } else if (el.type === 'table') {
         const table = el as TableElement;
-        tableEngine.exportPdfTable(doc, table, elX, elY, table.width, table.height, [table], overprintBlack);
+        tableEngine.exportPdfTable(doc, table, elX, elY, table.width, table.height, tableThread(state.spreads, table), overprintBlack);
       }
 
       // 4b. AcroForm Interactive PDF Form Field
@@ -617,14 +592,15 @@ export async function exportDocumentToPdf(
           (doc as any).addField(btn);
         }
       }
+      doc.restoreGraphicsState();
     }
 
   }
 
-  // Content is not tagged with MCIDs; do not advertise PDF/UA or PDF/X conformance.
-  (doc.internal.events as any).subscribe('putCatalog', () => {
-    (doc.internal as any).write('/Lang (en-US)');
-  });
+  if (options.strict && preflightWarnings.some(warning => /overset/i.test(warning))) {
+    throw new Error(preflightWarnings.filter(warning => /overset/i.test(warning)).join('\n'));
+  }
+  for (const warning of preflightWarnings) options.onWarning?.(warning);
 
   const filename = `${state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'recto-document'}.pdf`;
   if (options.download !== false) {

@@ -1,5 +1,8 @@
 // Recto Font Manager: Google Fonts Loader & Custom Font Drop Engine
 
+import { normalizeVariations, variationCss, type FontVariations } from './engine/fontVariations';
+import type { FontAsset } from './types';
+
 export interface FontMetadata {
   family: string;
   category: 'serif' | 'sans-serif' | 'display' | 'monospace' | 'handwriting';
@@ -79,7 +82,7 @@ export const SYSTEM_FONTS: FontMetadata[] = [
 ];
 
 export class FontManager {
-  private fontAssets = new Map<string, { family: string; fileName: string; data: string }>();
+  private fontAssets = new Map<string, FontAsset>();
   private parsedFonts = new Map<string, import('fontkit').Font>();
   private activeFaces = new Map<string, FontFace>();
   private googleRequests = new Map<string, Promise<boolean>>();
@@ -187,7 +190,8 @@ export class FontManager {
 
   public async registerFontBuffer(
     fileName: string,
-    buffer: ArrayBuffer | Uint8Array
+    buffer: ArrayBuffer | Uint8Array,
+    variations?: FontVariations
   ): Promise<string> {
     const bytes = buffer instanceof Uint8Array ? new Uint8Array(buffer) : new Uint8Array(buffer.slice(0));
     if (!bytes.length || bytes.length > 32 * 1024 * 1024) {
@@ -203,7 +207,14 @@ export class FontManager {
     } catch {
       throw new Error('This font could not be read. Choose a valid TTF, OTF, WOFF, or WOFF2 file. For collections, export an individual font first.');
     }
-    const familyName = parsed.fullName || parsed.familyName || fileName.replace(/\.[^.]+$/, '');
+    const baseName = parsed.fullName || parsed.familyName || fileName.replace(/\.[^.]+$/, '');
+    const coordinates = variations ? normalizeVariations(parsed.variationAxes || {}, variations) : undefined;
+    const hasCoordinates = coordinates && Object.keys(coordinates).length;
+    // Include source identity: different fonts can share names, especially after
+    // converting non-Latin names to a safe CSS identifier.
+    const fingerprint = hasCoordinates ? Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes.buffer as ArrayBuffer)).subarray(0, 12), byte => byte.toString(16).padStart(2, '0')).join('') : '';
+    const familyName = hasCoordinates ? `${baseName.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 32)}_Var_${fingerprint}_${Object.entries(coordinates!).map(([tag, value]) => `${tag}_${String(value).replace(/-/g, 'm').replace(/\./g, 'p')}`).join('_')}` : baseName;
+    if (coordinates && Object.keys(coordinates).length) parsed = parsed.getVariation(coordinates);
 
     const metadata: FontMetadata = {
       family: familyName,
@@ -220,6 +231,10 @@ export class FontManager {
       try {
         const arrayBuffer = bytes.buffer;
         const fontFace = new FontFace(familyName, arrayBuffer as unknown as BufferSource);
+        if (coordinates) {
+          if (!('variationSettings' in fontFace)) throw new Error('Variable fonts are not supported by this browser.');
+          (fontFace as FontFace & { variationSettings: string }).variationSettings = variationCss(coordinates);
+        }
         await fontFace.load();
         const previous = this.activeFaces.get(familyName);
         if (previous) document.fonts.delete(previous);
@@ -236,7 +251,7 @@ export class FontManager {
     for (let offset = 0; offset < bytes.length; offset += 8192) {
       binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
     }
-    this.fontAssets.set(familyName, { family: familyName, fileName, data: btoa(binary) });
+    this.fontAssets.set(familyName, { family: familyName, fileName, data: btoa(binary), ...(coordinates ? { variations: coordinates } : {}) });
     this.notify();
     return familyName;
   }
@@ -253,11 +268,24 @@ export class FontManager {
     return Array.from(this.fontAssets.values());
   }
 
-  public async restoreFonts(assets: { family: string; fileName: string; data: string }[] = []) {
+  public getFontAsset(family: string) {
+    return this.fontAssets.get(family.split(',')[0].trim().replace(/['"]/g, ''));
+  }
+
+  public async createVariation(family: string, variations: FontVariations) {
+    const asset = this.getFontAsset(family);
+    if (!asset) throw new Error('Import the variable font file before choosing its axes.');
+    const bytes = Uint8Array.from(atob(asset.data), character => character.charCodeAt(0));
+    return this.registerFontBuffer(asset.fileName, bytes, variations);
+  }
+
+  public async restoreFonts(assets: FontAsset[] = []) {
     for (const asset of assets) {
-      if (this.fontAssets.get(asset.family)?.data === asset.data) continue;
+      const existing = this.fontAssets.get(asset.family);
+      if (existing?.data === asset.data && variationCss(existing.variations) === variationCss(asset.variations)) continue;
       const bytes = Uint8Array.from(atob(asset.data), character => character.charCodeAt(0));
-      await this.registerFontBuffer(asset.fileName, bytes);
+      const restoredFamily = await this.registerFontBuffer(asset.fileName, bytes, asset.variations);
+      if (asset.variations && restoredFamily !== asset.family) throw new Error('The saved variable-font instance name does not match its source and coordinates.');
     }
   }
 }

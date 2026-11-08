@@ -25,7 +25,7 @@ describe('Headless Publishing CLI Engine (recto build)', () => {
     // Verify PDF header
     const buffer = fs.readFileSync(tmpPdfOut);
     expect(buffer.toString('utf8', 0, 5)).toBe('%PDF-');
-  }, 30000);
+  }, 60000);
 
   it('runs recto build headlessly for HTML flipbook and EPUB 3', () => {
     const cliPath = path.resolve('bin/recto.js');

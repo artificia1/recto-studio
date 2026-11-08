@@ -33,6 +33,7 @@ export function ManuscriptImportModal({ manuscript, fileName, frame, state, onPl
               {state.paragraphStyles.map(style => <option key={style.id} value={style.id}>{style.name}</option>)}
             </select></label>)}
           {!!manuscript.warnings?.length && <div className="manuscript-warnings"><h3>Review after import</h3><ul>{manuscript.warnings.map(w => <li key={w}>{w}</li>)}</ul></div>}
+          {!!manuscript.notes?.length && <details><summary>Imported notes ({manuscript.notes.length})</summary><ol>{manuscript.notes.map(note => <li key={note.id}><strong>{note.kind === 'endnote' ? 'Endnote' : 'Footnote'}</strong><p>{note.text || '[Missing note body]'}</p></li>)}</ol></details>}
         </aside>
         <StoryPreview content={content} frame={frame} state={state} />
       </div>

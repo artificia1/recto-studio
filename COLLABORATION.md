@@ -19,6 +19,8 @@ Simultaneous typing in the same frame can lose one participant's edit.
 Supported local element commands use the existing mutation hooks. Page/spread changes,
 style definitions, undo/redo, bulk scripts, and commands that bypass those hooks are
 not continuously synchronized. Initial synchronization includes those document fields.
+Reviewed data batches, authority marks/lists and imported font assets are among
+these document changes; do not assume they synchronize live between existing peers.
 Mixed older clients have no conflict guarantees; legacy operations are accepted only
 when their target can be identified unambiguously by element/page ID.
 

@@ -37,6 +37,9 @@ export interface BaselineGridSettings {
 }
 
 export interface DocumentSettings {
+  language?: string;
+  author?: string;
+  identifier?: string;
   title: string;
   preset: PagePreset;
   widthMm: number;
@@ -64,6 +67,8 @@ export interface FootnoteSettings {
 }
 
 export interface Footnote {
+  kind?: 'footnote' | 'endnote';
+  anchorVersion?: 1;
   id: string;
   number: number;
   text: string;
@@ -108,12 +113,15 @@ export interface GrepStyleRule {
 }
 
 export interface ParagraphStyle {
+  basedOnId?: string;
+  inheritedProperties?: (keyof ParagraphStyle)[];
   keepWithNext?: boolean;
   keepTogether?: boolean;
   orphanLines?: number;
   widowLines?: number;
   hyphenate?: boolean;
-  language?: 'en-US' | 'de' | 'fr';
+  language?: 'en-US' | 'de' | 'fr' | 'ja' | 'zh' | 'ko';
+  cjkLineBreak?: boolean;
   bold?: boolean;
   italic?: boolean;
   id: string;
@@ -190,6 +198,7 @@ export interface CrossReference {
 }
 
 export interface IndexEntry {
+  authorityCategory?: 'cases' | 'statutes' | 'treatises';
   id: string;
   topic: string;
   subtopic?: string;
@@ -230,6 +239,10 @@ export const DEFAULT_LAYERS: Layer[] = [
 ];
 
 export interface BaseElement {
+  groupId?: string;
+  pasteboard?: boolean;
+  blendMode?: 'normal' | 'multiply' | 'screen' | 'overlay';
+  readingOrder?: number;
   id: string;
   name?: string;
   type: ElementType;
@@ -274,11 +287,15 @@ export interface CharacterStyle extends TextFormatting {
 }
 
 export interface StoryRun extends TextFormatting {
+  noteId?: string;
+  reference?: { targetElementId: string; targetParagraphId?: string; format: 'page' | 'title' };
+  indexId?: string;
   text: string;
   characterStyleId?: string;
 }
 
 export interface StoryParagraph {
+  id?: string;
   styleId?: string;
   sourceStyle?: string;
   formatting?: TextFormatting & {
@@ -295,7 +312,11 @@ export interface StoryContent {
   paragraphs: StoryParagraph[];
 }
 
+export interface TextDataBinding { source: string; keyField: string; recordKey: string; field: string }
+
 export interface TextElement extends BaseElement {
+  dataBinding?: TextDataBinding;
+  generated?: { kind: 'toc' | 'index' | 'endnotes' | 'authorities'; title: string };
   autoExtendStory?: boolean;
   autoPaginationError?: string;
   type: 'text';
@@ -353,6 +374,8 @@ export interface CopyfitResult {
 export type ImageFitMode = 'fill' | 'fit' | 'frameToContent' | 'contentToFrame' | 'center' | 'stretch';
 
 export interface ImageElement extends BaseElement {
+  focalPoint?: { x: number; y: number };
+  decorative?: boolean;
   /** Editable math source; src holds its portable, self-contained SVG rendering. */
   equation?: EquationSource;
   type: 'image';
@@ -404,6 +427,7 @@ export interface ShapeElement extends BaseElement {
 }
 
 export interface TableCell {
+  colSpan?: number;
   text: string;
   align?: 'left' | 'center' | 'right';
   verticalAlign?: 'top' | 'middle' | 'bottom';
@@ -413,6 +437,7 @@ export interface TableCell {
 }
 
 export interface TableElement extends BaseElement {
+  rowSizing?: 'equal' | 'content';
   type: 'table';
   rows: number;
   cols: number;
@@ -478,6 +503,7 @@ export interface Page {
 }
 
 export interface MasterSpread {
+  parentMasterId?: string;
   id: string;
   name: string;
   prefix: string;
@@ -498,6 +524,7 @@ export type ToolType = 'select' | 'text' | 'frame' | 'table' | 'pen' | 'pencil' 
 
 export interface CommentPin {
   id: string;
+  spreadId?: string;
   spreadIndex: number;
   x: number; // mm
   y: number; // mm
@@ -509,8 +536,17 @@ export interface CommentPin {
 
 export type DisplayQuality = 'fast' | 'typical' | 'high';
 
+export interface FontAsset {
+  family: string;
+  fileName: string;
+  data: string;
+  variations?: Record<string, number>;
+}
+
 export interface ProjectState {
-  embeddedFonts?: { family: string; fileName: string; data: string }[];
+  storyRevisions?: StoryRevision[];
+  publicationError?: string;
+  embeddedFonts?: FontAsset[];
   settings: DocumentSettings;
   spreads: Spread[];
   activeSpreadIndex: number;
@@ -552,6 +588,20 @@ export interface ProjectState {
   } | null;
 }
 
+export interface StoryRevision {
+  id: string;
+  storyId: string;
+  author: string;
+  note: string;
+  createdAt: number;
+  resolvedAt?: number;
+  status: 'pending' | 'accepted' | 'rejected';
+  before: StoryContent;
+  start: number;
+  end: number;
+  replacement: string;
+}
+
 export interface VersionSnapshot {
   id: string;
   timestamp: number;
@@ -591,6 +641,7 @@ export type CollabMessage = CollabPayload & {
 };
 
 export type PreflightIssueCode =
+  | 'MISSING_REFERENCE' | 'ORPHAN_NOTE' | 'NOTE_OVERFLOW' | 'MISSING_ASSET' | 'EXTERNAL_ASSET' | 'FONT_EXPORT' | 'PUBLICATION_FLOW' | 'TABLE_LAYOUT'
   | 'OVERSET_TEXT'
   | 'LOW_RES_IMAGE'
   | 'TRIM_HAZARD'

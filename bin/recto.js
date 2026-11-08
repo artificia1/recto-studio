@@ -29,11 +29,12 @@ if (!process.env._RECTO_TSX) {
 } else {
   const { exportDocumentToPdf } = await import('../src/export/pdfExport.js');
   const { generateFlipbookHtml } = await import('../src/flipbookExport.js');
-  const { exportDocumentToEpub } = await import('../src/epubExport.js');
+  const { exportDocumentToEpubAsync } = await import('../src/epubExport.js');
   const { parseDataset, generateRepeaterSpreads, fetchRemoteDataset } = await import('../src/dataMerge.js');
   const { bookEngine } = await import('../src/engine/bookEngine.js');
   const { parseProject } = await import('../src/state/projectValidation.js');
   const { INITIAL_STATE } = await import('../src/state/stateManager.js');
+  const { resolveBookChapter } = await import('../scripts/book-paths.mjs');
 
   function printHelp() {
     console.log(`
@@ -68,6 +69,7 @@ Examples:
   }
 
   function parseArgs(args) {
+    args = args.flatMap(arg => /^--(?:data|export|output)=/.test(arg) ? [arg.slice(0, arg.indexOf('=')), arg.slice(arg.indexOf('=') + 1)] : [arg]);
     const result = {
       command: args[0] || 'help',
       input: null,
@@ -223,7 +225,8 @@ Examples:
         return 0;
       } else if (isEpub) {
         console.log(`[Recto CLI] Packaging EPUB 3 digital publication...`);
-        const { buffer } = exportDocumentToEpub(state, { download: false });
+        const { buffer, warnings } = await exportDocumentToEpubAsync(state, { download: false });
+      for (const warning of warnings) console.warn(`[Recto CLI] Export warning: ${warning}`);
         fs.writeFileSync(outputPath, Buffer.from(buffer));
         const stats = fs.statSync(outputPath);
         console.log(`[Recto CLI] ✓ EPUB 3 package complete!`);
@@ -303,12 +306,15 @@ Options:
         return 1;
       }
       const bookData = JSON.parse(fs.readFileSync(bookPath, 'utf8'));
+      if (!Array.isArray(bookData.chapters) || !bookData.chapters.length || bookData.chapters.length > 500) throw new Error('A book needs between 1 and 500 chapters.');
+      // Validate every path before a style-sync operation can write any chapter.
+      for (const chapter of bookData.chapters) resolveBookChapter(bookPath, chapter.filePath);
       const loadState = (fp) => {
-        const fullP = path.isAbsolute(fp) ? fp : path.resolve(path.dirname(bookPath), fp);
+        const fullP = resolveBookChapter(bookPath, fp);
         return parseProject(fs.readFileSync(fullP, 'utf8'), INITIAL_STATE);
       };
       const saveState = (fp, st) => {
-        const fullP = path.isAbsolute(fp) ? fp : path.resolve(path.dirname(bookPath), fp);
+        const fullP = resolveBookChapter(bookPath, fp);
         fs.writeFileSync(fullP, JSON.stringify(st, null, 2), 'utf8');
       };
 

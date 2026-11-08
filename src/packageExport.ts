@@ -7,11 +7,16 @@
 import { ProjectState, TextElement, ImageElement } from './types';
 import { exportDocumentToPdf } from './pdfExport';
 import { createZipArchive } from './zip';
-import { stateManager } from './state';
+import { publicationSnapshot } from './engine/publicationReferences';
+import { publicationPreflight } from './engine/publicationPreflight';
+import { embeddedAsset, prepareExportAssets } from './export/publicationAssets';
+import { base64ToUint8Array } from './zip';
 import { fontManager } from './fontManager';
+import { masterDependencies } from './engine/masterInheritance';
 
 export interface PackageExportOptions {
   download?: boolean;
+  strict?: boolean;
 }
 
 export function dataUrlToBytes(dataUrl: string): Uint8Array {
@@ -67,7 +72,13 @@ export function generateInstructionsReport(state: ProjectState): string {
   });
 
   // Collect placed assets
-  const links = stateManager.getAssetLinks();
+  const links = state.spreads.flatMap((spread, index) => spread.elements.filter((element): element is ImageElement => element.type === 'image').map(image => ({
+    name: image.name || image.id, format: image.format || 'Image', sizeFormatted: `${Math.round(image.src.length * 0.75 / 1024)} KB`,
+    spreadNumber: index + 1, pageNumber: spread.pages.find(page => page.id === image.pageId)?.pageNumber || 1,
+    pixelWidth: image.originalWidth || 0, pixelHeight: image.originalHeight || 0, widthMm: image.width, heightMm: image.height,
+    effectiveDpi: image.src.includes('image/svg') ? 'Vector' : Math.round((image.originalWidth || 0) * 25.4 / image.width),
+    isLowRes: !image.src.includes('image/svg') && (image.originalWidth || 0) * 25.4 / image.width < 250,
+  })));
   const assetsReport = links.length === 0
     ? '  None (Document uses vector graphics and typography exclusively)'
     : links
@@ -77,14 +88,14 @@ export function generateInstructionsReport(state: ProjectState): string {
             `     Spread: ${l.spreadNumber}, Page: ${l.pageNumber}\n` +
             `     Resolution: ${l.pixelWidth} x ${l.pixelHeight} px\n` +
             `     Physical Frame: ${Math.round(l.widthMm)} x ${Math.round(l.heightMm)} mm\n` +
-            `     Effective DPI: ${l.effectiveDpi} DPI (${l.isLowRes ? 'WARNING: Low Resolution < 250 DPI' : 'Print Ready'})\n`
+            `     Effective DPI: ${l.effectiveDpi} DPI (${l.isLowRes ? 'WARNING: Low Resolution < 250 DPI' : 'Resolution threshold met; printer review required'})\n`
         )
         .join('\n');
 
   // Preflight check
-  const preflightIssues = stateManager.runPreflightCheck();
+  const preflightIssues = publicationPreflight(state);
   const preflightSummary = preflightIssues.length === 0
-    ? '  PASS: All preflight audit criteria satisfied (No trim edge hazards, overset text, or bleed errors).'
+    ? '  No issues found by the package reference/asset audit. Review the included PDF and obtain printer approval; this is not conformance certification.'
     : preflightIssues.map((iss) => `  [${iss.severity.toUpperCase()}] ${iss.code}: ${iss.message} (Page ${iss.pageNumber})`).join('\n');
 
   return `================================================================================
@@ -131,9 +142,11 @@ ${preflightSummary}
 }
 
 export async function packageDocument(
-  state: ProjectState,
+  source: ProjectState,
   options: PackageExportOptions = { download: true }
 ): Promise<{ buffer: Uint8Array; filename: string; filesCount: number }> {
+  await fontManager.restoreFonts(source.embeddedFonts);
+  const state = publicationSnapshot(await prepareExportAssets(source, typeof window !== 'undefined', true));
   const baseTitle = state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'recto-project';
   const packageDirName = `${baseTitle}-package`;
   const files: Record<string, string | Uint8Array> = {};
@@ -150,29 +163,25 @@ export async function packageDocument(
     includeColorBars: true,
     exportFormat: 'pages',
     spreadRange: 'all',
-    download: false,
+    download: false, strict: options.strict !== false,
   });
   const pdfArrayBuffer = pdfDoc.output('arraybuffer');
   files[`${baseTitle}-print.pdf`] = new Uint8Array(pdfArrayBuffer);
 
-  // 3. Assets Subfolder
+  // Archive controlled filenames, never user-provided paths or colliding image names.
   let assetIdx = 1;
-  for (const spread of state.spreads) {
-    for (const el of spread.elements) {
-      if (el.type === 'image') {
-        const img = el as ImageElement;
-        if (img.src && img.src.startsWith('data:')) {
-          const mimeMatch = img.src.match(/^data:image\/([a-zA-Z0-9+]+);/);
-          let ext = mimeMatch ? mimeMatch[1].toLowerCase() : 'png';
-          if (ext === 'jpeg') ext = 'jpg';
-          const assetName = img.name || `image-${assetIdx}.${ext}`;
-          const assetBytes = dataUrlToBytes(img.src);
-          files[`Assets/${assetName}`] = assetBytes;
-          assetIdx++;
-        }
-      }
+  const masterIds = masterDependencies(state.masterSpreads, state.spreads.map(spread => spread.masterSpreadId));
+  for (const element of [...state.spreads.flatMap(spread => spread.elements), ...state.masterSpreads.filter(master => masterIds.has(master.id)).flatMap(master => master.elements)]) {
+    if (element.type === 'image' && element.src) {
+      const asset = embeddedAsset(element.src);
+      files[`Assets/image-${assetIdx++}.${asset.extension}`] = asset.bytes;
     }
   }
+  for (const [index, font] of (state.embeddedFonts || []).entries()) {
+    const extension = /\.(ttf|otf|woff2?)$/i.exec(font.fileName)?.[1].toLowerCase() || 'bin';
+    files[`Fonts/font-${index + 1}.${extension}`] = base64ToUint8Array(font.data);
+  }
+  files['Fonts/README.txt'] = 'Font files are included for an authorized handoff. Check each font licence before sharing, redistribution or commercial use.\n';
 
   // 4. Instructions.txt report
   const instructions = generateInstructionsReport(state);

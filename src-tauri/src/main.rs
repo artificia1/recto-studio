@@ -1,7 +1,7 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::io::Write;
+use std::io::{Read, Write};
 
 const MAX_FILE_BYTES: u64 = 128 * 1024 * 1024;
 
@@ -32,7 +32,11 @@ async fn desktop_open_document(window: tauri::Window) -> Result<Option<OpenedDoc
         let size = std::fs::metadata(&path).map_err(|e| e.to_string())?.len();
         if size > MAX_FILE_BYTES { return Err("Please choose a document smaller than 128 MB.".into()); }
         let name = path.file_name().ok_or("Invalid file name")?.to_string_lossy().into_owned();
-        let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+        // Enforce the limit during the read too: a file can grow after metadata().
+        let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+        let mut bytes = Vec::new();
+        file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+        if bytes.len() as u64 > MAX_FILE_BYTES { return Err("Please choose a document smaller than 128 MB.".into()); }
         Ok(Some(OpenedDocument { name, bytes }))
     }).await.map_err(|e| e.to_string())?
 }
@@ -42,7 +46,7 @@ async fn desktop_save_file(window: tauri::Window, suggested_name: String, bytes:
     if bytes.len() as u64 > MAX_FILE_BYTES { return Err("This export exceeds the 128 MB desktop save limit.".into()); }
     let extension = std::path::Path::new(&suggested_name).extension()
         .and_then(|value| value.to_str()).unwrap_or("").to_lowercase();
-    if !["recto", "pdf", "epub", "html", "zip", "idml", "png", "svg"].contains(&extension.as_str()) {
+    if !["recto", "pdf", "epub", "html", "zip", "idml", "png", "svg", "json"].contains(&extension.as_str()) {
         return Err("Unsupported export format.".into());
     }
     tauri::async_runtime::spawn_blocking(move || {

@@ -23,6 +23,8 @@ export function parseManuscriptXml(xml: string): XmlNode {
       const match = /^<([^\s/>]+)/.exec(token);
       if (!match) throw new Error('The DOCX contains malformed XML.');
       const node: XmlNode = { name: match[1].split(':').at(-1)!, attrs: {}, children: [] };
+      const attributes = token.slice(match[0].length).replace(/\/?\s*>$/, '');
+      if (attributes.replace(/[^\s=]+\s*=\s*(?:"[^"]*"|'[^']*')/g, '').trim()) throw new Error('The XML contains malformed or unquoted attributes.');
       for (const attr of token.matchAll(/([^\s=]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) node.attrs[attr[1].split(':').at(-1)!] = decodeXml(attr[2] ?? attr[3]);
       stack.at(-1)!.children.push(node);
       if (!token.endsWith('/>')) stack.push(node);

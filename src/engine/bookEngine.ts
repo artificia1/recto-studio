@@ -3,14 +3,16 @@
  * Copyright (c) 2022-2026 Abhinav. All rights reserved.
  * Licensed under the MIT License.
  *
- * Multi-Document Book Engine (.rectobook / .indb synchronization)
+ * Multi-document book engine (.rectobook).
  * Orchestrates multi-chapter publications with dynamic sequential repagination,
- * style source synchronization, unified cross-document TOC, and stitched PDF/X export.
+ * style synchronization, unified contents and ordinary PDF export.
  */
 
 import { ProjectState, ParagraphStyle, MasterSpread } from '../types/index';
 import { exportDocumentToPdf, ExportOptions } from '../export/pdfExport';
 import { jsPDF } from 'jspdf';
+import { assembleBook } from './bookAssembly';
+import { publicationHeadings } from './publicationReferences';
 
 export interface BookChapter {
   id: string;
@@ -117,8 +119,10 @@ export class BookEngine {
       if (chapter.id === sourceChapter.id) continue;
 
       const targetState = loadChapterState(chapter.filePath);
-      targetState.paragraphStyles = JSON.parse(JSON.stringify(sourceStyles));
-      targetState.masterSpreads = JSON.parse(JSON.stringify(sourceMasters));
+      targetState.paragraphStyles = [...targetState.paragraphStyles.filter(style => !sourceStyles.some(source => source.id === style.id)), ...structuredClone(sourceStyles)];
+      targetState.masterSpreads = [...targetState.masterSpreads.filter(master => !sourceMasters.some(source => source.id === master.id)), ...structuredClone(sourceMasters)];
+      targetState.characterStyles = [...(targetState.characterStyles || []).filter(style => !sourceState.characterStyles?.some(source => source.id === style.id)), ...structuredClone(sourceState.characterStyles || [])];
+      targetState.layers = [...(targetState.layers || []).filter(layer => !sourceState.layers?.some(source => source.id === layer.id)), ...structuredClone(sourceState.layers || [])];
       targetState.settings.colorMode = sourceState.settings.colorMode;
       targetState.settings.iccProfile = sourceState.settings.iccProfile;
 
@@ -146,75 +150,24 @@ export class BookEngine {
       const state = loadChapterState(chapter.filePath);
       const chapterOffset = chapter.startPageNumber - 1;
 
-      // Query headings in reading order
-      for (const spread of state.spreads) {
-        for (const page of spread.pages) {
-          const absoluteBookPage = chapterOffset + page.pageNumber;
-
-          for (const el of spread.elements) {
-            if (el.type === 'text' && el.pageId === page.id) {
-              const textEl = el as any;
-              const style = state.paragraphStyles?.find((s) => s.id === textEl.paragraphStyleId);
-              const styleName = (style?.name || '').toLowerCase();
-
-              const isHeading1 = styleName.includes('heading 1') || styleName.includes('title') || style?.pdfTag === 'H1';
-              const isHeading2 = styleName.includes('heading 2') || style?.pdfTag === 'H2';
-
-              if (isHeading1 || isHeading2) {
-                const headingText = (textEl.text || '').split('\n')[0].trim();
-                if (headingText && !tocItems.some((item) => item.title === headingText && item.pageNumber === absoluteBookPage)) {
-                  tocItems.push({
-                    title: headingText,
-                    chapterTitle: chapter.title,
-                    pageNumber: absoluteBookPage,
-                    level: isHeading1 ? 1 : 2,
-                    styleId: textEl.paragraphStyleId,
-                  });
-                }
-              }
-            }
-          }
-        }
-      }
+      /* Query composed manuscript headings, including headings inside a threaded story. */
+      const pages = state.spreads.flatMap(spread => spread.pages);
+      for (const heading of publicationHeadings(state)) tocItems.push({ title: heading.title, chapterTitle: chapter.title,
+        pageNumber: chapterOffset + pages.findIndex(page => page.id === heading.pageId) + 1, level: heading.level });
     }
 
     return tocItems;
   }
 
   /**
-   * Compiles all chapter documents into a unified, stitched PDF/X document
-   * with continuous pagination and unified prepress OutputIntent.
+   * Renders chapter artwork into one ordinary PDF with continuous pagination.
    */
   public async exportBookToPdf(
     book: RectoBook,
     loadChapterState: (filePath: string) => ProjectState,
     exportOptions: ExportOptions = {}
   ): Promise<jsPDF> {
-    const repaginated = this.repaginateBook(book, loadChapterState);
-    const firstChapterState = loadChapterState(repaginated.chapters[0].filePath);
-
-    // Build the master PDF from first chapter
-    const masterDoc = await exportDocumentToPdf(firstChapterState, {
-      ...exportOptions,
-      spreadRange: 'all',
-    });
-
-    // Append subsequent chapters
-    for (let c = 1; c < repaginated.chapters.length; c++) {
-      const chapter = repaginated.chapters[c];
-      const chapState = loadChapterState(chapter.filePath);
-      const chapDoc = await exportDocumentToPdf(chapState, {
-        ...exportOptions,
-        spreadRange: 'all',
-      });
-
-      const totalChapPages = (chapDoc.internal as any).getNumberOfPages();
-      for (let p = 1; p <= totalChapPages; p++) {
-        masterDoc.addPage();
-      }
-    }
-
-    return masterDoc;
+    return exportDocumentToPdf(assembleBook(book, loadChapterState), { ...exportOptions, spreadRange: 'all' });
   }
 }
 

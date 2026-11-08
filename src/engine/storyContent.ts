@@ -3,6 +3,13 @@ import type { StoryContent, StoryParagraph, StoryRun, TextFormatting } from '../
 export const storyText = (content: StoryContent): string =>
   content.paragraphs.map(p => p.runs.map(r => r.text).join('')).join('\n');
 
+/** Partial edits detach atomic references instead of duplicating their identity. */
+function cutRun(run: StoryRun, start: number, end: number): StoryRun {
+  const result = { ...run, text: run.text.slice(start, end) };
+  if (start !== 0 || end !== run.text.length) { delete result.noteId; delete result.reference; delete result.indexId; }
+  return result;
+}
+
 export function plainStory(text: string, styleId?: string): StoryContent {
   return { version: 1, paragraphs: text.split('\n').map(text => ({ styleId, runs: [{ text }] })) };
 }
@@ -32,7 +39,7 @@ export function sliceStory(content: StoryContent, start: number, end: number): S
         const a = Math.max(0, start - runOffset);
         const b = Math.min(run.text.length, end - runOffset);
         runOffset += run.text.length;
-        return b > a ? [{ ...run, text: run.text.slice(a, b) }] : [];
+      return b > a ? [cutRun(run, a, b)] : [];
       });
       paragraphs.push({ ...paragraph, runs: compactRuns(runs) });
     }
@@ -56,7 +63,7 @@ export function editStory(content: StoryContent, text: string): StoryContent {
   const left = sliceStory(content, 0, start).paragraphs;
   const right = sliceStory(content, before.length - suffix, before.length).paragraphs;
   const anchor = sliceStory(content, Math.max(0, start - 1), start).paragraphs.at(-1)!;
-  const format = anchor.runs.at(-1) || { text: '' };
+  const { noteId: _note, reference: _reference, indexId: _index, ...format } = anchor.runs.at(-1) || { text: '' };
   const inserted = text.slice(start, text.length - suffix).split('\n');
   const result = left.slice(0, -1);
   let current = { ...left.at(-1)!, runs: [...left.at(-1)!.runs] };
@@ -81,10 +88,11 @@ export function formatStory(content: StoryContent, start: number, end: number,
       const b = Math.min(run.text.length, end - offset);
       offset += run.text.length;
       if (b <= a) return [{ ...run }];
+      if (run.noteId || run.reference) return [{ ...run, ...formatting }];
+      const left = cutRun(run, 0, a), middle = { ...cutRun(run, a, b), ...formatting }, right = cutRun(run, b, run.text.length);
+      if (run.indexId) (a > 0 ? left : middle).indexId = run.indexId;
       return [
-        { ...run, text: run.text.slice(0, a) },
-        { ...run, ...formatting, text: run.text.slice(a, b) },
-        { ...run, text: run.text.slice(b) },
+        left, middle, right,
       ];
     }));
     offset++;

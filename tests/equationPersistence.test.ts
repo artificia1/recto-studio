@@ -31,11 +31,11 @@ describe('equations in publications', () => {
   it('packages equation SVGs and their accessible descriptions in EPUB', () => {
     const { state } = fixture();
     const files = generateEpubPackage(state);
-    expect(files['OEBPS/package.opf']).toContain('href="images/equation-1.svg" media-type="image/svg+xml"');
-    expect(new TextDecoder().decode(files['OEBPS/images/equation-1.svg'] as Uint8Array)).toContain('<path');
+    expect(files['OEBPS/package.opf']).toContain('href="images/image-1.svg" media-type="image/svg+xml"');
+    expect(new TextDecoder().decode(files['OEBPS/images/image-1.svg'] as Uint8Array)).toContain('<path');
     const page = Object.values(files).find(value => typeof value === 'string' && value.includes('<figure>')) as string;
     expect(page).toContain('alt="x squared"');
-    expect(page).toContain('src="images/equation-1.svg"');
+    expect(page).toContain('src="images/image-1.svg"');
   });
   it('clears equation source on image replacement and restores it with undo', () => {
     const { state, image } = fixture();

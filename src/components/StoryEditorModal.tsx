@@ -11,6 +11,8 @@ import { sliceStory, storyText } from '../engine/storyContent';
 import { StoryPreview } from './StoryPreview';
 import { useModalFocus } from '../hooks/useModalFocus';
 import './manuscript.css';
+import { StoryReferenceTools } from './StoryReferenceTools';
+import { StoryRevisionsPanel } from './StoryRevisionsPanel';
 
 interface StoryEditorModalProps {
   isOpen: boolean;
@@ -26,10 +28,15 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
   const activeEl = textElements.find((el) => el.id === currentElementId) || selectedTextEl;
   const [editorText, setEditorText] = useState<string>('');
   const [fontSize, setFontSize] = useState<number>(16);
+  const [spellcheck, setSpellcheck] = useState(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalFocus(isOpen, dialogRef);
   const [selection, setSelection] = useState({ start: 0, end: 0 });
+  const captureSelection = () => {
+    const input = textareaRef.current;
+    if (input) setSelection({ start: input.selectionStart, end: input.selectionEnd });
+  };
   const [styleName, setStyleName] = useState('');
   const [error, setError] = useState('');
   const content = stateManager.getStoryContent(activeEl?.id || '');
@@ -46,9 +53,11 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
   };
 
   useEffect(() => {
+    if (isOpen) { setCurrentElementId(selectedTextEl?.id || ''); setSelection({ start: 0, end: 0 }); }
+  }, [isOpen]);
+  useEffect(() => {
     if (isOpen && activeEl) {
       setEditorText(storyText(stateManager.getStoryContent(activeEl.id)));
-      setCurrentElementId(activeEl.id);
     }
   }, [isOpen, activeEl?.id, activeEl?.text, activeEl?.rawStoryText]);
   if (!isOpen) return null;
@@ -189,6 +198,7 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
         </div>
 
         <div className="story-format-bar">
+          <label><input type="checkbox" checked={spellcheck} onChange={event => setSpellcheck(event.currentTarget.checked)}/>Spellcheck</label>
           <label>Paragraph <select aria-label="Paragraph style" disabled={!activeEl} value={selectedContent.paragraphs[0]?.styleId || ''}
             onChange={e => activeEl && apply(() => stateManager.styleStoryRange(activeEl.id, selection.start, selection.end, e.currentTarget.value))}>
             <option value="" disabled>Frame default</option>
@@ -214,15 +224,24 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
           })}>Save style</button>
         </div>
         {error && <p role="alert" style={{ padding: '8px 20px' }}>{error}</p>}
+        {activeEl && !activeEl.generated && <StoryReferenceTools frameId={activeEl.id} start={selection.start} end={selection.end} apply={apply}/>}
+        {activeEl && !activeEl.generated && <StoryRevisionsPanel key={activeEl.id} frameId={activeEl.id} state={state} start={selection.start} end={selection.end}/>}
+        {activeEl?.generated && <p style={{ padding: '8px 20px' }}>This list updates automatically. Use Pages to make it static before editing its manuscript.</p>}
         {!activeEl && <p style={{ padding: '16px' }}>Select or create a text frame to edit a story.</p>}
         <div className="manuscript-body">
           <textarea
             ref={textareaRef}
             aria-label="Story manuscript"
+            spellcheck={spellcheck}
+            lang={state.settings.language || 'en-US'}
+            readOnly={!!activeEl?.generated}
             className="story-editor-text"
             disabled={!activeEl}
             value={editorText}
-            onSelect={e => setSelection({ start: e.currentTarget.selectionStart, end: e.currentTarget.selectionEnd })}
+            onSelect={captureSelection}
+            onKeyUp={captureSelection}
+            onMouseUp={captureSelection}
+            onBlur={captureSelection}
             onInput={(e) => handleTextChange((e.target as HTMLTextAreaElement).value)}
             placeholder="Write manuscript story here... Canvas updates in real time."
             style={{

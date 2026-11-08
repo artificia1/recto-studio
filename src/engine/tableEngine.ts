@@ -8,6 +8,9 @@
  */
 
 import { TableElement, TableCell } from '../types/index';
+import { tableCellSpan } from './tableCells';
+import { layoutContentTables } from './tableLayout';
+import { drawContentTableCanvas, drawContentTablePdf } from './tableContentRenderer';
 import { fontManager } from '../fontManager';
 import { drawFontText, fontTextWidth } from '../export/fontOutlines';
 import { applyCmykFillColor, applyCmykDrawColor, applyCmykTextColor } from '../export/pdfColors';
@@ -29,14 +32,15 @@ export class TableEngine {
     table: TableElement,
     allTablesInThread: TableElement[] = [table]
   ): TableRowSlice {
-    const totalRows = table.rows || (table.cells ? table.cells.length : 0);
-    const headerCount = Math.min(table.headerRowCount || 0, totalRows);
-    const footerCount = Math.min(table.footerRowCount || 0, Math.max(0, totalRows - headerCount));
+    const source = allTablesInThread[0] || table;
+    const totalRows = source.rows || (source.cells ? source.cells.length : 0);
+    const headerCount = Math.min(source.headerRowCount || 0, totalRows);
+    const footerCount = Math.min(source.footerRowCount || 0, Math.max(0, totalRows - headerCount));
 
     const isFirstFrame = !table.prevFrameId;
-    const headerRows = table.cells.slice(0, headerCount);
-    const footerRows = footerCount > 0 ? table.cells.slice(totalRows - footerCount) : [];
-    const allBodyRows = table.cells.slice(headerCount, totalRows - footerCount);
+    const headerRows = source.cells.slice(0, headerCount);
+    const footerRows = footerCount > 0 ? source.cells.slice(totalRows - footerCount) : [];
+    const allBodyRows = source.cells.slice(headerCount, totalRows - footerCount);
 
     // If this table is standalone or is not threaded, render all rows that fit
     if (allTablesInThread.length <= 1) {
@@ -90,6 +94,11 @@ export class TableEngine {
     zoom: number,
     allTablesInThread: TableElement[] = [table]
   ): void {
+    if ((allTablesInThread[0] || table).rowSizing === 'content') {
+      const layout = layoutContentTables(allTablesInThread).frames.find(frame => frame.frameId === table.id);
+      if (layout) drawContentTableCanvas(ctx, table, layout, screenX, screenY, pxPerMm);
+      return;
+    }
     const slice = this.computeFrameSlice(table, allTablesInThread);
     const cols = Math.max(1, table.cols || 1);
 
@@ -113,6 +122,9 @@ export class TableEngine {
       for (let c = 0; c < cols; c++) {
         const cX = screenX + (c * cellW);
         const cY = screenY + (r * cellH);
+        const span = tableCellSpan(rowItem.cells, c);
+        if (!span) continue;
+        const cellWidth = cellW * span;
         const cell = rowItem.cells?.[c];
 
         let cellBg = cell?.fillColor;
@@ -130,7 +142,7 @@ export class TableEngine {
 
         if (cellBg && cellBg !== 'transparent') {
           ctx.fillStyle = cellBg;
-          ctx.fillRect(cX, cY, cellW, cellH);
+          ctx.fillRect(cX, cY, cellWidth, cellH);
         }
       }
     }
@@ -152,8 +164,9 @@ export class TableEngine {
       for (let c = 1; c < cols; c++) {
         const x = screenX + (c * cellW);
         ctx.beginPath();
-        ctx.moveTo(x, screenY);
-        ctx.lineTo(x, screenY + screenH);
+        for (let r = 0; r < numRows; r++) if (tableCellSpan(displayRows[r].cells, c)) {
+          ctx.moveTo(x, screenY + r * cellH); ctx.lineTo(x, screenY + (r + 1) * cellH);
+        }
         ctx.stroke();
       }
     }
@@ -165,13 +178,16 @@ export class TableEngine {
       for (let c = 0; c < cols; c++) {
         const cX = screenX + (c * cellW);
         const cY = screenY + (r * cellH);
+        const span = tableCellSpan(rowItem.cells, c);
+        if (!span) continue;
+        const cellWidth = cellW * span;
         const cell = rowItem.cells?.[c];
         const textStr = cell?.text || '';
 
         if (textStr) {
           ctx.save();
           ctx.beginPath();
-          ctx.rect(cX + paddingPx, cY + paddingPx, Math.max(1, cellW - (paddingPx * 2)), Math.max(1, cellH - (paddingPx * 2)));
+          ctx.rect(cX + paddingPx, cY + paddingPx, Math.max(1, cellWidth - (paddingPx * 2)), Math.max(1, cellH - (paddingPx * 2)));
           ctx.clip();
 
           let textCol = cell?.textColor;
@@ -191,8 +207,8 @@ export class TableEngine {
           ctx.textBaseline = 'middle';
 
           let drawX = cX + paddingPx;
-          if (align === 'center') drawX = cX + cellW / 2;
-          else if (align === 'right') drawX = cX + cellW - paddingPx;
+          if (align === 'center') drawX = cX + cellWidth / 2;
+          else if (align === 'right') drawX = cX + cellWidth - paddingPx;
 
           const drawY = cY + (cellH / 2);
           ctx.fillText(textStr, drawX, drawY);
@@ -215,6 +231,13 @@ export class TableEngine {
     allTablesInThread: TableElement[] = [table],
     overprintBlack: boolean = true
   ): void {
+    if ((allTablesInThread[0] || table).rowSizing === 'content') {
+      const result = layoutContentTables(allTablesInThread);
+      if (result.pendingRows.length || result.frames.some(frame => frame.horizontalOverflow)) throw new Error(`Table ${allTablesInThread[0].id} has content that does not fit. Add continuation frames or enlarge the table before PDF export.`);
+      const layout = result.frames.find(frame => frame.frameId === table.id);
+      if (layout) drawContentTablePdf(doc, table, layout, xMm, yMm, overprintBlack);
+      return;
+    }
     const slice = this.computeFrameSlice(table, allTablesInThread);
     const cols = Math.max(1, table.cols || 1);
 
@@ -234,6 +257,9 @@ export class TableEngine {
       for (let c = 0; c < cols; c++) {
         const cX = xMm + (c * cellW);
         const cY = yMm + (r * cellH);
+        const span = tableCellSpan(rowItem.cells, c);
+        if (!span) continue;
+        const cellWidth = cellW * span;
         const cell = rowItem.cells?.[c];
 
         let cellBg = cell?.fillColor;
@@ -249,7 +275,7 @@ export class TableEngine {
 
         if (cellBg && cellBg !== 'transparent') {
           applyCmykFillColor(doc, cellBg);
-          doc.rect(cX, cY, cellW, cellH, 'F');
+          doc.rect(cX, cY, cellWidth, cellH, 'F');
         }
       }
     }
@@ -267,7 +293,7 @@ export class TableEngine {
       }
       for (let c = 1; c < cols; c++) {
         const x = xMm + (c * cellW);
-        doc.line(x, yMm, x, yMm + hMm);
+        for (let r = 0; r < numRows; r++) if (tableCellSpan(displayRows[r].cells, c)) doc.line(x, yMm + r * cellH, x, yMm + (r + 1) * cellH);
       }
     }
 
@@ -278,6 +304,9 @@ export class TableEngine {
       for (let c = 0; c < cols; c++) {
         const cX = xMm + (c * cellW);
         const cY = yMm + (r * cellH);
+        const span = tableCellSpan(rowItem.cells, c);
+        if (!span) continue;
+        const cellWidth = cellW * span;
         const cell = rowItem.cells?.[c];
         const textStr = cell?.text || '';
 
@@ -293,8 +322,8 @@ export class TableEngine {
 
           const align = cell?.align || 'left';
           let drawX = cX + padding;
-          if (align === 'center') drawX = cX + (cellW / 2);
-          else if (align === 'right') drawX = cX + cellW - padding;
+          if (align === 'center') drawX = cX + (cellWidth / 2);
+          else if (align === 'right') drawX = cX + cellWidth - padding;
 
           const drawY = cY + (cellH / 2) + ((table.fontSizePt * 0.3527) / 3);
           const font = fontManager.getFont(table.fontFamily);

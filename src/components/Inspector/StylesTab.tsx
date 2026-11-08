@@ -2,6 +2,7 @@ import { useState, useRef } from 'preact/hooks';
 import { stateManager } from '../../state';
 import { fontManager } from '../../fontManager';
 import { ProjectState, ParagraphStyle, GrepStyleRule } from '../../types';
+import StyleExchangePanel from './StyleExchangePanel';
 
 interface StylesTabProps {
   state: ProjectState;
@@ -10,6 +11,7 @@ interface StylesTabProps {
 export function StylesTab({ state }: StylesTabProps) {
   const [editingStyleId, setEditingStyleId] = useState<string | null>(null);
   const [fontError, setFontError] = useState('');
+  const styleAction = (action: () => void) => { try { action(); setFontError(''); } catch (reason) { setFontError(reason instanceof Error ? reason.message : String(reason)); } };
   const fontRequests = useRef(new Map<string, number>());
 
   const activeSpread = state.spreads[state.activeSpreadIndex] || state.spreads[0];
@@ -36,6 +38,8 @@ export function StylesTab({ state }: StylesTabProps) {
 
   return (
     <div className="styles-tab-view">
+      <StyleExchangePanel/>
+      {fontError && <p role="alert" style={{ color: '#ff7878', fontSize: '11px' }}>{fontError}</p>}
       <div className="styles-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
         <div className="section-header" style={{ margin: 0 }}>PARAGRAPH STYLES</div>
         <button
@@ -86,6 +90,15 @@ export function StylesTab({ state }: StylesTabProps) {
                   />
                 </label>
 
+                <label className="full-label">Based on
+                  <select aria-label="Parent paragraph style" value={style.basedOnId || ''} onChange={event => styleAction(() => {
+                    const parent = state.paragraphStyles.find(item => item.id === event.currentTarget.value);
+                    stateManager.updateParagraphStyle(style.id, { basedOnId: parent?.id,
+                      inheritedProperties: parent ? Object.keys(parent).filter(key => !['id', 'name', 'basedOnId', 'inheritedProperties'].includes(key)) as (keyof ParagraphStyle)[] : [] });
+                  })}><option value="">Independent style</option>{state.paragraphStyles.filter(item => item.id !== style.id).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
+                </label>
+                {style.basedOnId && <p>Parent changes update inherited properties. Editing a property creates a local override; selecting the parent again restores inheritance.</p>}
+
                 <label className="full-label" style={{ marginBottom: '8px' }}>
                   Font Family:
                   <select
@@ -113,7 +126,6 @@ export function StylesTab({ state }: StylesTabProps) {
                   </select>
                 </label>
 
-                {fontError && <p role="alert" style={{ color: '#ff7878', fontSize: '11px' }}>{fontError}</p>}
                 <div className="publication-panel">
                   <strong style={{ fontSize: '11px' }}>Paragraph flow</strong>
                   {(['keepWithNext', 'keepTogether', 'bold', 'italic', 'hyphenate'] as const).map(key => (
@@ -132,8 +144,11 @@ export function StylesTab({ state }: StylesTabProps) {
                   </select></label>
                   <label>Hyphenation language<select aria-label="Hyphenation language" value={style.language || 'en-US'}
                     onChange={event => stateManager.updateParagraphStyle(style.id, { language: event.currentTarget.value as ParagraphStyle['language'] })}>
-                    <option value="en-US">English (US)</option><option value="de">German</option><option value="fr">French</option>
+                      <option value="en-US">English (US)</option><option value="de">German</option><option value="fr">French</option>
+                      <option value="ja">Japanese (no dictionary hyphenation)</option><option value="zh">Chinese (no dictionary hyphenation)</option><option value="ko">Korean (no dictionary hyphenation)</option>
                   </select></label>
+                    <label className="publication-check"><input type="checkbox" checked={!!style.cjkLineBreak} onChange={event => stateManager.updateParagraphStyle(style.id, { cjkLineBreak: event.currentTarget.checked })}/>Horizontal CJK punctuation rules</label>
+                    <p>CJK rules keep closing punctuation with preceding text and opening brackets with following text. Oversized indivisible groups remain overset. Vertical layout and ruby are not implemented.</p>
                   <p>Keep rules apply to formatted stories in canvas and PDF. Rules that cannot fit a whole empty column fall back to normal flow.</p>
                 </div>
 
@@ -522,7 +537,7 @@ export function StylesTab({ state }: StylesTabProps) {
                   {state.paragraphStyles.length > 1 && (
                     <button
                       className="sm-btn danger-btn"
-                      onClick={() => stateManager.deleteParagraphStyle(style.id)}
+                        onClick={() => styleAction(() => stateManager.deleteParagraphStyle(style.id))}
                       title="Delete Style"
                     >
                       ✕

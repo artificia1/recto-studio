@@ -296,6 +296,179 @@ test('reopening the story editor reflects external text changes', async ({ page 
   await expect(story).toHaveValue('Changed while story editor closed');
 });
 
+test('inserts an anchored note through the Story Editor and preserves it on save', async ({ page }) => {
+  await importProject(page);
+  await menuCommand(page, 'Open distraction-free Story Focus typewriter editor (Ctrl+Alt+Y)');
+  const story = page.getByPlaceholder('Write manuscript story here... Canvas updates in real time.');
+  await story.click();
+  await story.press('Control+End');
+  await page.getByText('Notes, references & index markers', { exact: true }).click();
+  await page.getByLabel('Note text', { exact: true }).fill('A browser-authored citation.');
+  await page.getByRole('button', { name: 'Insert note at cursor', exact: true }).click();
+  await expect(story).toHaveValue('Browser workflow sample¹');
+  await page.getByTitle('Close Story Editor (Esc)').click();
+  const saved = await savedProject(page);
+  expect(saved.settings.footnotes).toHaveLength(1);
+  expect(saved.settings.footnotes[0].text).toBe('A browser-authored citation.');
+  const frame = saved.spreads[0].elements.find((element: { id: string }) => element.id === 'text-qa');
+  expect(frame.storyContent.paragraphs.flatMap((paragraph: { runs: { noteId?: string }[] }) => paragraph.runs).some((run: { noteId?: string }) => run.noteId === saved.settings.footnotes[0].id)).toBe(true);
+});
+
+test('adds a publication starter, navigates its outline and manages persistent review notes', async ({ page }) => {
+  test.setTimeout(120000);
+  await importProject(page);
+  await page.getByRole('button', { name: 'Templates', exact: true }).click();
+  await page.getByLabel('Chapter or article title', { exact: true }).fill('A Working Chapter');
+  await page.getByRole('button', { name: 'Add publication starter', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Starter added' })).toBeVisible();
+  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  await page.getByLabel('Search publication', { exact: true }).fill('A Working');
+  await page.getByRole('list', { name: 'Publication outline', exact: true }).getByRole('button', { name: /A Working Chapter/ }).click();
+  await page.getByText('Review notes (0 open)', { exact: true }).click();
+  await page.getByLabel('Reviewer', { exact: true }).fill('Copy editor');
+  await page.getByLabel('New review note', { exact: true }).fill('Check the chapter opening.');
+  await page.getByRole('button', { name: 'Add review note to active spread', exact: true }).click();
+  await expect(page.locator('.review-text')).toHaveText('Check the chapter opening.');
+  await page.getByRole('button', { name: 'Move spread 2 earlier', exact: true }).click();
+  await expect(page.locator('.review-heading')).toContainText('Spread 1');
+  const saved = await savedProject(page);
+  expect(saved.comments[0]).toMatchObject({ author: 'Copy editor', text: 'Check the chapter opening.', spreadIndex: 0, spreadId: saved.spreads[0].id });
+  await page.getByRole('button', { name: 'Resolve', exact: true }).click();
+  await expect(page.locator('.review-text')).toHaveCount(0);
+  await page.getByRole('combobox', { name: 'Show review notes', exact: true }).selectOption('resolved');
+  await expect(page.locator('.review-text')).toHaveText('Check the chapter opening.');
+  await page.getByRole('button', { name: 'Reopen', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Show review notes', exact: true }).selectOption('open');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByLabel('Edit review note', { exact: true }).fill('Opening checked; verify the source citation.');
+  await page.getByRole('button', { name: 'Save review note', exact: true }).click();
+  await expect(page.locator('.review-text')).toHaveText('Opening checked; verify the source citation.');
+  await page.screenshot({ path: 'test-results/editorial-navigator-review.png', fullPage: true });
+});
+
+test('adds a reusable layout with unique pages and restores the document with one undo', async ({ page }) => {
+  await importProject(page);
+  await page.getByRole('button', { name: 'Templates', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Layout category', exact: true }).selectOption('Magazine');
+  await page.getByRole('button', { name: '+ New Spread', exact: true }).first().click();
+  const saved = await savedProject(page);
+  expect(saved.spreads).toHaveLength(2);
+  expect(saved.spreads[1].elements.every((element: { pageId: string }) => saved.spreads[1].pages.some((p: { id: string }) => p.id === element.pageId))).toBe(true);
+  await page.getByTitle('Selection Tool (V)').focus();
+  await page.keyboard.press('Control+z');
+  expect((await savedProject(page)).spreads).toHaveLength(1);
+  await page.getByTitle('Selection Tool (V)').focus();
+  await page.keyboard.press('Control+y');
+  expect((await savedProject(page)).spreads).toHaveLength(2);
+});
+
+test('saves an honest print readiness report from Pages', async ({ page }) => {
+  await importProject(page);
+  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  await page.getByText('Print production readiness', { exact: true }).click();
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Save production report', exact: true }).click();
+  const file = await (await download).path();
+  const report = JSON.parse(await readFile(file!, 'utf8'));
+  expect(report.certifiedPdfX).toBe(false);
+  expect(report.automaticTrapping).toBe(false);
+  expect(report.items.some((item: { code: string }) => item.code === 'font')).toBe(true);
+});
+
+test('downloads a bounded rectangular sheet plan from Templates', async ({ page }) => {
+  await importProject(page);
+  await page.getByRole('button', { name: 'Templates', exact: true }).click();
+  await page.getByText('Rectangular sheet planning', { exact: true }).click();
+  await page.getByLabel('Piece width (mm)', { exact: true }).fill('200');
+  await page.getByLabel('Piece height (mm)', { exact: true }).fill('150');
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Save sheet plan', exact: true }).click();
+  const file = await (await download).path();
+  const plan = JSON.parse(await readFile(file!, 'utf8'));
+  expect(plan.capacity).toBe(16); expect(plan.sheetsRequired).toBe(2);
+  expect(plan.placements).toHaveLength(16);
+});
+
+test('persists horizontal CJK style controls without enabling dictionary hyphenation', async ({ page }) => {
+  await importProject(page);
+  await page.getByRole('button', { name: 'Styles', exact: true }).click();
+  await page.getByRole('button', { name: '+ New Style', exact: true }).click();
+  await page.getByLabel('Horizontal CJK punctuation rules', { exact: true }).check();
+  await page.getByRole('combobox', { name: 'Hyphenation language', exact: true }).selectOption('ja');
+  const saved = await savedProject(page);
+  expect(saved.paragraphStyles.at(-1)).toMatchObject({ cjkLineBreak: true, language: 'ja' });
+  expect(saved.paragraphStyles.at(-1).hyphenate).not.toBe(true);
+});
+
+test('applies real variable font axes and restores them after reload', async ({ page }) => {
+  await importProject(page);
+  await page.locator('input[accept=".woff2,.ttf,.otf,.woff"]').setInputFiles('tests/fixtures/fonts/Roboto-Variable.ttf');
+  await page.getByText('Variable font axes', { exact: true }).click();
+  await page.getByRole('slider', { name: 'Font axis wght', exact: true }).press('End');
+  await page.getByRole('slider', { name: 'Font axis wdth', exact: true }).press('Home');
+  await page.getByRole('button', { name: 'Apply font axes', exact: true }).click();
+  await expect.poll(async () => (await savedProject(page)).spreads[0].elements[0].fontFamily).toContain('_Var_');
+  const saved = await savedProject(page);
+  const family = saved.spreads[0].elements[0].fontFamily;
+  expect(saved.embeddedFonts.find((font: { family: string }) => font.family === family).variations).toEqual({ wdth: 75, wght: 900 });
+  await page.reload();
+  await expect.poll(() => page.evaluate(name => Array.from(document.fonts).some(font => font.family.replace(/"/g, '') === name && font.status === 'loaded'), family)).toBe(true);
+  expect(await page.evaluate(name => {
+    const font = Array.from(document.fonts).find(font => font.family.replace(/"/g, '') === name);
+    return (font as unknown as { variationSettings: string }).variationSettings;
+  }, family)).toContain('900');
+});
+
+test('creates a reviewed Table of Authorities from a citation suggestion', async ({ page }) => {
+  await importProject(page);
+  await page.locator('.inspector-panel textarea').first().fill('Brown v. Board of Educ., 347 U.S. 483 (1954)');
+  await menuCommand(page, 'Open distraction-free Story Focus typewriter editor (Ctrl+Alt+Y)');
+  await page.getByText('Notes, references & index markers', { exact: true }).click();
+  await page.getByRole('button', { name: 'Find citation suggestions in this story', exact: true }).click();
+  await page.getByRole('button', { name: 'Mark reviewed suggestion', exact: true }).click();
+  await page.getByTitle('Close Story Editor (Esc)').click();
+  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  await page.getByText('Contents, notes & references', { exact: true }).click();
+  await page.getByRole('button', { name: 'Create or update authorities', exact: true }).click();
+  const saved = await savedProject(page);
+  const table = saved.spreads.flatMap((spread: { elements: { generated?: { kind: string }; rawStoryText?: string }[] }) => spread.elements).find((element: { generated?: { kind: string } }) => element.generated?.kind === 'authorities');
+  expect(table.rawStoryText).toContain('Cases'); expect(table.rawStoryText).toContain('Brown v. Board');
+  expect(saved.indexEntries[0].authorityCategory).toBe('cases');
+  await page.getByText('Marked text references', { exact: true }).click();
+  await page.getByLabel('Search marked text references', { exact: true }).fill('Brown');
+  await page.getByRole('button', { name: 'Unmark citation', exact: true }).click();
+  const unmarked = await savedProject(page);
+  expect(unmarked.indexEntries).toHaveLength(0);
+  expect(unmarked.spreads[0].elements[0].text).toContain('Brown v. Board');
+});
+
+test('previews and applies bound text data with one undo', async ({ page }) => {
+  await importProject(page);
+  await page.getByRole('button', { name: 'Links', exact: true }).click();
+  await page.getByText('Bound text data', { exact: true }).click();
+  await page.getByLabel('Record key value', { exact: true }).fill('a');
+  await page.getByRole('button', { name: 'Bind selected text frame', exact: true }).click();
+  await page.getByLabel('JSON data snapshot', { exact: true }).setInputFiles({ name: 'prices.json', mimeType: 'application/json', buffer: Buffer.from('[{"sku":"a","price":"$129.00"}]') });
+  await expect(page.getByRole('button', { name: 'Apply reviewed data changes', exact: true })).toBeEnabled();
+  expect((await savedProject(page)).spreads[0].elements[0].text).toBe('Browser workflow sample');
+  await page.getByRole('button', { name: 'Apply reviewed data changes', exact: true }).click();
+  expect((await savedProject(page)).spreads[0].elements[0].text).toBe('$129.00');
+  await page.getByTitle('Selection Tool (V)').focus(); await page.keyboard.press('Control+z');
+  expect((await savedProject(page)).spreads[0].elements[0].text).toBe('Browser workflow sample');
+});
+
+test('inserts an editable repeating rosette and undoes it', async ({ page }) => {
+  await importProject(page);
+  await page.getByRole('button', { name: 'Templates', exact: true }).click();
+  await page.getByText('Rosette ornaments', { exact: true }).click();
+  await expect(page.getByRole('img', { name: 'Rosette preview', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Insert editable rosette', exact: true }).click();
+  const saved = await savedProject(page);
+  expect(saved.spreads[0].elements.some((element: { type: string; nodes?: unknown[] }) => element.type === 'path' && element.nodes!.length >= 360)).toBe(true);
+  await page.getByTitle('Selection Tool (V)').focus(); await page.keyboard.press('Control+z');
+  expect((await savedProject(page)).spreads[0].elements).toHaveLength(1);
+});
+
 test('opens and closes the inspector at a narrow viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByTitle('Save .recto project to disk (Ctrl+S)')).toBeInViewport();

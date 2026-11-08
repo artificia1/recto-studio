@@ -1,6 +1,9 @@
 import { useRef, useState } from 'preact/hooks';
 import { stateManager } from '../../state';
 import { ProjectState, AssetLink } from '../../types';
+import { lazy, Suspense } from 'preact/compat';
+const DataBindingsPanel = lazy(() => import('./DataBindingsPanel'));
+const DocumentFontsPanel = lazy(() => import('./DocumentFontsPanel'));
 
 interface LinksTabProps {
   state: ProjectState;
@@ -10,6 +13,8 @@ export function LinksTab({ state }: LinksTabProps) {
   const links = stateManager.getAssetLinks();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [targetElementId, setTargetElementId] = useState<string | null>(null);
+  const [message, setMessage] = useState('');
+  const [embedding, setEmbedding] = useState(false);
 
   const lowResCount = links.filter((l) => l.isLowRes).length;
 
@@ -34,14 +39,16 @@ export function LinksTab({ state }: LinksTabProps) {
 
           const imgLoader = new Image();
           imgLoader.onload = () => {
-            stateManager.relinkAsset(targetElementId, resultStr, {
+            const changed = stateManager.relinkAsset(targetElementId, resultStr, {
               name: file.name,
               fileSize: file.size,
               format,
               width: imgLoader.naturalWidth,
               height: imgLoader.naturalHeight,
             });
+            setMessage(changed ? 'Image relinked. Full image bytes will be saved with the project.' : 'Image could not be replaced. Unlock it and its layer, then try again.');
           };
+          imgLoader.onerror = () => setMessage('This image could not be decoded. Choose a valid PNG, JPEG, GIF, WebP or SVG file.');
           imgLoader.src = resultStr;
         }
       };
@@ -53,6 +60,15 @@ export function LinksTab({ state }: LinksTabProps) {
 
   return (
     <div className="links-panel" style={{ padding: '4px 0' }}>
+      <Suspense fallback={<p>Loading bound data tools…</p>}><DataBindingsPanel state={state}/></Suspense>
+      <Suspense fallback={null}><DocumentFontsPanel state={state}/></Suspense>
+      <button className="sm-btn" disabled={embedding} onClick={async () => {
+        setEmbedding(true); setMessage('Embedding linked images…');
+        try { const count = await stateManager.embedLinkedAssets(); setMessage(`${count} image(s) embedded. Newer image replacements and locked objects were preserved.`); }
+        catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
+        finally { setEmbedding(false); }
+      }}>{embedding ? 'Embedding…' : 'Embed linked images'}</button>
+      {message && <p role="status" style={{ fontSize: '11px', lineHeight: 1.5 }}>{message}</p>}
       {/* Hidden file input for relinking */}
       <input
         type="file"

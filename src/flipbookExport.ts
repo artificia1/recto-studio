@@ -8,7 +8,7 @@
 
 import { ProjectState, CanvasElement, TextElement, ImageElement, ShapeElement, TableElement, VectorPathElement, Page } from './types';
 import { bezierNodesToSvgPath, escapeXml } from './epubExport';
-import { formatOpenTypeText } from './canvas';
+import { calculateImageFitting, formatOpenTypeText } from './canvas';
 
 import { stateManager } from './state';
 
@@ -41,7 +41,7 @@ export function generateFlipbookHtml(state: ProjectState): string {
   for (const spread of state.spreads) {
     for (const page of spread.pages) {
       pageCount++;
-      const elements = spread.elements.filter((el) => el.pageId === page.id);
+      const elements = spread.elements.filter((el) => el.pageId === page.id && !el.pasteboard);
       elements.sort((a, b) => a.zIndex - b.zIndex);
       pages.push({
         pageNumber: page.pageNumber || pageCount,
@@ -61,7 +61,7 @@ export function generateFlipbookHtml(state: ProjectState): string {
       const elWPx = Math.round(el.width * PX_PER_MM * 10) / 10;
       const elHPx = Math.round(el.height * PX_PER_MM * 10) / 10;
       const transform = `transform: rotate(${el.rotation || 0}deg);`;
-      const opacity = `opacity: ${el.opacity ?? 1};`;
+      const opacity = `opacity: ${el.opacity ?? 1}; mix-blend-mode: ${{ normal: 'normal', multiply: 'multiply', screen: 'screen', overlay: 'overlay' }[el.blendMode || 'normal'] || 'normal'};`;
       const zIndex = `z-index: ${el.zIndex || 1};`;
       const baseStyle = `position: absolute; left: ${elXPx}px; top: ${elYPx}px; width: ${elWPx}px; height: ${elHPx}px; ${transform} ${opacity} ${zIndex} box-sizing: border-box;`;
 
@@ -113,7 +113,10 @@ export function generateFlipbookHtml(state: ProjectState): string {
         const border = img.borderWidthMm > 0 && img.borderColor !== 'transparent' ? `border: ${borderWPx}px solid ${img.borderColor};` : '';
         elementsHtml += `    <div style="${baseStyle} overflow: hidden; ${border}">\n`;
         if (img.src) {
-          elementsHtml += `      <img src="${escapeXml(img.src)}" alt="${escapeXml(img.caption || '')}" style="width: 100%; height: 100%; object-fit: ${fit}; object-position: center; display: block; image-rendering: high-quality; image-rendering: -webkit-optimize-contrast;"/>\n`;
+          const crop = img.fitMode === 'fill' && img.focalPoint && img.originalWidth && img.originalHeight
+            ? calculateImageFitting(0, 0, img.width, img.height, img.originalWidth, img.originalHeight, 'fill', img.focalPoint) : undefined;
+          const imageStyle = crop ? `position: absolute; left: ${crop.drawX * PX_PER_MM}px; top: ${crop.drawY * PX_PER_MM}px; width: ${crop.drawW * PX_PER_MM}px; height: ${crop.drawH * PX_PER_MM}px;` : `width: 100%; height: 100%; object-fit: ${fit}; object-position: center;`;
+          elementsHtml += `      <img src="${escapeXml(img.src)}" alt="${escapeXml(img.decorative ? '' : img.altText || img.caption || '')}" style="${imageStyle} display: block; image-rendering: high-quality;"/>\n`;
         } else {
           elementsHtml += `      <div style="width: 100%; height: 100%; background: #eee; display: flex; align-items: center; justify-content: center; color: #888; font-size: 14px;">[Image Frame]</div>\n`;
         }
@@ -132,11 +135,12 @@ export function generateFlipbookHtml(state: ProjectState): string {
             const rowBg = isHeader ? tbl.headerFillColor : (tbl.alternateRowColor && r % 2 === 1 ? tbl.alternateRowColor : undefined);
             rowsHtml += `      <tr style="${rowBg ? `background: ${rowBg};` : ''}">\n`;
             for (let c = 0; c < (tbl.cells[r] || []).length; c++) {
+              const span = tableCellSpan(tbl.cells[r], c); if (!span) continue;
               const cell = tbl.cells[r][c];
               const tag = isHeader ? 'th' : 'td';
               const cellColor = isHeader ? tbl.headerTextColor : (cell.textColor || '#111');
               const align = cell.align || 'left';
-              rowsHtml += `        <${tag} style="padding: ${cellPadPx}px; border: ${borderStyle}; text-align: ${align}; color: ${cellColor}; font-weight: ${isHeader ? 700 : 400};">${escapeXml(cell.text || '')}</${tag}>\n`;
+              rowsHtml += `        <${tag} colspan="${span}" style="padding: ${cellPadPx}px; border: ${borderStyle}; text-align: ${align}; color: ${cellColor}; font-weight: ${isHeader ? 700 : 400};">${escapeXml(cell.text || '')}</${tag}>\n`;
             }
             rowsHtml += '      </tr>\n';
           }
@@ -730,3 +734,4 @@ export function exportDocumentToFlipbook(
 
   return { html, filename };
 }
+import { tableCellSpan } from './engine/tableCells';

@@ -1,5 +1,25 @@
 import { Spread, Page, CanvasElement, TextElement, ImageElement, TableElement } from './types';
 import { editStory, storyText } from './engine/storyContent';
+import { parseDelimited } from './engine/delimitedText';
+
+export function parseMergeData(text: string): DataMergeResult {
+  if (!text.trimStart().startsWith('[')) return parseCsv(text);
+  if (text.length > 4 * 1024 * 1024) throw new Error('Data input must be smaller than 4 MB.');
+  const rows: unknown = JSON.parse(text);
+  if (!Array.isArray(rows) || rows.length > 10000) throw new Error('Choose a JSON array of at most 10,000 records.');
+  const headers = new Set<string>();
+  const records = rows.map(row => {
+    if (!row || typeof row !== 'object' || Array.isArray(row) || Object.keys(row).length > 256) throw new Error('Each record needs an object with at most 256 scalar fields.');
+    const record = Object.create(null) as Record<string, string>;
+    for (const [key, value] of Object.entries(row)) {
+      if (!key.trim() || !['string', 'number', 'boolean'].includes(typeof value) || (typeof value === 'number' && !Number.isFinite(value))) throw new Error('JSON fields must have names and string, number or boolean values.');
+      headers.add(key); record[key] = String(value);
+    }
+    return record;
+  });
+  if (headers.size > 256) throw new Error('Use at most 256 unique fields.');
+  return { headers: [...headers], records };
+}
 
 export interface DataMergeResult {
   headers: string[];
@@ -10,90 +30,15 @@ export interface DataMergeResult {
  * RFC 4180 compliant CSV parser supporting quoted values, commas, and newlines inside quotes.
  */
 export function parseCsv(csvText: string): DataMergeResult {
-  const records: string[][] = [];
-  let currentRecord: string[] = [];
-  let currentField = '';
-  let inQuotes = false;
-  let i = 0;
-
-  const len = csvText.length;
-  while (i < len) {
-    const char = csvText[i];
-    const nextChar = i + 1 < len ? csvText[i + 1] : '';
-
-    if (inQuotes) {
-      if (char === '"') {
-        if (nextChar === '"') {
-          currentField += '"';
-          i += 2;
-          continue;
-        } else {
-          inQuotes = false;
-          i++;
-          continue;
-        }
-      } else {
-        currentField += char;
-        i++;
-        continue;
-      }
-    } else {
-      if (char === '"') {
-        inQuotes = true;
-        i++;
-        continue;
-      } else if (char === ',') {
-        currentRecord.push(currentField.trim());
-        currentField = '';
-        i++;
-        continue;
-      } else if (char === '\r') {
-        if (nextChar === '\n') i++;
-        currentRecord.push(currentField.trim());
-        records.push(currentRecord);
-        currentRecord = [];
-        currentField = '';
-        i++;
-        continue;
-      } else if (char === '\n') {
-        currentRecord.push(currentField.trim());
-        records.push(currentRecord);
-        currentRecord = [];
-        currentField = '';
-        i++;
-        continue;
-      } else {
-        currentField += char;
-        i++;
-        continue;
-      }
-    }
-  }
-
-  if (currentField.length > 0 || currentRecord.length > 0) {
-    currentRecord.push(currentField.trim());
-    records.push(currentRecord);
-  }
-
-  const validRows = records.filter(row => row.some(col => col.trim().length > 0));
-  if (validRows.length === 0) {
-    return { headers: [], records: [] };
-  }
-
-  const headers = validRows[0].map(h => h.trim());
-  const dataRecords: Record<string, string>[] = [];
-
-  for (let r = 1; r < validRows.length; r++) {
-    const row = validRows[r];
-    const rec: Record<string, string> = {};
-    for (let c = 0; c < headers.length; c++) {
-      const header = headers[c];
-      rec[header] = row[c] !== undefined ? row[c] : '';
-    }
-    dataRecords.push(rec);
-  }
-
-  return { headers, records: dataRecords };
+  const rows = parseDelimited(csvText).filter(row => row.some(value => value.trim()));
+  if (!rows.length) return { headers: [], records: [] };
+  const headers = rows[0].map(value => value.trim());
+  if (headers.some(header => !header) || new Set(headers).size !== headers.length) throw new Error('Column names must be nonempty and unique.');
+  const records = rows.slice(1).map(row => {
+    if (row.length !== headers.length) throw new Error('Every data row must match the header column count.');
+    return Object.fromEntries(headers.map((header, index) => [header, row[index]]));
+  });
+  return { headers, records };
 }
 
 /**
@@ -104,7 +49,7 @@ export function substituteTokens(templateStr: string, record: Record<string, str
 
   return templateStr.replace(/\{\{\s*([a-zA-Z0-9_.[\]-]+)\s*\}\}/g, (match, key) => {
     // Exact match
-    if (record[key] !== undefined) {
+    if (Object.hasOwn(record, key)) {
       return record[key];
     }
     // Case-insensitive fallback
@@ -135,9 +80,11 @@ export function substituteElementTokens(element: CanvasElement, record: Record<s
 
   if (element.type === 'image') {
     const imgEl = element as ImageElement;
+    const src = substituteTokens(imgEl.src, record);
     return {
       ...imgEl,
-      src: substituteTokens(imgEl.src, record),
+      src,
+      ...(src !== imgEl.src ? { assetId: undefined, proxySrc: undefined, originalWidth: undefined, originalHeight: undefined, actualDpi: undefined } : {}),
       caption: imgEl.caption ? substituteTokens(imgEl.caption, record) : undefined,
     };
   }
@@ -191,10 +138,17 @@ export function generateMergedSpreads(
     });
 
     // Clone and substitute tokens on each element
-    const newElements: CanvasElement[] = templateSpread.elements.map((el, elIdx) => {
-      const cloned = substituteElementTokens(el, record);
-      cloned.id = `merged-el-${spreadIndex}-${elIdx}`;
+    const elementIds = new Map(templateSpread.elements.map((element, idx) => [element.id, `${spreadId}-el-${idx}`]));
+    const newElements: CanvasElement[] = templateSpread.elements.map(el => {
+      const cloned = substituteElementTokens(structuredClone(el), record);
+      cloned.id = elementIds.get(el.id)!;
       cloned.pageId = pageIdMap.get(el.pageId) || newPages[0].id;
+      if (cloned.groupId) cloned.groupId = `${spreadId}-group-${cloned.groupId}`;
+      if (cloned.anchor) cloned.anchor.parentTextId = elementIds.get(cloned.anchor.parentTextId) || cloned.anchor.parentTextId;
+      if (cloned.type === 'text' || cloned.type === 'table') {
+        cloned.prevFrameId = cloned.prevFrameId ? elementIds.get(cloned.prevFrameId) : undefined;
+        cloned.nextFrameId = cloned.nextFrameId ? elementIds.get(cloned.nextFrameId) : undefined;
+      }
       return cloned;
     });
 

@@ -1,3 +1,6 @@
+import { instantiateMasterItem, resolveMaster } from './engine/masterInheritance';
+import { lockedArtworkIds } from './engine/selectionGeometry';
+import { layoutFrameNotes, publicationText } from './engine/publicationReferences';
 import { handleCanvasKeyDown } from './engine/interaction/keyboard';
 import { masterTargetPage } from './engine/pageLabels';
 import {
@@ -21,6 +24,7 @@ import { stateManager, numberToSuperscript } from './state';
 import { collabSession } from './collab';
 import { assetStore } from './engine/assetStore';
 import { tableEngine } from './engine/tableEngine';
+import { tableThread } from './engine/tableCells';
 import { canvasRunFont, layoutStory } from './engine/storyLayout';
 
 export const MM_TO_PX = 3.7795275591;
@@ -210,7 +214,8 @@ export function calculateImageFitting(
   frameH: number,
   imgW: number,
   imgH: number,
-  fitMode: ImageFitMode = 'fill'
+  fitMode: ImageFitMode = 'fill',
+  focalPoint?: { x: number; y: number }
 ): ImageFitTransform {
   if (imgW <= 0 || imgH <= 0 || frameW <= 0 || frameH <= 0) {
     return { drawX: frameX, drawY: frameY, drawW: frameW, drawH: frameH, scaleX: 1, scaleY: 1 };
@@ -223,8 +228,9 @@ export function calculateImageFitting(
       const scale = Math.max(frameW / imgW, frameH / imgH);
       const drawW = imgW * scale;
       const drawH = imgH * scale;
-      const drawX = frameX + (frameW - drawW) / 2;
-      const drawY = frameY + (frameH - drawH) / 2;
+      const focal = (value: number | undefined) => Number.isFinite(value) ? Math.max(0, Math.min(1, value!)) : 0.5;
+      const drawX = frameX + Math.max(frameW - drawW, Math.min(0, frameW / 2 - drawW * focal(focalPoint?.x)));
+      const drawY = frameY + Math.max(frameH - drawH, Math.min(0, frameH / 2 - drawH * focal(focalPoint?.y)));
       return { drawX, drawY, drawW, drawH, scaleX: scale, scaleY: scale };
     }
 
@@ -1024,16 +1030,15 @@ export class SpreadCanvas {
     const ids = state.selectedElementIds && state.selectedElementIds.length > 0
       ? state.selectedElementIds
       : (state.selectedElementId ? [state.selectedElementId] : []);
+    const lockedIds = lockedArtworkIds(state);
 
     for (const id of ids) {
       const el = spread.elements.find(item => item.id === id);
       if (el) {
-        const elLayer = state.layers?.find(l => l.id === (el.layerId || 'layer-1'));
-        const isLocked = !!el.locked || Boolean(elLayer?.locked) || Boolean(el.editorialOnly);
         this.dragInitialPositions.set(id, {
           x: el.x,
           y: el.y,
-          locked: isLocked,
+          locked: lockedIds.has(id),
           width: el.width,
           height: el.height,
           pageId: el.pageId,
@@ -2206,7 +2211,7 @@ export class SpreadCanvas {
   private hitTestMasterElements(spreadMmX: number, spreadMmY: number, state: ProjectState): { masterElement: CanvasElement; targetPage: Page } | null {
     const spread = stateManager.getActiveSpread();
     if (!spread.masterSpreadId) return null;
-    const master = state.masterSpreads?.find((m) => m.id === spread.masterSpreadId);
+    const master = resolveMaster(state.masterSpreads, spread.masterSpreadId);
     if (!master) return null;
 
     const { pageWidthMm, pageHeightMm } = this.getSpreadDimensions(state);
@@ -3034,75 +3039,22 @@ export class SpreadCanvas {
 
     const layerMap = new Map((state.layers || []).map(l => [l.id, l]));
 
-    // Render Master Spread Elements (rendered behind regular page elements)
-    if (spread.masterSpreadId) {
-      const master = state.masterSpreads?.find(m => m.id === spread.masterSpreadId);
-      if (master) {
-        for (const mEl of master.elements) {
-          if (spread.detachedMasterElementIds?.includes(mEl.id)) continue;
-          if (spread.elements.some(e => e.masterSourceId === mEl.id)) continue;
-          const mLayer = layerMap.get(mEl.layerId || 'layer-1');
-          if (mLayer && mLayer.visible === false) continue;
-
-          const targetPage = masterTargetPage(master.pages, spread.pages, mEl.pageId);
-          if (!targetPage) continue;
-
-          const pageIdx = spread.pages.findIndex(p => p.id === targetPage!.id);
-          const pageStartMm = pageIdx * pageWidthMm;
-          let masterY = mEl.y;
-          if (masterY + (mEl.height || 0) > pageHeightMm - 2) {
-            masterY = Math.max(0, pageHeightMm - (state.settings.margins.bottomMm || 15) + 2);
-          }
-          const elScreenX = origin.x + ((pageStartMm + mEl.x) * pxPerMm);
-          const elScreenY = origin.y + (masterY * pxPerMm);
-          const elScreenW = mEl.width * pxPerMm;
-          const elScreenH = mEl.height * pxPerMm;
-
-          ctx.save();
-          ctx.globalAlpha = mEl.opacity * 0.9;
-
-          if (mEl.type === 'shape') {
-            const shape = mEl as ShapeElement;
-            ctx.fillStyle = shape.fillColor || '#ffffff';
-            ctx.strokeStyle = shape.strokeColor || '#000000';
-            ctx.lineWidth = (shape.strokeWidthMm || 0.3) * pxPerMm;
-            if (shape.shapeKind === 'line') {
-              ctx.beginPath();
-              ctx.moveTo(elScreenX, elScreenY);
-              ctx.lineTo(elScreenX + elScreenW, elScreenY + elScreenH);
-              ctx.stroke();
-            } else if (shape.shapeKind === 'rectangle') {
-              if (shape.fillColor && shape.fillColor !== 'transparent') ctx.fillRect(elScreenX, elScreenY, elScreenW, elScreenH);
-              if (shape.strokeWidthMm > 0) ctx.strokeRect(elScreenX, elScreenY, elScreenW, elScreenH);
-            }
-          } else if (mEl.type === 'text') {
-            const textEl = mEl as TextElement;
-            const evalText = stateManager.evaluateTokens(textEl.text, targetPage.pageNumber);
-            const fontSizePx = (textEl.fontSizePt * (96 / 72)) * state.zoom;
-            ctx.fillStyle = textEl.color || '#666666';
-            ctx.font = `${fontSizePx}px ${textEl.fontFamily || 'sans-serif'}`;
-            ctx.textBaseline = 'top';
-            if (textEl.alignment === 'right') {
-              ctx.textAlign = 'right';
-              ctx.fillText(evalText, elScreenX + elScreenW, elScreenY);
-            } else if (textEl.alignment === 'center') {
-              ctx.textAlign = 'center';
-              ctx.fillText(evalText, elScreenX + elScreenW / 2, elScreenY);
-            } else {
-              ctx.textAlign = 'left';
-              ctx.fillText(evalText, elScreenX, elScreenY);
-            }
-          }
-          ctx.restore();
-        }
-      }
-    }
-
-    const visibleElements = spread.elements.filter(el => {
+    // Resolve parent chains once and send every master object through the normal renderer.
+    const master = resolveMaster(state.masterSpreads, spread.masterSpreadId);
+    const masterElements = (master?.elements || []).flatMap(element => {
+      if (spread.detachedMasterElementIds?.includes(element.id) || spread.elements.some(local => local.masterSourceId === element.id)) return [];
+      const page = masterTargetPage(master!.pages, spread.pages, element.pageId);
+      if (!page) return [];
+      return [instantiateMasterItem(element, page.id, text => publicationText(state, text, page.pageNumber))];
+    });
+    const inheritedIds = new Set(masterElements.map(element => element.id));
+    const visibleElements = [...masterElements, ...spread.elements].filter(el => {
+      if (state.previewMode && el.pasteboard) return false;
       const elLayer = layerMap.get(el.layerId || 'layer-1');
       return !elLayer || elLayer.visible !== false;
     });
     const sortedElements = [...visibleElements].sort((a, b) => {
+      if (inheritedIds.has(a.id) !== inheritedIds.has(b.id)) return inheritedIds.has(a.id) ? -1 : 1;
       const layerA = layerMap.get(a.layerId || 'layer-1');
       const layerB = layerMap.get(b.layerId || 'layer-1');
       const orderA = layerA ? layerA.order : 0;
@@ -3125,6 +3077,7 @@ export class SpreadCanvas {
 
       ctx.save();
       ctx.globalAlpha = el.opacity;
+      ctx.globalCompositeOperation = el.blendMode === 'normal' || !el.blendMode ? 'source-over' : el.blendMode;
 
       if (el.shadow && el.shadow.color) {
         ctx.shadowColor = el.shadow.color;
@@ -3205,7 +3158,7 @@ export class SpreadCanvas {
                 elScreenH,
                 bW,
                 bH,
-                img.fitMode || 'fill'
+                img.fitMode || 'fill', img.focalPoint
               );
 
               ctx.save();
@@ -3252,7 +3205,7 @@ export class SpreadCanvas {
         this.renderVectorPath(ctx, pathEl, origin, pageStartMm, pxPerMm, isSelected, this.activePenPathId);
       } else if (el.type === 'table') {
         const table = el as TableElement;
-        tableEngine.renderCanvasTable(ctx, table, elScreenX, elScreenY, elScreenW, elScreenH, pxPerMm, state.zoom, [table]);
+        tableEngine.renderCanvasTable(ctx, table, elScreenX, elScreenY, elScreenW, elScreenH, pxPerMm, state.zoom, tableThread(state.spreads, table));
       } else if (el.type === 'text') {
         const text = el as TextElement;
         if (this.activeInlineEditor && this.activeInlineEditor.elementId === el.id) {
@@ -3359,9 +3312,8 @@ export class SpreadCanvas {
         const fnFontSizePx = (fnFontSizePt * (96 / 72)) * state.zoom;
         const fnLineSpacingPx = fnFontSizePx * 1.35;
         const fnRuleGapPx = 6 * state.zoom;
-        const totalFootnoteHeightPx = footnotes.length > 0
-          ? fnRuleGapPx + (footnotes.length * fnLineSpacingPx) + (4 * state.zoom)
-          : 0;
+        const noteLayout = layoutFrameNotes(state, text, footnotes);
+        const totalFootnoteHeightPx = noteLayout.height * pxPerMm;
 
         let isOverflowing = false;
         const bottomLimit = elScreenY + elScreenH - paddingPx - totalFootnoteHeightPx;
@@ -3857,7 +3809,7 @@ export class SpreadCanvas {
         }
 
         if (footnotes.length > 0) {
-          const fnStartY = elScreenY + elScreenH - paddingPx - totalFootnoteHeightPx + fnRuleGapPx;
+          const fnStartY = elScreenY + elScreenH - paddingPx - totalFootnoteHeightPx;
           const ruleThicknessPx = (fnSettings.separatorRuleThicknessPt || 0.5) * (96 / 72) * state.zoom;
           const maxRuleW = (fnSettings.separatorRuleWidthMm || 30) * pxPerMm;
           const ruleW = Math.min(availWidthPx * 0.45, maxRuleW);
@@ -3875,13 +3827,11 @@ export class SpreadCanvas {
           ctx.fillStyle = text.color || '#222222';
           ctx.font = `${fnFontSizePx}px ${fnSettings.fontFamily || text.fontFamily || 'serif'}`;
           ctx.textAlign = 'left';
-          ctx.textBaseline = 'top';
+          ctx.textBaseline = 'alphabetic';
 
-          footnotes.forEach((fn, idx) => {
-            const lineY = fnStartY + (3 * state.zoom) + (idx * fnLineSpacingPx);
-            const marker = numberToSuperscript(fn.number);
-            const lineText = `${marker} ${fn.text}`;
-            ctx.fillText(lineText, elScreenX + paddingPx, lineY);
+          noteLayout.lines.forEach((line, idx) => {
+            const lineY = fnStartY + (3 + noteLayout.size * 25.4 / 72 + noteLayout.lineHeight * idx) * pxPerMm;
+            ctx.fillText(line.text, elScreenX + paddingPx, lineY);
           });
           ctx.restore();
         }

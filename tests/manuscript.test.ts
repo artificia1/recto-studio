@@ -53,6 +53,27 @@ describe('Manuscript import and structured content', () => {
     await expect(readZip(createZipArchive({ manuscript: '123456789' }), 4)).rejects.toThrow('size limit');
   });
 
+  it('imports Markdown notes as anchors while preserving code and escaped references', () => {
+    const imported = parseMarkdownContent('Body[^one] `[^one]` \\[^one].\n\n[^one]: A **real** note.');
+    expect(imported.notes).toHaveLength(1);
+    expect(imported.notes![0].text).toBe('A real note.');
+    expect(imported.content!.paragraphs.flatMap(p => p.runs).filter(r => r.noteId)).toHaveLength(1);
+    expect(imported.formattedText).toContain('[^one] [^one]');
+    expect(parseMarkdownContent('Missing[^unknown]').warnings!.some(w => w.includes('missing'))).toBe(true);
+  });
+
+  it('imports Word footnotes and endnotes without appending duplicate manuscript paragraphs', async () => {
+    const ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+    const imported = await parseDocxContent(createZipArchive({
+      'word/document.xml': `<w:document xmlns:w="${ns}"><w:body><w:p><w:r><w:t>Body</w:t><w:footnoteReference w:id="2"/><w:endnoteReference w:id="3"/></w:r></w:p></w:body></w:document>`,
+      'word/footnotes.xml': `<w:footnotes xmlns:w="${ns}"><w:footnote w:id="2"><w:p><w:r><w:t>Footnote body</w:t></w:r></w:p></w:footnote></w:footnotes>`,
+      'word/endnotes.xml': `<w:endnotes xmlns:w="${ns}"><w:endnote w:id="3"><w:p><w:r><w:t>Endnote body</w:t></w:r></w:p></w:endnote></w:endnotes>`,
+    }));
+    expect(imported.notes!.map(n => [n.kind, n.text])).toEqual([['footnote', 'Footnote body'], ['endnote', 'Endnote body']]);
+    expect(imported.content!.paragraphs).toHaveLength(1);
+    expect(imported.content!.paragraphs[0].runs.filter(r => r.noteId)).toHaveLength(2);
+  });
+
   it('preserves whitespace in every slice and retains formatting through text edits', () => {
     const content = formatStory(plainStory('One\n\nTwo 😀 and three\n'), 5, 8, { italic: true });
     const text = storyText(content);
@@ -82,6 +103,19 @@ describe('Story lifecycle', () => {
   });
   const current = (id: string) => stateManager.getElementById(id) as TextElement;
   const fullText = () => storyText(stateManager.getStoryContent('head'));
+
+  it('places and replaces imported notes with unique identities and one undo', () => {
+    const imported = parseMarkdownContent('Body[^a]\n\n[^a]: First note');
+    stateManager.placeManuscript('head', imported.content!, imported.notes);
+    const first = stateManager.getState().settings.footnotes![0].id;
+    stateManager.placeManuscript('middle', imported.content!, imported.notes);
+    expect(new Set(stateManager.getState().settings.footnotes!.map(n => n.id)).size).toBe(2);
+    stateManager.placeManuscript('head', plainStory('Replacement'));
+    expect(stateManager.getState().settings.footnotes!.some(n => n.id === first)).toBe(false);
+    stateManager.undo();
+    expect(stateManager.getState().settings.footnotes!.some(n => n.id === first)).toBe(true);
+    expect(fullText()).toContain('Body');
+  });
 
   it('retains leading and trailing whitespace when paginating a legacy frame', () => {
     const copy = '  ' + 'Legacy manuscript. '.repeat(400) + '\n\n';

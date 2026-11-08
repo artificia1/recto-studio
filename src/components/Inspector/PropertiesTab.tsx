@@ -4,12 +4,22 @@ import { fontManager } from '../../fontManager';
 import { PAGE_PRESETS, ProjectState, CanvasElement, TextElement, ImageElement, ShapeElement, TableElement, TableCell, ParagraphStyle, VectorPathElement } from '../../types';
 import { MathInput } from '../common/MathInput';
 import { getAllFreeToneColors } from '../../engine/spotColors';
+import { parseTableData } from '../../engine/delimitedText';
+import { mergeTableCellRight, tableCellSpan, tableThread } from '../../engine/tableCells';
+import { layoutContentTables } from '../../engine/tableLayout';
+import { lazy, Suspense } from 'preact/compat';
+const VariableFontPanel = lazy(() => import('./VariableFontPanel'));
 
 interface PropertiesTabProps {
   state: ProjectState;
 }
 
 export function PropertiesTab({ state }: PropertiesTabProps) {
+  const [spacing, setSpacing] = useState(4.5);
+  const [arrangeError, setArrangeError] = useState('');
+  const runArrangement = (action: () => void) => {
+    try { action(); setArrangeError(''); } catch (error) { setArrangeError(error instanceof Error ? error.message : String(error)); }
+  };
   const spread = stateManager.getActiveSpread();
   const selectedIds = state.selectedElementIds && state.selectedElementIds.length > 0
     ? state.selectedElementIds
@@ -79,28 +89,36 @@ export function PropertiesTab({ state }: PropertiesTabProps) {
 
           <div className="section-header">ALIGN OBJECTS</div>
           <div className="alignment-grid">
-            <button className="align-tool-btn" onClick={() => stateManager.alignElements('left')} title="Align Left">⇤ Left</button>
-            <button className="align-tool-btn" onClick={() => stateManager.alignElements('center')} title="Align Center">↔ Center</button>
-            <button className="align-tool-btn" onClick={() => stateManager.alignElements('right')} title="Align Right">⇥ Right</button>
-            <button className="align-tool-btn" onClick={() => stateManager.alignElements('top')} title="Align Top">↥ Top</button>
-            <button className="align-tool-btn" onClick={() => stateManager.alignElements('middle')} title="Align Middle">↕ Middle</button>
-            <button className="align-tool-btn" onClick={() => stateManager.alignElements('bottom')} title="Align Bottom">↧ Bottom</button>
+            <button className="align-tool-btn" onClick={() => runArrangement(() => stateManager.alignElements('left'))} title="Align Left">⇤ Left</button>
+            <button className="align-tool-btn" onClick={() => runArrangement(() => stateManager.alignElements('center'))} title="Align Center">↔ Center</button>
+            <button className="align-tool-btn" onClick={() => runArrangement(() => stateManager.alignElements('right'))} title="Align Right">⇥ Right</button>
+            <button className="align-tool-btn" onClick={() => runArrangement(() => stateManager.alignElements('top'))} title="Align Top">↥ Top</button>
+            <button className="align-tool-btn" onClick={() => runArrangement(() => stateManager.alignElements('middle'))} title="Align Middle">↕ Middle</button>
+            <button className="align-tool-btn" onClick={() => runArrangement(() => stateManager.alignElements('bottom'))} title="Align Bottom">↧ Bottom</button>
           </div>
 
           {selectedElements.length >= 3 && (
             <>
               <div className="section-header">DISTRIBUTE SPACING</div>
               <div className="distribution-grid">
-                <button className="align-tool-btn" onClick={() => stateManager.distributeElements('horizontal')} title="Distribute Horizontally">
+                <button className="align-tool-btn" onClick={() => runArrangement(() => stateManager.distributeElements('horizontal'))} title="Distribute Horizontally">
                   ⫴ Horiz. Even
                 </button>
-                <button className="align-tool-btn" onClick={() => stateManager.distributeElements('vertical')} title="Distribute Vertically">
+                <button className="align-tool-btn" onClick={() => runArrangement(() => stateManager.distributeElements('vertical'))} title="Distribute Vertically">
                   ⩕ Vert. Even
                 </button>
               </div>
             </>
           )}
 
+          <label>Exact spacing (mm)<input aria-label="Exact spacing (mm)" type="number" min={0} max={2500} step={0.1} value={spacing} onInput={event => setSpacing(Number(event.currentTarget.value))}/></label>
+          <div className="publication-actions">
+            <button className="sm-btn" onClick={() => runArrangement(() => stateManager.distributeElements('horizontal', spacing))}>Set horizontal gap</button>
+            <button className="sm-btn" onClick={() => runArrangement(() => stateManager.distributeElements('vertical', spacing))}>Set vertical gap</button>
+            <button className="sm-btn" onClick={() => runArrangement(() => stateManager.groupSelection())}>Group objects</button>
+            <button className="sm-btn" onClick={() => runArrangement(() => stateManager.ungroupSelection())}>Ungroup objects</button>
+          </div>
+          {arrangeError && <p role="alert">{arrangeError}</p>}
           <div className="section-header" style={{ marginTop: '12px' }}>GROUP ACTIONS</div>
           <div className="btn-group-sm" style={{ marginTop: '8px' }}>
             <button
@@ -210,6 +228,8 @@ export function PropertiesTab({ state }: PropertiesTabProps) {
           </div>
         )}
 
+        <label className="full-label">Reading order (EPUB)<input type="number" min={1} step={1} value={selectedEl.readingOrder ?? ''} placeholder="Automatic by position"
+          onChange={event => stateManager.updateElement(selectedEl.id, { readingOrder: event.currentTarget.value ? Math.max(1, Number(event.currentTarget.value)) : undefined })}/></label>
         <div className="input-grid-2">
           <label>
             X:
@@ -255,18 +275,21 @@ export function PropertiesTab({ state }: PropertiesTabProps) {
           </label>
         </div>
         <div className="input-grid-2" style={{ marginTop: '8px' }}>
+          <label>Object blend<select aria-label="Object blend" value={selectedEl.blendMode || 'normal'} disabled={selectedEl.locked} onChange={event => stateManager.updateElement(selectedEl.id, { blendMode: event.currentTarget.value as 'normal' | 'multiply' | 'screen' | 'overlay' })}>
+            <option value="normal">Normal</option><option value="multiply">Multiply</option><option value="screen">Screen</option><option value="overlay">Overlay</option>
+          </select></label>
           <label>
             Opacity:
             <input
               type="range"
-              min={0.1}
+              min={0}
               max={1}
               step={0.05}
               disabled={selectedEl.locked}
               value={selectedEl.opacity}
               onInput={(e) =>
                 stateManager.updateElement(selectedEl.id, {
-                  opacity: parseFloat((e.target as HTMLInputElement).value) || 1,
+                  opacity: Number((e.target as HTMLInputElement).value),
                 })}
             />
           </label>
@@ -610,6 +633,7 @@ function TextInspector({
           ))}
         </div>
 
+        <Suspense fallback={null}><VariableFontPanel key={`${element.id}:${element.fontFamily}`} element={element}/></Suspense>
         {/* Font Select */}
         {(() => {
           const filtered = fontManager.searchFonts(fontSearch, fontCategory);
@@ -1239,6 +1263,7 @@ function TextInspector({
         </div>
         <textarea
           rows={6}
+          readOnly={!!element.generated}
           value={localText}
           onInput={handleTextChange}
         ></textarea>
@@ -1400,6 +1425,15 @@ function ImageInspector({ element }: { element: ImageElement }) {
         />
       </label>
 
+      {element.fitMode === 'fill' && <div className="publication-panel"><strong>Image focal point</strong><p>Keep the chosen subject near the frame’s center while cropping.</p>
+        {(['x', 'y'] as const).map(axis => <label key={axis}>{axis === 'x' ? 'Horizontal' : 'Vertical'} ({Math.round((element.focalPoint?.[axis] ?? 0.5) * 100)}%)
+          <input aria-label={`Image focal ${axis}`} type="range" min={0} max={1} step={0.01} value={element.focalPoint?.[axis] ?? 0.5} onChange={event => stateManager.updateElement(element.id, { focalPoint: { x: element.focalPoint?.x ?? 0.5, y: element.focalPoint?.y ?? 0.5, [axis]: Number(event.currentTarget.value) } })}/>
+        </label>)}
+        <button className="sm-btn" onClick={() => stateManager.updateElement(element.id, { focalPoint: { x: 0.5, y: 0.5 } })}>Center focal point</button>
+      </div>}
+      <label style={{ display: 'flex', gap: '6px', marginTop: '8px' }}><input type="checkbox" checked={!!element.decorative}
+        onChange={event => stateManager.updateElement(element.id, { decorative: event.currentTarget.checked })}/> Decorative image (empty alternative text in EPUB)</label>
+
       <div className="input-grid-2" style={{ marginTop: '8px' }}>
         <label>
           Border:
@@ -1551,8 +1585,17 @@ function TextWrapInspector({ element }: { element: CanvasElement }) {
   );
 }
 
-function TableInspector({ element }: { element: TableElement }) {
+function TableInspector({ element: frame }: { element: TableElement }) {
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null);
+  const [tableData, setTableData] = useState('');
+  const [tableError, setTableError] = useState('');
+  const [linkTarget, setLinkTarget] = useState('');
+  const thread = tableThread(stateManager.getState().spreads, frame);
+  const element = thread[0];
+  const locked = thread.some(item => item.locked || stateManager.getState().layers.find(layer => layer.id === item.layerId)?.locked);
+  const layout = element.rowSizing === 'content' ? layoutContentTables(thread) : null;
+  const act = (action: () => void) => { try { action(); setTableError(''); } catch (reason) { setTableError(reason instanceof Error ? reason.message : String(reason)); } };
+  const update = (_id: string, updates: Parameters<typeof stateManager.updateTableSource>[1]) => act(() => stateManager.updateTableSource(frame.id, updates));
 
   const handleRowsChange = (e: Event) => {
     const newRows = Math.max(1, Math.min(20, parseInt((e.target as HTMLInputElement).value, 10) || 1));
@@ -1569,7 +1612,7 @@ function TableInspector({ element }: { element: TableElement }) {
         newCells.push(rowArr);
       }
     }
-    stateManager.updateElement(element.id, { rows: newRows, cells: newCells });
+    update(element.id, { rows: newRows, cells: newCells });
   };
 
   const handleColsChange = (e: Event) => {
@@ -1582,11 +1625,11 @@ function TableInspector({ element }: { element: TableElement }) {
       }
       return nextRow.slice(0, newCols);
     });
-    stateManager.updateElement(element.id, { cols: newCols, cells: newCells });
+    update(element.id, { cols: newCols, cells: newCells });
   };
 
   const handleCellTextChange = (row: number, col: number, text: string) => {
-    stateManager.updateTableCell(element.id, row, col, text);
+    act(() => stateManager.updateTableCell(frame.id, row, col, text));
   };
 
   const activeCell = selectedCell && element.cells[selectedCell.row] && element.cells[selectedCell.row][selectedCell.col]
@@ -1596,6 +1639,27 @@ function TableInspector({ element }: { element: TableElement }) {
   return (
     <div className="inspector-section">
       <div className="section-header">TABLE STRUCTURE</div>
+      <details className="publication-panel"><summary>Table continuation</summary>
+        <p>Content-sized rows wrap text and continue as whole rows into the next frame. Equal rows preserves the existing layout. Cell and style edits apply across the table.</p>
+        <label>Row sizing<select aria-label="Table row sizing" value={element.rowSizing || 'equal'} disabled={locked} onChange={event => act(() => stateManager.setTableRowSizing(frame.id, event.currentTarget.value as 'equal' | 'content'))}>
+          <option value="equal">Equal rows (legacy)</option><option value="content">Fit rows to content</option>
+        </select></label>
+        {layout && <p role="status">{layout.pendingRows.length ? `${layout.pendingRows.length} rows need more space. Add a continuation page or enlarge the frame; a row must fit in one frame.` : 'All body rows fit.'}{layout.frames.some(item => item.horizontalOverflow) ? ' Text or repeated headers/footers exceed a frame.' : ''}</p>}
+        <button className="sm-btn" disabled={locked || !!frame.pasteboard} onClick={() => act(() => { stateManager.addTableContinuationPage(frame.id); })}>Add continuation page</button>
+        <label>Next table frame<select value={linkTarget} onChange={event => setLinkTarget(event.currentTarget.value)}><option value="">Choose a table</option>{stateManager.getState().spreads.flatMap(spread => spread.elements.filter((item): item is TableElement => item.type === 'table' && !thread.some(frame => frame.id === item.id)).map(item => <option key={item.id} value={item.id}>{item.id} · page {spread.pages.find(page => page.id === item.pageId)?.pageNumber}</option>))}</select></label>
+        <button className="sm-btn" disabled={!linkTarget || !!frame.nextFrameId || locked} onClick={() => setTableError(stateManager.linkTableFrames(frame.id, linkTarget) ? 'Table continuation linked.' : 'Unlock both tables and choose an unlinked target outside this chain.')}>Link next frame</button>
+        <button className="sm-btn" disabled={locked || (!frame.nextFrameId && !frame.prevFrameId)} onClick={() => { stateManager.unlinkTableFrame(frame.id); setTableError('Table frame unlinked.'); }}>Unlink table frame</button>
+      </details>
+      <details className="publication-panel"><summary>Import table data</summary>
+        <p>Paste tab-separated cells from a spreadsheet, or quoted CSV. Replaces this table’s cells in one undo step. Unlink threaded tables before replacing their structure.</p>
+        <textarea aria-label="Table CSV or TSV data" rows={5} value={tableData} onInput={event => setTableData(event.currentTarget.value)}/>
+        <button className="sm-btn" disabled={locked || !tableData.trim() || !!element.prevFrameId || !!element.nextFrameId} onClick={() => {
+          try { const rows = parseTableData(tableData); update(element.id, { rows: rows.length, cols: rows[0].length, cells: rows.map(row => row.map(text => ({ text, align: 'left' as const }))) }); setSelectedCell(null); setTableError('Table imported.'); }
+          catch (reason) { setTableError(reason instanceof Error ? reason.message : String(reason)); }
+        }}>Replace table data</button>
+      </details>
+      {tableError && <p role="status">{tableError}</p>}
+      <label className="publication-check"><input type="checkbox" checked={frame.repeatHeaderOnOverflow !== false} disabled={locked} onChange={event => stateManager.updateElement(frame.id, { repeatHeaderOnOverflow: event.currentTarget.checked })}/>Repeat headers in linked frames</label>
       <div className="input-grid-2">
         <label>
           Rows:
@@ -1604,7 +1668,7 @@ function TableInspector({ element }: { element: TableElement }) {
             min={1}
             max={20}
             value={element.rows}
-            disabled={element.locked}
+            disabled={locked}
             onChange={handleRowsChange}
           />
         </label>
@@ -1615,7 +1679,7 @@ function TableInspector({ element }: { element: TableElement }) {
             min={1}
             max={10}
             value={element.cols}
-            disabled={element.locked}
+            disabled={locked}
             onChange={handleColsChange}
           />
         </label>
@@ -1627,9 +1691,9 @@ function TableInspector({ element }: { element: TableElement }) {
           <input
             type="checkbox"
             checked={element.headerRowCount > 0}
-            disabled={element.locked}
+            disabled={locked}
             onChange={(e) =>
-              stateManager.updateElement(element.id, {
+              update(element.id, {
                 headerRowCount: (e.target as HTMLInputElement).checked ? 1 : 0,
               })
             }
@@ -1640,9 +1704,9 @@ function TableInspector({ element }: { element: TableElement }) {
           <input
             type="color"
             value={element.alternateRowColor || '#f9f9f9'}
-            disabled={element.locked}
+            disabled={locked}
             onInput={(e) =>
-              stateManager.updateElement(element.id, {
+              update(element.id, {
                 alternateRowColor: (e.target as HTMLInputElement).value,
               })
             }
@@ -1659,9 +1723,9 @@ function TableInspector({ element }: { element: TableElement }) {
             max={5}
             step={0.1}
             value={element.borderWidthMm}
-            disabled={element.locked}
+            disabled={locked}
             onInput={(e) =>
-              stateManager.updateElement(element.id, {
+              update(element.id, {
                 borderWidthMm: parseFloat((e.target as HTMLInputElement).value) || 0,
               })
             }
@@ -1673,9 +1737,9 @@ function TableInspector({ element }: { element: TableElement }) {
           <input
             type="color"
             value={element.borderColor}
-            disabled={element.locked}
+            disabled={locked}
             onInput={(e) =>
-              stateManager.updateElement(element.id, {
+              update(element.id, {
                 borderColor: (e.target as HTMLInputElement).value,
               })
             }
@@ -1692,9 +1756,9 @@ function TableInspector({ element }: { element: TableElement }) {
             max={48}
             step={0.5}
             value={element.fontSizePt}
-            disabled={element.locked}
+            disabled={locked}
             onInput={(e) =>
-              stateManager.updateElement(element.id, {
+              update(element.id, {
                 fontSizePt: parseFloat((e.target as HTMLInputElement).value) || 9,
               })
             }
@@ -1709,10 +1773,10 @@ function TableInspector({ element }: { element: TableElement }) {
             max={10}
             step={0.5}
             value={element.cellPaddingMm}
-            disabled={element.locked}
+            disabled={locked}
             onInput={(e) =>
-              stateManager.updateElement(element.id, {
-                cellPaddingMm: parseFloat((e.target as HTMLInputElement).value) || 1,
+              update(element.id, {
+                cellPaddingMm: Math.max(0, Math.min(10, Number((e.target as HTMLInputElement).value) || 0)),
               })
             }
           />
@@ -1739,6 +1803,7 @@ function TableInspector({ element }: { element: TableElement }) {
         >
           {element.cells.map((rowArr, r) =>
             rowArr.map((cell, c) => {
+              const span = tableCellSpan(rowArr, c); if (!span) return null;
               const isSelected = selectedCell?.row === r && selectedCell?.col === c;
               const isHdr = r < element.headerRowCount;
               return (
@@ -1746,6 +1811,7 @@ function TableInspector({ element }: { element: TableElement }) {
                   key={`${r}-${c}`}
                   onClick={() => setSelectedCell({ row: r, col: c })}
                   style={{
+                    gridColumn: `span ${span}`,
                     padding: '4px 6px',
                     fontSize: '10px',
                     background: isSelected
@@ -1775,13 +1841,22 @@ function TableInspector({ element }: { element: TableElement }) {
 
       {activeCell && selectedCell && (
         <div style={{ marginTop: '10px', background: '#252525', padding: '8px', borderRadius: '4px' }}>
+          <div className="publication-actions">
+            <button className="sm-btn" disabled={locked || selectedCell.col + (activeCell.colSpan || 1) >= element.cols} onClick={() => {
+              try { update(element.id, { cells: mergeTableCellRight(element.cells, selectedCell.row, selectedCell.col) }); setTableError('Cells merged. Their text is retained in the first cell.'); } catch (reason) { setTableError(String(reason)); }
+            }}>Merge cell right</button>
+            <button className="sm-btn" disabled={locked || !activeCell.colSpan || activeCell.colSpan === 1} onClick={() => {
+              const cells = structuredClone(element.cells); delete cells[selectedCell.row][selectedCell.col].colSpan; update(element.id, { cells });
+            }}>Split merged cell</button>
+          </div>
           <div style={{ fontSize: '11px', color: '#93c5fd', marginBottom: '4px', fontWeight: 600 }}>
             Editing Cell [R{selectedCell.row + 1}, C{selectedCell.col + 1}]:
           </div>
           <input
             type="text"
             value={activeCell.text}
-            disabled={element.locked}
+            aria-label="Selected table cell text"
+            disabled={locked}
             style={{ width: '100%', boxSizing: 'border-box' }}
             onInput={(e) =>
               handleCellTextChange(
@@ -1800,7 +1875,7 @@ function TableInspector({ element }: { element: TableElement }) {
                     rIdx === selectedCell.row && cIdx === selectedCell.col ? { ...c, align: 'left' as const } : c
                   )
                 );
-                stateManager.updateElement(element.id, { cells: newCells });
+                update(element.id, { cells: newCells });
               }}
             >
               Align L
@@ -1813,7 +1888,7 @@ function TableInspector({ element }: { element: TableElement }) {
                     rIdx === selectedCell.row && cIdx === selectedCell.col ? { ...c, align: 'center' as const } : c
                   )
                 );
-                stateManager.updateElement(element.id, { cells: newCells });
+                update(element.id, { cells: newCells });
               }}
             >
               Align C
@@ -1826,7 +1901,7 @@ function TableInspector({ element }: { element: TableElement }) {
                     rIdx === selectedCell.row && cIdx === selectedCell.col ? { ...c, align: 'right' as const } : c
                   )
                 );
-                stateManager.updateElement(element.id, { cells: newCells });
+                update(element.id, { cells: newCells });
               }}
             >
               Align R

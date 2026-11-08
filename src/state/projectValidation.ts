@@ -1,4 +1,7 @@
 import type { ProjectState } from '../types';
+import { resolveMaster } from '../engine/masterInheritance';
+import { cascadeStyles } from '../engine/styleInheritance';
+import { revisedStory } from '../engine/storyRevisions';
 
 type Validator = (value: unknown, path: string) => void;
 type Schema = Record<string, Validator>;
@@ -68,12 +71,13 @@ const stroke = { strokeColor: text, strokeWidthMm: nonnegative, strokeDash: choi
 const typography = { fontFamily: text, fontSizePt: positive };
 const grepRule = object({ id: identifier, pattern: text, color: optional(text), bold: optional(boolean), italic: optional(boolean) });
 const paragraphStyle = object({
+  basedOnId: optional(identifier), inheritedProperties: optional(array(text)),
   id: identifier, name: text, ...typography, lineHeight: positive,
   letterSpacingPt: number, color: text, alignment, snapToBaseline: boolean,
   grepStyles: optional(array(grepRule)),
   keepWithNext: optional(boolean), keepTogether: optional(boolean),
   orphanLines: optional(count), widowLines: optional(count),
-  hyphenate: optional(boolean), language: optional(choice('en-US', 'de', 'fr')),
+  hyphenate: optional(boolean), language: optional(choice('en-US', 'de', 'fr', 'ja', 'zh', 'ko')), cjkLineBreak: optional(boolean),
   bold: optional(boolean), italic: optional(boolean),
 });
 const textFormatting = {
@@ -82,14 +86,21 @@ const textFormatting = {
 };
 const storyContent: Validator = (value, path) => {
   object({ version: (v, p) => { if (v !== 1) fail(p, 'unsupported story version'); },
-    paragraphs: array(object({ styleId: optional(identifier), sourceStyle: optional(text),
-      formatting: optional(object({ ...textFormatting, alignment: optional(alignment), lineHeight: optional(positive), letterSpacingPt: optional(number) })),
-      runs: array(object({ text, characterStyleId: optional(identifier), ...textFormatting })) })),
+    paragraphs: array(object({ id: optional(identifier), styleId: optional(identifier), sourceStyle: optional(text),
+      formatting: optional(object({ ...textFormatting, alignment: optional(alignment), lineHeight: optional(positive), letterSpacingPt: optional(number),
+        language: optional(choice('en-US', 'de', 'fr', 'ja', 'zh', 'ko')), cjkLineBreak: optional(boolean), hyphenate: optional(boolean),
+        widowLines: optional(count), orphanLines: optional(count), keepTogether: optional(boolean), keepWithNext: optional(boolean) })),
+      runs: array(object({ text, characterStyleId: optional(identifier), ...textFormatting,
+        noteId: optional(identifier), indexId: optional(identifier),
+        reference: optional(object({ targetElementId: identifier, targetParagraphId: optional(identifier), format: choice('page', 'title') })),
+      })) })),
   })(value, path);
   if (!(value as { paragraphs: unknown[] }).paragraphs.length) fail(path, 'a story requires at least one paragraph');
 };
 const elementSchemas: Record<string, Schema> = {
   text: {
+    dataBinding: optional(object({ source: identifier, keyField: identifier, recordKey: text, field: identifier })),
+    generated: optional(object({ kind: choice('toc', 'index', 'endnotes', 'authorities'), title: text })),
     text, ...typography, lineHeight: positive, letterSpacingPt: number,
     color: optional(text), alignment, columns: count, columnGutterMm: nonnegative,
     backgroundColor: text, borderColor: text, borderWidthMm: nonnegative, paddingMm: optional(nonnegative),
@@ -100,8 +111,10 @@ const elementSchemas: Record<string, Schema> = {
     grepStyles: optional(array(grepRule)),
   },
   image: {
+    decorative: optional(boolean),
     equation: optional(object({ latex: text, fontSizePt: positive, color: text, displayMode: boolean })),
     src: text, fitMode: choice('fill', 'fit', 'frameToContent', 'contentToFrame', 'center', 'stretch'),
+    focalPoint: optional(object({ x: (value, path) => { number(value, path); if ((value as number) < 0 || (value as number) > 1) fail(path, 'must be between 0 and 1'); }, y: (value, path) => { number(value, path); if ((value as number) < 0 || (value as number) > 1) fail(path, 'must be between 0 and 1'); } })),
     borderColor: text, borderWidthMm: nonnegative, altText: optional(text), proxySrc: optional(text),
   },
   shape: { shapeKind: choice('rectangle', 'ellipse', 'line'), fillColor: text, ...stroke },
@@ -111,8 +124,10 @@ const elementSchemas: Record<string, Schema> = {
     strokeCap: choice('butt', 'round', 'square'), strokeJoin: choice('miter', 'round', 'bevel'),
   },
   table: {
-    rows: count, cols: count, cells: array(array(object({ text, align: optional(choice('left', 'center', 'right')) }))),
+    rowSizing: optional(choice('equal', 'content')),
+    rows: count, cols: (value, path) => { count(value, path); if ((value as number) > 200) fail(path, 'tables support at most 200 columns'); }, cells: array(array(object({ text, colSpan: optional(count), align: optional(choice('left', 'center', 'right')), verticalAlign: optional(choice('top', 'middle', 'bottom')), fillColor: optional(text), textColor: optional(text) }))),
     headerRowCount: integer, headerFillColor: text, headerTextColor: text,
+    footerRowCount: optional(integer), repeatHeaderOnOverflow: optional(boolean), repeatFooterOnOverflow: optional(boolean),
     borderColor: text, borderWidthMm: nonnegative, cellPaddingMm: nonnegative, ...typography,
     rowHeightsMm: optional(array(positive)), colWidthsMm: optional(array(positive)),
   },
@@ -120,6 +135,9 @@ const elementSchemas: Record<string, Schema> = {
 
 const element: Validator = (value, path) => {
   const data = record(value, path);
+  optional(identifier)(data.groupId, `${path}.groupId`);
+  optional(boolean)(data.pasteboard, `${path}.pasteboard`);
+  optional(choice('normal', 'multiply', 'screen', 'overlay'))(data.blendMode, `${path}.blendMode`);
   const type = data.type;
   if (typeof type !== 'string' || !Object.hasOwn(elementSchemas, type)) fail(`${path}.type`, 'unknown element type');
   if (type === 'text') {
@@ -138,6 +156,7 @@ const element: Validator = (value, path) => {
     height: nonnegative, rotation: number, opacity: nonnegative, zIndex: number, locked: boolean,
     layerId: optional(identifier), ...elementSchemas[type],
     name: optional(text), editorialOnly: optional(boolean),
+    readingOrder: optional(positive),
     textWrap: optional(object({ mode: choice('none', 'boundingBox', 'contour'), standoffMm: nonnegative })),
     anchor: optional(object({ parentTextId: identifier })),
     shadow: optional(object({ color: text, blurMm: nonnegative, offsetX: number, offsetY: number })),
@@ -153,8 +172,8 @@ const element: Validator = (value, path) => {
 
 const page = object({ id: identifier, pageNumber: count, side: choice('left', 'right', 'single'),
   section: optional(object({ title: text, startNumber: count, numbering: choice('arabic', 'roman-lower', 'roman-upper'), prefix: text })) });
-const spread = object({ id: identifier, spreadIndex: integer, pages: array(page), elements: array(element) });
-const master = object({ id: identifier, name: text, prefix: text, pages: array(page), elements: array(element) });
+const spread = object({ id: identifier, masterSpreadId: optional((value, path) => { if (value !== null) identifier(value, path); }), spreadIndex: integer, pages: array(page), elements: array(element) });
+const master = object({ id: identifier, parentMasterId: optional(identifier), name: text, prefix: text, pages: array(page), elements: array(element) });
 const layer = object({ id: identifier, name: text, colorHex: text, visible: boolean, locked: boolean, order: number });
 
 /** Validate a detached JSON document; only missing legacy fields receive defaults. */
@@ -179,17 +198,37 @@ export function parseProject(json: string, defaults: ProjectState): ProjectState
       margins: object({ topMm: nonnegative, bottomMm: nonnegative, insideMm: nonnegative, outsideMm: nonnegative }),
       baselineGrid: object({ enabled: boolean, incrementPt: positive, startMm: number }),
       colorMode: optional(choice('cmyk', 'rgb')),
+      language: optional(text), author: optional(text), identifier: optional(text),
+      footnotes: optional(array(object({ id: identifier, number: count, text, kind: optional(choice('footnote', 'endnote')),
+        anchorVersion: optional((value, path) => { if (value !== 1) fail(path, 'unsupported note anchor'); }), elementId: optional(identifier), pageId: optional(identifier) }))),
       iccProfile: optional(choice('FOGRA39', 'GRACoL2006', 'SWOP2006', 'sRGB')),
     }),
     spreads: array(spread), masterSpreads: array(master), layers: array(layer),
-    embeddedFonts: optional(array(object({ family: identifier, fileName: text, data: text }))),
+    embeddedFonts: optional(array(object({ family: identifier, fileName: text, data: text, variations: optional((value, path) => {
+      const axes = record(value, path);
+      if (Object.keys(axes).length > 32) fail(path, 'too many font axes');
+      for (const [tag, coordinate] of Object.entries(axes)) {
+        if (!/^[A-Za-z0-9]{4}$/.test(tag)) fail(path, 'invalid font axis tag');
+        number(coordinate, `${path}.${tag}`);
+      }
+    }) }))),
+    storyRevisions: optional((value, path) => {
+      if (!Array.isArray(value) || value.length > 100) fail(path, 'expected at most 100 revisions');
+      const ids = new Set<string>();
+      for (const item of value) {
+        object({ id: identifier, storyId: identifier, author: text, note: text, createdAt: nonnegative, resolvedAt: optional(nonnegative),
+          status: choice('pending', 'accepted', 'rejected'), before: storyContent, start: integer, end: integer, replacement: text })(item, path);
+        if (ids.has(item.id) || !item.author.trim() || item.author.length > 100 || item.note.length > 2000) fail(path, 'invalid revision identity or reviewer metadata');
+        ids.add(item.id); revisedStory(item.before, item.start, item.end, item.replacement);
+      }
+    }),
     paragraphStyles: array(paragraphStyle),
     characterStyles: optional(array(object({ id: identifier, name: text, ...textFormatting }))),
     objectStyles: optional(array(object({ id: identifier, name: text }))),
     conditions: optional(array(object({ id: identifier, name: text, visible: boolean, colorHex: text }))),
     crossReferences: optional(array(object({ id: identifier }))),
-    indexEntries: optional(array(object({ id: identifier, topic: text, pageNumber: number }))),
-    comments: optional(array(object({ id: identifier, text, author: text, x: number, y: number, spreadIndex: integer, timestamp: number, resolved: boolean }))),
+    indexEntries: optional(array(object({ id: identifier, topic: text, pageNumber: number, authorityCategory: optional(choice('cases', 'statutes', 'treatises')) }))),
+    comments: optional(array(object({ id: identifier, spreadId: optional(identifier), text, author: text, x: number, y: number, spreadIndex: integer, timestamp: number, resolved: boolean }))),
     activeSpreadIndex: integer, selectedElementIds: array(identifier),
     activeTool: choice('select', 'text', 'frame', 'table', 'pen', 'pencil', 'shape-rect', 'shape-ellipse', 'shape-line', 'measure', 'hand', 'zoom'),
     zoom: positive, panX: number, panY: number, showGuides: boolean, showBleed: boolean,
@@ -197,6 +236,7 @@ export function parseProject(json: string, defaults: ProjectState): ProjectState
   })(migrated, 'Project');
 
   const project = migrated as ProjectState;
+  project.paragraphStyles = cascadeStyles(project.paragraphStyles);
   if (project.layers.length === 0) fail('Project.layers', 'at least one layer is required');
   const layerIds = new Set(project.layers.map(item => item.id));
   if (layerIds.size !== project.layers.length) fail('Project.layers', 'duplicate layer ID');
@@ -240,6 +280,10 @@ export function parseProject(json: string, defaults: ProjectState): ProjectState
     }
     if (!current.storyContent) fail(`Story ${frame.id}`, 'the first frame is missing its manuscript');
   }
+  if (new Set(project.masterSpreads.map(master => master.id)).size !== project.masterSpreads.length) fail('Project.masterSpreads', 'duplicate master ID');
+  project.masterSpreads.forEach(master => resolveMaster(project.masterSpreads, master.id));
+  // Legacy projects may deliberately clear the master list while retaining an assignment.
+  project.spreads.forEach(spread => { if (spread.masterSpreadId && !project.masterSpreads.some(master => master.id === spread.masterSpreadId)) spread.masterSpreadId = null; });
   project.activeSpreadIndex = Math.min(project.activeSpreadIndex, project.spreads.length - 1);
   const activeIds = new Set(project.spreads[project.activeSpreadIndex].elements.map(item => item.id));
   project.selectedElementIds = project.selectedElementIds.filter(id => activeIds.has(id));

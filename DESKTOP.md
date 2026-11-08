@@ -58,3 +58,16 @@ real older-to-newer installation before the first updater-enabled public release
 Updater signatures are separate from Windows publisher code signing.
 
 The application does not yet register document file associations.
+
+## Linux test packages
+
+The manual `linux-artifacts.yml` workflow builds x64 `.deb` and AppImage packages
+on Ubuntu 22.04. It has read-only repository permissions and uploads build artifacts;
+it does not create or publish a release. On a Linux checkout, install Tauri's
+native prerequisites and run `node scripts/build-linux.mjs`. Windows builds keep
+their existing NSIS configuration.
+
+Linux packages use WebKitGTK and require a real Linux smoke test for font loading,
+file dialogs, opening/saving documents and PDF export. The Linux override disables
+updater artifacts: signed Linux updater metadata is a separate release task.
+These packages have not been built or runtime-tested on this Windows workstation.

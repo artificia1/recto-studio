@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+- Proposed manuscript revisions with reviewer notes, side-by-side comparison, stale-edit protection, acceptance/rejection and undo.
+- Document-wide revision navigation and cleanup, with persistent review records in project files and book chapters.
+- Opt-in content-sized table rows, Unicode-aware wrapping, repeated headers/footers, continuation-page creation and overflow preflight.
+- Local book archives with chapter ordering, style synchronization, continuous pagination, unified contents and combined PDF export.
+- Paragraph style inheritance with local overrides, cycle validation and portable paragraph/character style sets.
+- Manuscript-aware Find/Change with style filters, contextual GREP replacement and one-step undo.
+- Spreadsheet/CSV table input, horizontal cell merging and visible table continuation controls.
+- Image focal-point crop controls shared by canvas, PDF, imposed PDF and flipbook exports.
+- Screen/desktop-print/printer-review PDF presets and downloadable publication reports.
+- Scalar JSON catalog merge input, stricter quoted data parsing and correctly remapped local template threads/groups.
+- Native spellcheck controls in the Story Editor and structured IDML character formatting import.
+- Multi-spread artwork workspace with zoom, a column grid, drag scrolling and saved pasteboard objects.
+- Document font-source auditing, local font import and undoable document-wide font replacement.
+- Object Multiply, Screen and Overlay modes in canvas, flipbook CSS and live PDF graphics states.
+- Cascading master parents, cycle protection and owned-item editing with descendant updates.
+- Exact numerical object gaps, flat grouping shortcuts and rotated-bound alignment.
+- Imported variable-font axes with live preview, persisted instances and shaped PDF outlines.
+- Reviewed Table of Authorities marks, bounded citation suggestions and live page references.
+- Atomic catalog text refresh from reviewed JSON snapshots, with stale/lock/overflow checks.
+- Editable repeating rosette ornaments with bounded geometric complexity.
+- Horizontal CJK punctuation rules, grapheme-aware emergency wrapping and EPUB flow hints.
+- Print-readiness reports and a manual Linux test-package build workflow.
+- Bounded rectangular sheet planning with optional 90-degree rotation and JSON handoff plans.
+- Anchored footnotes/endnotes, live contents, heading references and indexes.
+- Word and Markdown note imports, publication language, author and reading order.
+- Embedded linked images and portable handoff assets with safe archive filenames.
+- EPUB image packaging, heading navigation, note links and decorative-image controls.
+- Searchable Unicode PDF text for supported embedded static TTF fonts.
+- Headless SVG rendering and stricter publication export validation.
+- Fiction, nonfiction and editorial article starters with linked reading pages.
+- Searchable chapter/story navigation, printed-page lookup and a review-notes panel.
+- Undoable template insertion/replacement, trim-aware layouts and spread ordering safeguards.
+
+### Fixed
+- Table edits from continuation pages now update canonical cells and shared table styling, with whole-thread lock checks.
+- Block PDF export when content-sized table rows cannot fit or a continuation is hidden from publication.
+- Story Editor reopens the selected story instead of retaining a previously viewed story.
+- Keep locked groups intact during dragging, nudging and deletion.
+- Preserve opacity zero in the inspector and apply PDF opacity to both fills and strokes.
+- Keep aligned objects assigned to the correct facing page and include ancestor-master assets in handoff preparation.
+- Generate unique master identifiers even when templates are created in rapid succession.
+- Safely detach stale master assignments when opening legacy projects with cleared master lists.
+- Hardened SVG/XML imports against namespace and obfuscated-resource bypasses.
+- Bounded desktop reads, contained book chapter paths, and escaped EPUB paragraph metadata.
+- CLI data/export/output options accept equals-form arguments.
+- Review pins follow their spread after moves and are restored correctly by undo.
+- Template insertion no longer bypasses document history or reuses page identifiers.
+- Reference insertion rejects split Unicode characters and partial note/reference markers.
+- Navigating to an object centers it in the canvas instead of leaving it off screen.
+
 ## [1.2.4] - 2026-10-31
 
 ### Added

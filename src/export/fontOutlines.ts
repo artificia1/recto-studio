@@ -1,5 +1,6 @@
 import type { Font } from 'fontkit';
 import type { jsPDF } from 'jspdf';
+import { searchableFontText } from './pdfFonts';
 
 /** Use the actual font's shaping and outlines for formats jsPDF cannot embed. */
 export function fontTextWidth(font: Font, text: string, sizePt: number): number {
@@ -59,4 +60,5 @@ export function drawFontText(doc: jsPDF, font: Font, text: string, x: number, y:
     if (operations.length) doc.path(operations).fill();
     advance += position.xAdvance;
   });
+  searchableFontText(doc, font, text, x, y, sizePt);
 }

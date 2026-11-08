@@ -1,13 +1,26 @@
 import { stateManager } from '../../state';
 import { ProjectState } from '../../types';
+import { useState } from 'preact/hooks';
 import { PublicationPanel } from './PublicationPanel';
 import { pageLabel } from '../../engine/pageLabels';
+import { lazy, Suspense } from 'preact/compat';
+const ReferencesPanel = lazy(() => import('./ReferencesPanel'));
+const EditorialPanel = lazy(() => import('./EditorialPanel'));
+const PrintReadinessPanel = lazy(() => import('./PrintReadinessPanel'));
+const MasterItemsPanel = lazy(() => import('./MasterItemsPanel'));
+const ProductionPanel = lazy(() => import('./ProductionPanel'));
 
 interface PagesTabProps {
   state: ProjectState;
 }
 
 export function PagesTab({ state }: PagesTabProps) {
+  const [moveError, setMoveError] = useState('');
+  const [newParent, setNewParent] = useState('');
+  const moveSpread = (from: number, to: number) => {
+    try { stateManager.moveSpread(from, to); setMoveError(''); }
+    catch (error) { setMoveError(error instanceof Error ? error.message : String(error)); }
+  };
   const spreads = state.spreads;
   const masterSpreads = state.masterSpreads || [];
 
@@ -21,13 +34,21 @@ export function PagesTab({ state }: PagesTabProps) {
   const handleCreateMaster = () => {
     const nextPrefix = String.fromCharCode(65 + masterSpreads.length); // A, B, C...
     const name = `${nextPrefix}-Chapter Master`;
-    stateManager.createMasterSpread(name, nextPrefix);
+    try { stateManager.createMasterSpread(name, nextPrefix, newParent || undefined); setMoveError(''); }
+    catch (error) { setMoveError(error instanceof Error ? error.message : String(error)); }
   };
 
   return (
     <div className="pages-manager">
       <PublicationPanel key={spreads[state.activeSpreadIndex].id} spread={spreads[state.activeSpreadIndex]} />
+      <Suspense fallback={<p>Loading publication navigator…</p>}><EditorialPanel state={state}/></Suspense>
+      <Suspense fallback={null}><PrintReadinessPanel state={state}/></Suspense>
+      <Suspense fallback={null}><ProductionPanel state={state}/></Suspense>
+      {moveError && <p role="alert">{moveError}</p>}
+      <Suspense fallback={<p>Loading publishing references…</p>}><ReferencesPanel state={state}/></Suspense>
       {/* MASTER PAGES SECTION */}
+      <Suspense fallback={null}><MasterItemsPanel state={state}/></Suspense>
+      <label>New master parent<select aria-label="New master parent" value={newParent} onChange={event => setNewParent(event.currentTarget.value)}><option value="">Standard master</option>{masterSpreads.map(master => <option value={master.id} key={master.id}>{master.name}</option>)}</select></label>
       <div className="pages-header" style={{ marginBottom: '8px' }}>
         <span>MASTER PAGES ({masterSpreads.length})</span>
         <button
@@ -67,6 +88,10 @@ export function PagesTab({ state }: PagesTabProps) {
               <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>
                 {m.elements.length} elements · {'{{page}}'}
               </span>
+              <select aria-label={`Parent master for ${m.name}`} value={m.parentMasterId || ''} style={{ maxWidth: '130px' }} onChange={event => {
+                try { stateManager.setMasterParent(m.id, event.currentTarget.value || undefined); setMoveError(''); }
+                catch (error) { setMoveError(error instanceof Error ? error.message : String(error)); }
+              }}><option value="">No parent</option>{masterSpreads.filter(parent => parent.id !== m.id).map(parent => <option value={parent.id} key={parent.id}>{parent.name}</option>)}</select>
               {masterSpreads.length > 1 && (
                 <button
                   type="button"
@@ -75,7 +100,7 @@ export function PagesTab({ state }: PagesTabProps) {
                   onClick={(e) => {
                     e.stopPropagation();
                     if (window.confirm(`Delete Master Spread "${m.name}"? Spreads using this master will be detached.`)) {
-                      stateManager.deleteMasterSpread(m.id);
+                      try { stateManager.deleteMasterSpread(m.id); } catch (error) { setMoveError(error instanceof Error ? error.message : String(error)); }
                     }
                   }}
                   style={{
@@ -150,6 +175,10 @@ export function PagesTab({ state }: PagesTabProps) {
                   )}
                 </div>
                 <div className="spread-meta">{elementCount} elements on spread</div>
+                <div className="publication-actions" onClick={event => event.stopPropagation()}>
+                  <button className="sm-btn" disabled={idx === 0} aria-label={`Move spread ${idx + 1} earlier`} onClick={() => moveSpread(idx, idx - 1)}>↑ Earlier</button>
+                  <button className="sm-btn" disabled={idx === spreads.length - 1} aria-label={`Move spread ${idx + 1} later`} onClick={() => moveSpread(idx, idx + 1)}>↓ Later</button>
+                </div>
 
                 <div style={{ marginTop: '5px' }} onClick={(e) => e.stopPropagation()}>
                   <label style={{ fontSize: '10px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}>

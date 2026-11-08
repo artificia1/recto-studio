@@ -5,6 +5,10 @@
  */
 
 import { pageLabel, type PublicationSection } from '../engine/pageLabels';
+import { revisedStory, revisionIsStale } from '../engine/storyRevisions';
+import { tableThread } from '../engine/tableCells';
+import { searchManuscripts, replaceManuscriptMatches } from '../engine/manuscriptSearch';
+import { cascadeStyles } from '../engine/styleInheritance';
 import {
   ProjectState,
   PagePreset,
@@ -41,6 +45,13 @@ import {
 } from '../types/index';
 import { editStory, formatStory, plainStory, sliceStory, storyText, styleStoryParagraphs } from '../engine/storyContent';
 import { layoutStory } from '../engine/storyLayout';
+import { publicationPreflight } from '../engine/publicationPreflight';
+import { instantiateMasterItem, resolveMaster } from '../engine/masterInheritance';
+import { arrangeSelection, lockedArtworkIds, restorePlacedPasteboard, selectionUnits } from '../engine/selectionGeometry';
+import { elementUsesFont, primaryFont, visitDocumentFonts } from '../engine/documentFonts';
+import { prepareSpreadTemplate } from '../engine/spreadTemplate';
+import { validateBinding, type DataRefreshChange } from '../engine/dataRefresh';
+import { contentOf, insertRun, layoutFrameNotes, migrateLegacyNotes, noteMarker, notesForFrame, publicationHeadings, reflowStoryState, refreshPublication, storyHeads, textFrames } from '../engine/publicationReferences';
 import { generateEan13DataUrl } from '../engine/barcodeEngine';
 import { generateQrDataUrl } from '../engine/qrEngine';
 import { RectoDB } from './persistence';
@@ -55,7 +66,7 @@ import {
 } from './defaults';
 import { parseProject } from './projectValidation';
 import { fontManager } from '../fontManager';
-import { parseCsv, generateMergedSpreads, substituteElementTokens } from '../dataMerge';
+import { parseMergeData, generateMergedSpreads, substituteElementTokens } from '../dataMerge';
 import { KnuthPlassComposer, ComposerOptions } from '../engine/knuthPlass';
 import { psdEngine } from '../engine/psdParser';
 import { assetStore } from '../engine/assetStore';
@@ -104,6 +115,8 @@ export interface TocEntry {
 }
 
 export interface FindChangeQuery {
+  paragraphStyleId?: string;
+  characterStyleId?: string;
   findText: string;
   changeText: string;
   isGrep?: boolean;
@@ -328,6 +341,7 @@ export class StateManager {
         if (head) head.autoPaginationError = error instanceof Error ? error.message : String(error);
       }
     }
+    this.refreshPublicationReferences(false);
     this.history.push(this.state);
   }
 
@@ -391,6 +405,7 @@ export class StateManager {
   }
 
   public nudgeSelectedElements(dxMm: number, dyMm: number) {
+    if (![dxMm, dyMm].every(Number.isFinite)) return;
     const ids = this.state.selectedElementIds && this.state.selectedElementIds.length > 0
       ? this.state.selectedElementIds
       : (this.state.selectedElementId ? [this.state.selectedElementId] : []);
@@ -398,12 +413,14 @@ export class StateManager {
 
     const spread = this.getActiveSpread();
     const idSet = new Set(ids);
+    const lockedIds = lockedArtworkIds(this.state);
     let moved = 0;
 
     for (const el of spread.elements) {
-      if (idSet.has(el.id) && !el.locked) {
+      if (idSet.has(el.id) && !lockedIds.has(el.id)) {
         el.x = Math.round((el.x + dxMm) * 100) / 100;
         el.y = Math.round((el.y + dyMm) * 100) / 100;
+        restorePlacedPasteboard(this.state, el);
         moved++;
       }
     }
@@ -478,14 +495,18 @@ export class StateManager {
   }
 
   public addComment(spreadIndex: number, x: number, y: number, text: string, author: string = 'Art Director'): CommentPin {
+    const spread = this.state.spreads[spreadIndex];
+    if (!spread || !Number.isFinite(x) || !Number.isFinite(y)) throw new Error('Choose an existing spread for the review note.');
+    if (!text.trim() || text.length > 10000) throw new Error('Enter a review note of up to 10,000 characters.');
     if (!this.state.comments) this.state.comments = [];
     const pin: CommentPin = {
-      id: `comment-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      id: `comment-${crypto.randomUUID()}`,
+      spreadId: spread.id,
       spreadIndex,
       x,
       y,
-      text,
-      author,
+      text: text.trim(),
+      author: author.trim() || 'Reviewer',
       timestamp: Date.now(),
       resolved: false,
     };
@@ -503,6 +524,15 @@ export class StateManager {
       this.pushHistory();
       this.notify();
     }
+  }
+
+  public updateComment(commentId: string, text: string) {
+    const note = this.state.comments?.find(note => note.id === commentId);
+    if (!note) throw new Error('This review note no longer exists.');
+    if (!text.trim() || text.length > 10000) throw new Error('Enter a review note of up to 10,000 characters.');
+    if (note.text === text.trim()) return;
+    note.text = text.trim();
+    this.pushHistory(); this.notify();
   }
 
   public deleteComment(commentId: string) {
@@ -564,7 +594,7 @@ export class StateManager {
       const content = textEl.textContent || plainStory(textEl.text, textEl.paragraphStyleId);
       const spread = this.findElementById(textEl.id)?.spread;
       const notes = this.getFootnotesForElement(textEl.id);
-      const reserve = notes.length ? notes.length * (this.state.settings.footnoteSettings?.fontSizePt || 8) * 25.4 / 72 * 1.35 + 3 : 0;
+      const reserve = layoutFrameNotes(this.state, textEl, notes).height;
       const fits = (height: number) => !layoutStory(content, { ...textEl, height }, this.state.paragraphStyles,
         this.state.characterStyles, undefined, reserve, { obstacles: spread?.elements, baselineGrid: this.state.settings.baselineGrid }).overset;
       let high = Math.max(15, textEl.height);
@@ -616,7 +646,7 @@ export class StateManager {
   }
 
   public createParagraphStyle(style: ParagraphStyle) {
-    this.state.paragraphStyles.push(style);
+    this.state.paragraphStyles = cascadeStyles([...this.state.paragraphStyles, style]);
     this.pushHistory();
     this.notify();
   }
@@ -625,36 +655,34 @@ export class StateManager {
     const idx = this.state.paragraphStyles.findIndex(s => s.id === id);
     if (idx === -1) return;
 
-    this.state.paragraphStyles[idx] = {
+    const previousStyles = this.state.paragraphStyles;
+    const candidate = this.state.paragraphStyles.map(style => ({ ...style }));
+    candidate[idx] = {
       ...this.state.paragraphStyles[idx],
       ...updates,
     };
+    if (updates.inheritedProperties === undefined && candidate[idx].inheritedProperties) candidate[idx].inheritedProperties = candidate[idx].inheritedProperties!.filter(key => !Object.hasOwn(updates, key));
+    this.state.paragraphStyles = cascadeStyles(candidate);
 
-    const updatedStyle = this.state.paragraphStyles[idx];
-    for (const spread of this.state.spreads) {
-      for (const el of spread.elements) {
-        if (el.type === 'text' && (el as TextElement).paragraphStyleId === id) {
-          const textEl = el as TextElement;
-          if (updates.fontFamily !== undefined) textEl.fontFamily = updatedStyle.fontFamily;
-          if (updates.fontSizePt !== undefined) textEl.fontSizePt = updatedStyle.fontSizePt;
-          if (updates.lineHeight !== undefined) textEl.lineHeight = updatedStyle.lineHeight;
-          if (updates.letterSpacingPt !== undefined) textEl.letterSpacingPt = updatedStyle.letterSpacingPt;
-          if (updates.color !== undefined) textEl.color = updatedStyle.color;
-          if (updates.alignment !== undefined) textEl.alignment = updatedStyle.alignment;
-          if (updates.snapToBaseline !== undefined) textEl.snapToBaseline = updatedStyle.snapToBaseline;
-          if (updates.dropCapLines !== undefined) textEl.dropCapLines = updatedStyle.dropCapLines;
-          if (updates.opticalMarginAlignment !== undefined) textEl.opticalMarginAlignment = updatedStyle.opticalMarginAlignment;
-          if (updates.openTypeFeatures !== undefined) textEl.openTypeFeatures = updatedStyle.openTypeFeatures ? { ...updatedStyle.openTypeFeatures } : undefined;
-        }
+    for (const spread of [...this.state.spreads, ...this.state.masterSpreads]) for (const frame of spread.elements) {
+      if (frame.type !== 'text' || !frame.paragraphStyleId) continue;
+      const style = this.state.paragraphStyles.find(style => style.id === frame.paragraphStyleId);
+      const before = previousStyles.find(style => style.id === frame.paragraphStyleId);
+      if (!style) continue;
+      if (style.cjkLineBreak && !frame.prevFrameId && !frame.storyContent) {
+        frame.storyContent = plainStory(frame.rawStoryText ?? frame.text, style.id); frame.rawStoryText = storyText(frame.storyContent);
+      }
+      for (const key of ['fontFamily', 'fontSizePt', 'lineHeight', 'letterSpacingPt', 'color', 'alignment', 'snapToBaseline', 'dropCapLines', 'opticalMarginAlignment', 'openTypeFeatures'] as const) {
+        if (style[key] !== before?.[key]) (frame as unknown as Record<string, unknown>)[key] = structuredClone(style[key]);
       }
     }
-
     this.reflowFormattedStories();
     this.pushHistory();
     this.notify();
   }
 
   public deleteParagraphStyle(id: string) {
+    if (this.state.paragraphStyles.some(style => style.basedOnId === id)) throw new Error('Detach child styles before deleting their parent.');
     this.state.paragraphStyles = this.state.paragraphStyles.filter(s => s.id !== id);
     for (const spread of this.state.spreads) {
       for (const el of spread.elements) {
@@ -666,6 +694,25 @@ export class StateManager {
     this.reflowFormattedStories();
     this.pushHistory();
     this.notify();
+  }
+
+  public importStyleSet(data: unknown) {
+    if (!data || typeof data !== 'object' || !('paragraphStyles' in data)) throw new Error('Choose a Recto style set.');
+    const source = data as { paragraphStyles: ParagraphStyle[]; characterStyles?: CharacterStyle[] };
+    if (!Array.isArray(source.paragraphStyles) || source.paragraphStyles.length > 1000 || (source.characterStyles && (!Array.isArray(source.characterStyles) || source.characterStyles.length > 1000))) throw new Error('Style sets support up to 1,000 styles of each kind.');
+    const candidate = structuredClone(this.state);
+    candidate.paragraphStyles = [...candidate.paragraphStyles.filter(style => !source.paragraphStyles.some(item => item.id === style.id)), ...source.paragraphStyles];
+    candidate.characterStyles = [...(candidate.characterStyles || []).filter(style => !source.characterStyles?.some(item => item.id === style.id)), ...(source.characterStyles || [])];
+    const validated = parseProject(JSON.stringify(candidate), INITIAL_STATE);
+    for (const spread of [...validated.spreads, ...validated.masterSpreads]) for (const frame of spread.elements) if (frame.type === 'text') {
+      const style = validated.paragraphStyles.find(style => style.id === frame.paragraphStyleId);
+      if (style) for (const key of ['fontFamily', 'fontSizePt', 'lineHeight', 'letterSpacingPt', 'color', 'alignment', 'snapToBaseline', 'dropCapLines', 'opticalMarginAlignment', 'openTypeFeatures'] as const) {
+        (frame as unknown as Record<string, unknown>)[key] = style[key];
+      }
+    }
+    const before = this.state;
+    try { this.state = validated; this.reflowFormattedStories(); this.pushHistory(); this.notify(); }
+    catch (reason) { this.state = before; throw reason; }
   }
 
   public applyParagraphStyle(elementId: string, styleId: string) {
@@ -699,25 +746,23 @@ export class StateManager {
 
   public selectElement(id: string | null) {
     this.state.selectedElementId = id;
-    this.state.selectedElementIds = id ? [id] : [];
+    const selected = this.getActiveSpread().elements.find(element => element.id === id);
+    this.state.selectedElementIds = selected?.groupId ? this.getActiveSpread().elements.filter(element => element.groupId === selected.groupId).map(element => element.id) : id ? [id] : [];
     this.notify(false);
   }
 
   public selectElements(ids: string[]) {
-    this.state.selectedElementIds = [...ids];
+    const groups = new Set(this.getActiveSpread().elements.filter(element => ids.includes(element.id)).map(element => element.groupId).filter(Boolean));
+    this.state.selectedElementIds = [...new Set([...ids, ...this.getActiveSpread().elements.filter(element => element.groupId && groups.has(element.groupId)).map(element => element.id)])];
     this.state.selectedElementId = ids.length > 0 ? ids[0] : null;
     this.notify(false);
   }
 
   public toggleElementSelection(id: string) {
-    const exists = this.state.selectedElementIds.includes(id);
-    if (exists) {
-      this.state.selectedElementIds = this.state.selectedElementIds.filter(item => item !== id);
-    } else {
-      this.state.selectedElementIds = [...this.state.selectedElementIds, id];
-    }
-    this.state.selectedElementId = this.state.selectedElementIds.length > 0 ? this.state.selectedElementIds[0] : null;
-    this.notify(false);
+    const member = this.getActiveSpread().elements.find(element => element.id === id);
+    const ids = member?.groupId ? this.getActiveSpread().elements.filter(element => element.groupId === member.groupId).map(element => element.id) : [id];
+    const remove = ids.every(key => this.state.selectedElementIds.includes(key));
+    this.selectElements(remove ? this.state.selectedElementIds.filter(key => !ids.includes(key)) : [...this.state.selectedElementIds, ...ids]);
   }
 
   public getActiveSpread(): Spread {
@@ -755,8 +800,11 @@ export class StateManager {
     const idx = spread.elements.findIndex(el => el.id === id);
     if (idx !== -1) {
       if (spread.elements[idx].locked && updates.locked === undefined) return;
+      const current = spread.elements[idx];
+      if (current.type === 'text' && this.getStoryHead(current.id)?.generated && 'text' in updates) throw new Error('Make this generated list static in Pages before editing its text.');
       spread.elements[idx] = { ...spread.elements[idx], ...updates } as CanvasElement;
       const el = spread.elements[idx];
+      if ('x' in updates || 'y' in updates) restorePlacedPasteboard(this.state, el);
       // Replacing artwork turns an equation frame into a regular image frame.
       if (el.type === 'image' && 'src' in updates && !('equation' in updates)) el.equation = undefined;
       if (el.type === 'text') {
@@ -790,6 +838,7 @@ export class StateManager {
         if (spread.elements[idx].locked && partial.locked === undefined) continue;
         spread.elements[idx] = { ...spread.elements[idx], ...partial } as CanvasElement;
         const el = spread.elements[idx];
+        if ('x' in partial || 'y' in partial) restorePlacedPasteboard(this.state, el);
         if (el.type === 'text') {
           const textEl = el as TextElement;
           const textPartial = partial as Partial<TextElement>;
@@ -997,6 +1046,25 @@ export class StateManager {
     return links;
   }
 
+  public async embedLinkedAssets(): Promise<number> {
+    const source = structuredClone(this.state);
+    const original = new Map([...source.spreads.flatMap(spread => spread.elements), ...source.masterSpreads.flatMap(master => master.elements)]
+      .filter((element): element is ImageElement => element.type === 'image').map(image => [image.id, image]));
+    const { prepareExportAssets } = await import('../export/publicationAssets');
+    const prepared = await prepareExportAssets(source, true, true);
+    let changed = 0;
+    for (const image of [...prepared.spreads.flatMap(spread => spread.elements), ...prepared.masterSpreads.flatMap(master => master.elements)]) {
+      if (image.type !== 'image') continue;
+      const before = original.get(image.id), current = this.getElementById(image.id);
+      if (!before || current?.type !== 'image' || current.locked || this.state.layers.find(layer => layer.id === current.layerId)?.locked || current.src !== before.src || current.assetId !== before.assetId) continue;
+      if (current.src !== image.src || current.assetId || current.proxySrc) {
+        current.src = image.src; delete current.assetId; delete current.proxySrc; changed++;
+      }
+    }
+    if (changed) { this.pushHistory(); this.notify(); }
+    return changed;
+  }
+
   public relinkAsset(
     elementId: string,
     newSrc: string,
@@ -1006,8 +1074,10 @@ export class StateManager {
       const spread = this.state.spreads[sIdx];
       const elIdx = spread.elements.findIndex((e) => e.id === elementId);
       if (elIdx !== -1 && spread.elements[elIdx].type === 'image') {
+        const target = spread.elements[elIdx];
+        if (target.locked || this.state.layers.find(layer => layer.id === target.layerId)?.locked) return false;
         const updates: Partial<ImageElement> = {
-          src: newSrc,
+          src: newSrc, assetId: undefined, proxySrc: undefined,
           equation: undefined,
           ...(metadata?.name ? { name: metadata.name, caption: metadata.name } : {}),
           ...(metadata?.fileSize ? { fileSize: metadata.fileSize } : {}),
@@ -1043,6 +1113,10 @@ export class StateManager {
       const el = spread.elements.find((e) => e.id === elementId);
       if (el) {
         this.setActiveSpread(sIdx);
+        const pageIndex = Math.max(0, spread.pages.findIndex(page => page.id === el.pageId));
+        const pixelsPerMm = 96 / 25.4 * this.state.zoom;
+        this.state.panX = (spread.pages.length * this.state.settings.widthMm / 2 - (pageIndex * this.state.settings.widthMm + el.x + el.width / 2)) * pixelsPerMm;
+        this.state.panY = (this.state.settings.heightMm / 2 - (el.y + el.height / 2)) * pixelsPerMm;
         this.selectElement(elementId);
         return true;
       }
@@ -1080,6 +1154,7 @@ export class StateManager {
     cloned.x = Math.round((cloned.x + 8) * 10) / 10;
     cloned.y = Math.round((cloned.y + 8) * 10) / 10;
     cloned.locked = false;
+    delete cloned.groupId;
     if (cloned.type === 'text') {
       const textCloned = cloned as TextElement;
       delete textCloned.prevFrameId;
@@ -1127,62 +1202,7 @@ export class StateManager {
     return Math.max(15, Math.floor(singleColWidthMm / avgCharWidthMm));
   }
 
-  public reflowStory(frameId: string) {
-    // 1. Traverse backward to find head frame
-    let headId = frameId;
-    const visitedBack = new Set<string>();
-    while (headId && !visitedBack.has(headId)) {
-      visitedBack.add(headId);
-      const found = this.findElementById(headId);
-      if (!found || found.element.type !== 'text') break;
-      const textEl = found.element as TextElement;
-      if (textEl.prevFrameId) {
-        headId = textEl.prevFrameId;
-      } else {
-        break;
-      }
-    }
-
-    // 2. Collect all frames in the chain in order
-    const chain: TextElement[] = [];
-    let currId: string | undefined = headId;
-    const visitedFwd = new Set<string>();
-    while (currId && !visitedFwd.has(currId)) {
-      visitedFwd.add(currId);
-      const found = this.findElementById(currId);
-      if (!found || found.element.type !== 'text') break;
-      const textEl = found.element as TextElement;
-      chain.push(textEl);
-      currId = textEl.nextFrameId;
-    }
-
-    if (chain.length === 0) return;
-
-    // 3. Obtain full story manuscript
-    const headFrame = chain[0];
-    if (headFrame.rawStoryText === undefined) {
-      headFrame.rawStoryText = chain.map(f => f.text).join('\n\n').trim();
-    }
-    const content = headFrame.storyContent || plainStory(headFrame.rawStoryText, headFrame.paragraphStyleId);
-    const fullStory = storyText(content);
-    headFrame.storyContent = content;
-    headFrame.rawStoryText = fullStory;
-    let offset = 0;
-    for (let i = 0; i < chain.length; i++) {
-      const frame = chain[i];
-      const remaining = sliceStory(content, offset, fullStory.length);
-      const reserved = this.getFootnotesForElement(frame.id).length * 4 + (this.getFootnotesForElement(frame.id).length ? 3 : 0);
-      const layout = layoutStory(remaining, frame, this.state.paragraphStyles, this.state.characterStyles, undefined, reserved,
-        { obstacles: this.findElementById(frame.id)?.spread.elements, baselineGrid: this.state.settings.baselineGrid });
-      const end = i === chain.length - 1 ? fullStory.length : offset + layout.consumed;
-      frame.textContent = sliceStory(content, offset, end);
-      frame.text = fullStory.slice(offset, end);
-      frame.storyStart = offset;
-      frame.storyEnd = end;
-      if (i) { delete frame.storyContent; delete frame.rawStoryText; }
-      offset = end;
-    }
-  }
+  public reflowStory(frameId: string) { reflowStoryState(this.state, frameId); }
 
   /** Append publication pages for overflow, preserving one undo boundary. */
   public setStoryAutoExtend(frameId: string, enabled: boolean) {
@@ -1227,7 +1247,7 @@ export class StateManager {
         const found = this.findElementById(tail.id)!;
         const notes = this.getFootnotesForElement(tail.id);
         const layout = layoutStory(tail.textContent!, tail, this.state.paragraphStyles, this.state.characterStyles,
-          undefined, notes.length ? notes.length * 4 + 3 : 0,
+          undefined, layoutFrameNotes(this.state, tail).height,
           { obstacles: found.spread.elements, baselineGrid: this.state.settings.baselineGrid });
         if (!layout.overset) break;
         if (added >= maxPages) throw new Error(`This story needs more than ${maxPages} additional pages. No pages were added.`);
@@ -1253,10 +1273,13 @@ export class StateManager {
           delete next.textContent;
           delete next.storyStart;
           delete next.storyEnd;
+          delete next.generated;
           delete next.autoExtendStory;
           delete next.autoPaginationError;
           delete next.masterSourceId;
           delete next.isOverridden;
+          delete next.groupId;
+          delete next.pasteboard;
           tail.nextFrameId = next.id;
           newSpread.pages.push({ id: pageId, pageNumber: number, side: facingPages ? (number % 2 ? 'right' : 'left') : 'single' });
           newSpread.elements.push(next);
@@ -1340,9 +1363,37 @@ export class StateManager {
     this.reflowStory(head.id);
   }
 
+  public placeManuscript(target: string | TextElement, content: StoryContent, notes: { id: string; kind: 'footnote' | 'endnote'; text: string }[] = []) {
+    const existing = typeof target === 'string';
+    const head = existing ? this.assertStoryEditable(target) : target;
+    if (!existing) {
+      if (this.getElementById(head.id) || !this.getActiveSpread().pages.some(page => page.id === head.pageId)) throw new Error('Choose a valid new story frame.');
+      if (head.locked || this.state.layers.find(layer => layer.id === (head.layerId || this.state.activeLayerId))?.locked) throw new Error('Unlock the target layer before placing a manuscript.');
+    }
+    const idMap = new Map(notes.map(note => [note.id, `fn-${crypto.randomUUID()}`]));
+    if (idMap.size !== notes.length) throw new Error('The imported manuscript has duplicate note identifiers.');
+    const imported = structuredClone(content);
+    for (const paragraph of imported.paragraphs) for (const run of paragraph.runs) if (run.noteId) {
+      const id = idMap.get(run.noteId);
+      if (!id) throw new Error('The imported manuscript has a note marker without a definition.');
+      run.noteId = id;
+    }
+    const old = existing ? this.getStoryContent(head.id).paragraphs.flatMap(paragraph => paragraph.runs) : [];
+    const oldNotes = new Set(old.map(run => run.noteId));
+    const oldIndex = new Set(old.map(run => run.indexId));
+    this.state.settings.footnotes = [...this.getFootnotes().filter(note => !oldNotes.has(note.id) && !(existing && note.elementId && this.getStoryHead(note.elementId)?.id === head.id)),
+      ...notes.map(note => ({ ...note, id: idMap.get(note.id)!, number: 1, anchorVersion: 1 as const, elementId: head.id, pageId: head.pageId }))];
+    this.state.indexEntries = this.state.indexEntries?.filter(entry => !oldIndex.has(entry.id));
+    if (!existing) { head.layerId ||= this.state.activeLayerId; this.getActiveSpread().elements.push(head); }
+    head.storyContent = imported; head.rawStoryText = storyText(imported);
+    this.reflowStory(head.id); this.state.selectedElementId = head.id; this.state.selectedElementIds = [head.id];
+    this.pushHistory(); this.notify();
+  }
+
   public setStoryContent(frameId: string, content: StoryContent) {
     const head = this.getStoryHead(frameId);
     if (!head) throw new Error('The selected text frame no longer exists.');
+    if (head.generated) throw new Error('Make the generated list static in Pages before editing its manuscript.');
     let frame: TextElement | null = head;
     const seen = new Set<string>();
     while (frame && !seen.has(frame.id)) {
@@ -1355,6 +1406,42 @@ export class StateManager {
     this.reflowStory(head.id);
     this.pushHistory();
     this.notify();
+  }
+
+  public proposeStoryRevision(frameId: string, before: StoryContent, start: number, end: number, replacement: string, author: string, note = '') {
+    const head = this.assertStoryEditable(frameId);
+    if (JSON.stringify(contentOf(head)) !== JSON.stringify(before)) throw new Error('The manuscript changed while drafting. Start a new revision from the current text.');
+    if (!author.trim() || author.length > 100 || note.length > 2000) throw new Error('Enter a reviewer name up to 100 characters and a note up to 2,000 characters.');
+    if ((this.state.storyRevisions?.length || 0) >= 100) throw new Error('Remove resolved revisions before adding more (100 per document).');
+    const after = revisedStory(before, start, end, replacement);
+    if (storyText(after) === storyText(before)) throw new Error('The proposed text is unchanged.');
+    const revision = { id: `revision-${crypto.randomUUID()}`, storyId: head.id, before: structuredClone(before), start, end,
+      replacement, author: author.trim(), note: note.trim(), createdAt: Date.now(), status: 'pending' as const };
+    this.state.storyRevisions = [...(this.state.storyRevisions || []), revision];
+    this.pushHistory(); this.notify(); return revision.id;
+  }
+
+  public resolveStoryRevision(id: string, decision: 'accepted' | 'rejected') {
+    const revision = this.state.storyRevisions?.find(item => item.id === id);
+    if (!revision || revision.status !== 'pending') throw new Error('This revision is no longer pending.');
+    const backup = structuredClone(this.state);
+    try {
+      if (decision === 'accepted') {
+        const head = this.assertStoryEditable(revision.storyId);
+        if (revisionIsStale(revision, contentOf(head))) throw new Error('The manuscript changed after this proposal. Reject it and propose a new edit against the current text.');
+        head.storyContent = revisedStory(revision.before, revision.start, revision.end, revision.replacement);
+        head.rawStoryText = storyText(head.storyContent); this.reflowStory(head.id);
+      }
+      revision.status = decision; revision.resolvedAt = Date.now();
+      this.pushHistory(); this.notify();
+    } catch (reason) { this.state = backup; throw reason; }
+  }
+
+  public removeResolvedStoryRevisions() {
+    const revisions = this.state.storyRevisions || [];
+    if (revisions.every(item => item.status === 'pending')) return;
+    this.state.storyRevisions = revisions.filter(item => item.status === 'pending');
+    this.pushHistory(); this.notify();
   }
 
   public setStoryText(frameId: string, text: string) {
@@ -1455,6 +1542,7 @@ export class StateManager {
     const head = this.getStoryHead(frameId)!;
     const content = this.getStoryContent(frameId);
     const length = storyText(content).length;
+    if (head.generated && !restitch) throw new Error('Make the generated list static before unlinking its frames.');
 
     const prev = frame.prevFrameId ? (this.findElementById(frame.prevFrameId)?.element as TextElement | undefined) : undefined;
     const next = frame.nextFrameId ? (this.findElementById(frame.nextFrameId)?.element as TextElement | undefined) : undefined;
@@ -1466,6 +1554,7 @@ export class StateManager {
       if (newHead) {
         newHead.storyContent = content;
         newHead.rawStoryText = storyText(content);
+        if (head.generated) { newHead.generated = head.generated; newHead.autoExtendStory = head.autoExtendStory; }
       }
       frame.prevFrameId = undefined;
       frame.nextFrameId = undefined;
@@ -1499,9 +1588,49 @@ export class StateManager {
     }
   }
 
-  /**
-   * Links two table frames across pages for dynamic overflow row threading.
-   */
+  public setTableRowSizing(frameId: string, mode: 'equal' | 'content') {
+    const frames = this.editableTableThread(frameId);
+    if (mode !== 'equal' && mode !== 'content') throw new Error('Choose a supported row sizing mode.');
+    for (const frame of frames) frame.rowSizing = mode;
+    this.pushHistory(); this.notify();
+  }
+
+  private editableTableThread(frameId: string): TableElement[] {
+    const table = this.getElementById(frameId);
+    if (!table || table.type !== 'table') throw new Error('Select an existing table.');
+    const frames = tableThread(this.state.spreads, table);
+    if (frames.some(frame => frame.locked || this.state.layers.find(layer => layer.id === frame.layerId)?.locked)) throw new Error('Unlock all table frames and their layers before editing.');
+    return frames;
+  }
+
+  public updateTableSource(frameId: string, updates: Partial<Pick<TableElement, 'cells' | 'rows' | 'cols' | 'headerRowCount' | 'footerRowCount' | 'headerFillColor' | 'headerTextColor' | 'footerFillColor' | 'footerTextColor' | 'alternateRowColor' | 'fontFamily' | 'fontSizePt' | 'cellPaddingMm' | 'borderColor' | 'borderWidthMm' | 'colWidthsMm' | 'rowHeightsMm'>>) {
+    const frames = this.editableTableThread(frameId);
+    for (const frame of frames) Object.assign(frame, structuredClone(updates));
+    this.pushHistory(); this.notify();
+  }
+
+  /** Append a single-page continuation in one undo step, retaining page-local geometry. */
+  public addTableContinuationPage(frameId: string): string {
+    const frames = this.editableTableThread(frameId), source = frames[0], tail = frames.at(-1)!;
+    if (frames.some(frame => frame.pasteboard)) throw new Error('Place this table on a page before adding a continuation.');
+    const pageId = `page-${crypto.randomUUID()}`;
+    const next: TableElement = { ...structuredClone(tail), id: `table-${crypto.randomUUID()}`, pageId,
+      cells: structuredClone(source.cells), rows: source.rows, cols: source.cols, rowSizing: source.rowSizing,
+      headerRowCount: source.headerRowCount, footerRowCount: source.footerRowCount,
+      rowHeightsMm: source.rowHeightsMm?.slice(), colWidthsMm: source.colWidthsMm?.slice(),
+      prevFrameId: tail.id, nextFrameId: undefined, groupId: undefined, zIndex: 1 };
+    delete next.masterSourceId;
+    delete next.isOverridden;
+    delete next.anchor;
+    delete next.interactiveField;
+    tail.nextFrameId = next.id;
+    this.state.spreads.push({ id: `spread-${crypto.randomUUID()}`, spreadIndex: this.state.spreads.length,
+      pages: [{ id: pageId, pageNumber: 0, side: 'single' }], elements: [next] });
+    this.renumberPages(); this.state.activeSpreadIndex = this.state.spreads.length - 1;
+    this.state.selectedElementId = next.id; this.state.selectedElementIds = [next.id];
+    this.pushHistory(); this.notify(); return next.id;
+  }
+
   public linkTableFrames(sourceFrameId: string, targetFrameId: string): boolean {
     const source = this.getElementById(sourceFrameId);
     const target = this.getElementById(targetFrameId);
@@ -1509,6 +1638,14 @@ export class StateManager {
 
     const srcTable = source as TableElement;
     const tgtTable = target as TableElement;
+    if (sourceFrameId === targetFrameId || (srcTable.nextFrameId && srcTable.nextFrameId !== tgtTable.id) || (tgtTable.prevFrameId && tgtTable.prevFrameId !== srcTable.id)) return false;
+    const locked = (frame: TableElement) => frame.locked || this.state.layers.find(layer => layer.id === frame.layerId)?.locked;
+    if (locked(srcTable) || locked(tgtTable)) return false;
+    const seen = new Set<string>([srcTable.id]); let frame: TableElement | undefined = tgtTable;
+    while (frame) {
+      if (seen.has(frame.id)) return false; seen.add(frame.id);
+      frame = frame.nextFrameId ? this.getElementById(frame.nextFrameId) as TableElement | undefined : undefined;
+    }
 
     srcTable.nextFrameId = tgtTable.id;
     tgtTable.prevFrameId = srcTable.id;
@@ -1561,21 +1698,23 @@ export class StateManager {
     this.notify();
   }
 
-  public createMasterSpread(name: string, prefix: string): MasterSpread {
-    const id = `master-${Date.now()}`;
+  public createMasterSpread(name: string, prefix: string, parentMasterId?: string): MasterSpread {
+    if (parentMasterId && !this.state.masterSpreads.some(master => master.id === parentMasterId)) throw new Error('Choose an existing parent master.');
+    const stamp = crypto.randomUUID();
+    const id = `master-${stamp}`;
     const newMaster: MasterSpread = {
       id,
       name,
       prefix,
       pages: [
-        { id: `master-p-${Date.now()}-1`, pageNumber: 1, side: 'left' },
-        { id: `master-p-${Date.now()}-2`, pageNumber: 2, side: 'right' },
+        { id: `master-p-${stamp}-1`, pageNumber: 1, side: 'left' },
+        { id: `master-p-${stamp}-2`, pageNumber: 2, side: 'right' },
       ],
       elements: [
         {
-          id: `master-hdr-${Date.now()}`,
+          id: `master-hdr-${stamp}`,
           type: 'text',
-          pageId: `master-p-${Date.now()}-1`,
+          pageId: `master-p-${stamp}-1`,
           x: 18,
           y: 6,
           width: 174,
@@ -1599,9 +1738,9 @@ export class StateManager {
           paddingMm: 0,
         } as TextElement,
         {
-          id: `master-ftr-${Date.now()}`,
+          id: `master-ftr-${stamp}`,
           type: 'text',
-          pageId: `master-p-${Date.now()}-2`,
+          pageId: `master-p-${stamp}-2`,
           x: 18,
           y: 282,
           width: 174,
@@ -1626,6 +1765,7 @@ export class StateManager {
         } as TextElement,
       ],
     };
+    if (parentMasterId) { newMaster.parentMasterId = parentMasterId; newMaster.elements = []; }
     this.state.masterSpreads.push(newMaster);
     this.pushHistory();
     this.notify();
@@ -1639,6 +1779,7 @@ export class StateManager {
     const idx = this.state.masterSpreads.findIndex((m) => m.id === masterSpreadId);
     if (idx === -1) return false;
 
+    if (this.state.masterSpreads.some(master => master.parentMasterId === masterSpreadId)) throw new Error('Reparent child masters before deleting this master.');
     this.state.masterSpreads.splice(idx, 1);
     for (const spread of this.state.spreads) {
       if (spread.masterSpreadId === masterSpreadId) {
@@ -1652,6 +1793,7 @@ export class StateManager {
 
   public assignMasterSpread(spreadIndex: number, masterSpreadId: string | null) {
     if (spreadIndex < 0 || spreadIndex >= this.state.spreads.length) return;
+    resolveMaster(this.state.masterSpreads, masterSpreadId);
     this.state.spreads[spreadIndex].masterSpreadId = masterSpreadId;
     this.pushHistory();
     this.notify();
@@ -1665,7 +1807,7 @@ export class StateManager {
     const spread = this.state.spreads.find((s) => s.id === spreadId) || this.getActiveSpread();
     if (!spread || !spread.masterSpreadId) return null;
 
-    const master = (this.state.masterSpreads || []).find((m) => m.id === spread.masterSpreadId);
+    const master = resolveMaster(this.state.masterSpreads, spread.masterSpreadId);
     if (!master) return null;
 
     const mEl = master.elements.find((e) => e.id === masterElementId);
@@ -1701,8 +1843,11 @@ export class StateManager {
     };
 
     if (cloned.type === 'text') {
-      cloned.text = this.evaluateTokens(cloned.text, targetPage.pageNumber);
+      const instance = instantiateMasterItem(cloned, targetPage.id, text => this.evaluateTokens(text, targetPage!.pageNumber)) as TextElement;
+      Object.assign(cloned, instance);
+      if (instance.textContent) { cloned.storyContent = instance.textContent; cloned.rawStoryText = storyText(instance.textContent); }
     }
+    delete cloned.groupId;
 
     spread.elements.push(cloned);
     this.selectElements([cloned.id]);
@@ -1747,6 +1892,7 @@ export class StateManager {
     const meta = await assetStore.registerAsset(data, { name });
     const img = el as ImageElement;
     img.assetId = meta.id;
+    if (typeof data === 'string') img.src = data;
     img.equation = undefined;
     img.proxySrc = meta.proxyDataUrl;
     img.name = meta.name;
@@ -1909,7 +2055,7 @@ export class StateManager {
 
   public deleteSelectedElements() {
     const spread = this.getActiveSpread();
-    const lockedIds = new Set(spread.elements.filter(el => el.locked).map(el => el.id));
+    const lockedIds = lockedArtworkIds(this.state);
     const idsToDelete = this.state.selectedElementIds.filter(id => !lockedIds.has(id));
     if (idsToDelete.length === 0) return;
 
@@ -1965,107 +2111,106 @@ export class StateManager {
   }
 
   public alignElements(direction: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') {
-    const spread = this.getActiveSpread();
-    const selectedElements = spread.elements.filter(el => this.state.selectedElementIds.includes(el.id) && !el.locked && !el.editorialOnly);
-    if (selectedElements.length < 2) return;
-
-    const pageWidthMm = this.state.settings.widthMm;
-    const elementMeta = selectedElements.map(el => {
-      const pageIdx = Math.max(0, spread.pages.findIndex(p => p.id === el.pageId));
-      const globalX = pageIdx * pageWidthMm + el.x;
-      const globalY = el.y;
-      return { el, pageIdx, globalX, globalY };
-    });
-
-    if (direction === 'left') {
-      const minX = Math.min(...elementMeta.map(m => m.globalX));
-      elementMeta.forEach(m => {
-        m.el.x = Math.round((minX - m.pageIdx * pageWidthMm) * 10) / 10;
-      });
-    } else if (direction === 'center') {
-      const minX = Math.min(...elementMeta.map(m => m.globalX));
-      const maxX = Math.max(...elementMeta.map(m => m.globalX + m.el.width));
-      const targetCenter = (minX + maxX) / 2;
-      elementMeta.forEach(m => {
-        m.el.x = Math.round((targetCenter - m.el.width / 2 - m.pageIdx * pageWidthMm) * 10) / 10;
-      });
-    } else if (direction === 'right') {
-      const maxX = Math.max(...elementMeta.map(m => m.globalX + m.el.width));
-      elementMeta.forEach(m => {
-        m.el.x = Math.round((maxX - m.el.width - m.pageIdx * pageWidthMm) * 10) / 10;
-      });
-    } else if (direction === 'top') {
-      const minY = Math.min(...elementMeta.map(m => m.globalY));
-      elementMeta.forEach(m => {
-        m.el.y = Math.round(minY * 10) / 10;
-      });
-    } else if (direction === 'middle') {
-      const minY = Math.min(...elementMeta.map(m => m.globalY));
-      const maxY = Math.max(...elementMeta.map(m => m.globalY + m.el.height));
-      const targetMiddle = (minY + maxY) / 2;
-      elementMeta.forEach(m => {
-        m.el.y = Math.round((targetMiddle - m.el.height / 2) * 10) / 10;
-      });
-    } else if (direction === 'bottom') {
-      const maxY = Math.max(...elementMeta.map(m => m.globalY + m.el.height));
-      elementMeta.forEach(m => {
-        m.el.y = Math.round((maxY - m.el.height) * 10) / 10;
-      });
-    }
-
-    this.pushHistory();
-    this.notify();
+    if (arrangeSelection(this.state, direction)) { this.pushHistory(); this.notify(); }
   }
 
-  public distributeElements(axis: 'horizontal' | 'vertical') {
-    const spread = this.getActiveSpread();
-    const selectedElements = spread.elements.filter(el => this.state.selectedElementIds.includes(el.id) && !el.locked);
-    if (selectedElements.length < 3) return;
+  public distributeElements(axis: 'horizontal' | 'vertical', gap?: number) {
+    if (arrangeSelection(this.state, axis, gap)) { this.pushHistory(); this.notify(); }
+  }
 
-    const pageWidthMm = this.state.settings.widthMm;
-    const elementMeta = selectedElements.map(el => {
-      const pageIdx = Math.max(0, spread.pages.findIndex(p => p.id === el.pageId));
-      const globalX = pageIdx * pageWidthMm + el.x;
-      const globalY = el.y;
-      return { el, pageIdx, globalX, globalY };
-    });
+  public groupSelection() {
+    const members = selectionUnits(this.state).flatMap(unit => unit.members);
+    if (members.length < 2) return;
+    const groupId = `group-${crypto.randomUUID()}`;
+    members.forEach(element => { element.groupId = groupId; });
+    this.state.selectedElementIds = members.map(element => element.id);
+    this.pushHistory(); this.notify();
+  }
 
-    if (axis === 'horizontal') {
-      elementMeta.sort((a, b) => a.globalX - b.globalX);
-      const first = elementMeta[0];
-      const last = elementMeta[elementMeta.length - 1];
-      const totalSpan = last.globalX - (first.globalX + first.el.width);
-      let interiorWidth = 0;
-      for (let i = 1; i < elementMeta.length - 1; i++) {
-        interiorWidth += elementMeta[i].el.width;
-      }
-      const gap = (totalSpan - interiorWidth) / (elementMeta.length - 1);
-      let currentGlobalX = first.globalX + first.el.width + gap;
-      for (let i = 1; i < elementMeta.length - 1; i++) {
-        const m = elementMeta[i];
-        m.el.x = Math.round((currentGlobalX - m.pageIdx * pageWidthMm) * 10) / 10;
-        currentGlobalX += m.el.width + gap;
-      }
-    } else {
-      elementMeta.sort((a, b) => a.globalY - b.globalY);
-      const first = elementMeta[0];
-      const last = elementMeta[elementMeta.length - 1];
-      const totalSpan = last.globalY - (first.globalY + first.el.height);
-      let interiorHeight = 0;
-      for (let i = 1; i < elementMeta.length - 1; i++) {
-        interiorHeight += elementMeta[i].el.height;
-      }
-      const gap = (totalSpan - interiorHeight) / (elementMeta.length - 1);
-      let currentY = first.globalY + first.el.height + gap;
-      for (let i = 1; i < elementMeta.length - 1; i++) {
-        const m = elementMeta[i];
-        m.el.y = Math.round(currentY * 10) / 10;
-        currentY += m.el.height + gap;
-      }
+  public ungroupSelection() {
+    const members = selectionUnits(this.state).flatMap(unit => unit.members);
+    members.forEach(element => { delete element.groupId; });
+    this.pushHistory(); this.notify();
+  }
+
+  public setMasterParent(masterId: string, parentId?: string) {
+    const master = this.state.masterSpreads.find(master => master.id === masterId);
+    if (!master) throw new Error('Select an existing master.');
+    const candidate = this.state.masterSpreads.map(item => item.id === masterId ? { ...item, parentMasterId: parentId } : item);
+    resolveMaster(candidate, masterId);
+    if (parentId) master.parentMasterId = parentId; else delete master.parentMasterId;
+    this.pushHistory(); this.notify();
+  }
+
+  public updateMasterItem(masterId: string, elementId: string, updates: Partial<CanvasElement>) {
+    const element = this.state.masterSpreads.find(master => master.id === masterId)?.elements.find(element => element.id === elementId);
+    if (!element) throw new Error('Edit this inherited item in its owning parent master.');
+    if (this.state.layers.find(layer => layer.id === element.layerId)?.locked || (element.locked && updates.locked === undefined)) throw new Error('Unlock the master item and its layer first.');
+    for (const key of ['x', 'y', 'width', 'height'] as const) if (updates[key] !== undefined && (!Number.isFinite(updates[key]) || ((key === 'width' || key === 'height') && updates[key]! <= 0))) throw new Error('Enter valid master geometry.');
+    const allowed: Partial<CanvasElement> = {};
+    for (const key of ['x', 'y', 'width', 'height', 'locked'] as const) if (updates[key] !== undefined) Object.assign(allowed, { [key]: updates[key] });
+    if (element.type === 'text' && 'text' in updates && typeof updates.text === 'string') {
+      element.storyContent = element.storyContent ? editStory(element.storyContent, updates.text) : undefined;
+      delete element.textContent; element.text = updates.text; element.rawStoryText = updates.text;
     }
+    Object.assign(element, allowed); this.pushHistory(); this.notify();
+  }
 
-    this.pushHistory();
-    this.notify();
+  public copySelectionToMaster(masterId: string) {
+    const master = this.state.masterSpreads.find(master => master.id === masterId);
+    if (!master) throw new Error('Choose an existing master.');
+    const selected = selectionUnits(this.state).flatMap(unit => unit.members);
+    if (!selected.length) throw new Error('Select artwork in the spread first.');
+    if (selected.some(element => element.anchor || ((element.type === 'text' || element.type === 'table') && (element.prevFrameId || element.nextFrameId)) || (element.type === 'text' && (element.generated || contentOf(element).paragraphs.some(paragraph => paragraph.runs.some(run => run.noteId || run.indexId || run.reference)))))) throw new Error('Copy independent artwork without manuscript references into masters.');
+    const spread = this.getActiveSpread(), groups = new Map<string, string>();
+    for (const source of selected) {
+      const element = structuredClone(source); element.id = `master-item-${crypto.randomUUID()}`;
+      const page = spread.pages.find(page => page.id === source.pageId);
+      element.pageId = (master.pages.find(item => item.side === page?.side) || master.pages[0]).id;
+      delete element.pasteboard; delete element.masterSourceId; delete element.isOverridden;
+      if (element.type === 'text') { delete element.dataBinding; delete element.autoExtendStory; delete element.autoPaginationError; }
+      if (element.groupId) { if (!groups.has(element.groupId)) groups.set(element.groupId, `group-${crypto.randomUUID()}`); element.groupId = groups.get(element.groupId); }
+      master.elements.push(element);
+    }
+    this.pushHistory(); this.notify();
+  }
+
+  public moveArtwork(ids: string[], pageId: string, x: number, y: number, pasteboard = false) {
+    if (!ids.length || ![x, y].every(Number.isFinite)) throw new Error('Choose artwork and a valid drop position.');
+    const target = this.state.spreads.find(spread => spread.pages.some(page => page.id === pageId));
+    if (!target) throw new Error('The target page no longer exists.');
+    const all = this.state.spreads.flatMap(spread => spread.elements.map(element => ({ spread, element })));
+    const anchor = all.find(item => item.element.id === ids[0]);
+    if (!anchor) throw new Error('The artwork no longer exists.');
+    const groups = new Set(all.filter(item => ids.includes(item.element.id)).map(item => item.element.groupId).filter(Boolean));
+    const moved = all.filter(item => ids.includes(item.element.id) || (item.element.groupId && groups.has(item.element.groupId)));
+    if (ids.some(id => !moved.some(item => item.element.id === id))) throw new Error('Some selected artwork no longer exists.');
+    if (moved.some(item => item.spread !== anchor.spread)) throw new Error('Move artwork from one source spread at a time.');
+    if (all.some(item => item.element.anchor && moved.some(moving => moving.element.id === item.element.anchor!.parentTextId))) throw new Error('Unanchor attached objects before moving their parent text through the artwork workspace.');
+    for (const { element } of moved) {
+      if (element.locked || element.editorialOnly || this.state.layers.find(layer => layer.id === element.layerId)?.locked) throw new Error('Unlock the artwork and its layer first.');
+      if (element.anchor || element.masterSourceId || ((element.type === 'text' || element.type === 'table') && (element.nextFrameId || element.prevFrameId))) throw new Error('Move independent artwork; threaded, anchored and master-override objects need their dedicated editing tools.');
+      if (element.type === 'text' && (element.generated || element.autoExtendStory)) throw new Error('Move generated and automatically paginated stories through their dedicated editing tools.');
+      if (pasteboard && element.type === 'text' && contentOf(element).paragraphs.some(paragraph => paragraph.runs.some(run => run.noteId || run.reference || run.indexId))) throw new Error('Unmark publication references before storing this text on the pasteboard.');
+    }
+    const origin = anchor.spread.pages.findIndex(page => page.id === anchor.element.pageId) * this.state.settings.widthMm + anchor.element.x;
+    const originY = anchor.element.y;
+    const positions = moved.map(({ spread, element }) => ({ element, x: x + spread.pages.findIndex(page => page.id === element.pageId) * this.state.settings.widthMm + element.x - origin, y: y + element.y - originY }));
+    const keys = new Set(moved.map(item => item.element.id));
+    this.state.spreads.forEach(spread => { spread.elements = spread.elements.filter(element => !keys.has(element.id)); });
+    let z = Math.max(0, ...target.elements.map(element => element.zIndex));
+    positions.sort((a, b) => a.element.zIndex - b.element.zIndex).forEach(item => {
+      const width = this.state.settings.widthMm;
+      const globalX = target.pages.findIndex(page => page.id === pageId) * width + item.x;
+      const pageIndex = Math.max(0, Math.min(target.pages.length - 1, Math.floor((globalX + item.element.width / 2) / width)));
+      Object.assign(item.element, { pageId: target.pages[pageIndex].id, x: globalX - pageIndex * width, y: item.y, pasteboard, zIndex: ++z }); target.elements.push(item.element);
+    });
+    this.state.activeSpreadIndex = this.state.spreads.indexOf(target);
+    this.state.selectedElementId = ids[0]; this.state.selectedElementIds = [...keys];
+    const pixels = 96 / 25.4 * this.state.zoom;
+    this.state.panX = (target.pages.length * this.state.settings.widthMm / 2 - (target.pages.findIndex(page => page.id === anchor.element.pageId) * this.state.settings.widthMm + anchor.element.x + anchor.element.width / 2)) * pixels;
+    this.state.panY = (this.state.settings.heightMm / 2 - anchor.element.y - anchor.element.height / 2) * pixels;
+    this.pushHistory(); this.notify();
   }
 
   public changeElementOrder(id: string, direction: 'front' | 'back' | 'forward' | 'backward') {
@@ -2091,6 +2236,15 @@ export class StateManager {
   }
 
   public renumberPages() {
+    // Bind legacy positional pins before spread indices change, then derive their
+    // compatibility index from the stable spread identity.
+    this.state.comments = (this.state.comments || []).filter(comment => {
+      comment.spreadId ||= this.state.spreads.find(spread => spread.spreadIndex === comment.spreadIndex)?.id;
+      const index = this.state.spreads.findIndex(spread => spread.id === comment.spreadId);
+      if (index < 0) return false;
+      comment.spreadIndex = index;
+      return true;
+    });
     let curPage = 1;
     const isFacing = Boolean(this.state.settings.facingPages);
 
@@ -2136,6 +2290,46 @@ export class StateManager {
     this.notify();
   }
 
+  public moveSpread(from: number, to: number) {
+    if (!Number.isInteger(from) || !Number.isInteger(to) || !this.state.spreads[from] || !this.state.spreads[to]) throw new Error('Choose a valid spread position.');
+    if (from === to) return;
+    const order = [...this.state.spreads];
+    order.splice(to, 0, ...order.splice(from, 1));
+    const positions = new Map(order.flatMap((spread, index) => spread.elements.map(element => [element.id, index] as const)));
+    if (order.some(spread => spread.elements.some(element => (element.type === 'text' || element.type === 'table') && element.nextFrameId && (positions.get(element.id) ?? 0) > (positions.get(element.nextFrameId) ?? Infinity)))) throw new Error('This move would reverse a threaded story. Keep linked spreads in their reading order.');
+    this.renumberPages();
+    const activeId = this.getActiveSpread().id;
+    const [spread] = this.state.spreads.splice(from, 1);
+    this.state.spreads.splice(to, 0, spread);
+    this.renumberPages();
+    this.state.activeSpreadIndex = this.state.spreads.findIndex(spread => spread.id === activeId);
+    this.pushHistory(); this.notify();
+  }
+
+  public applySpreadTemplate(source: Spread, mode: 'append' | 'replace', size?: { width: number; height: number }) {
+    if (this.state.layers.find(layer => layer.id === this.state.activeLayerId)?.locked) throw new Error('Unlock the active layer before adding a template.');
+    const current = this.getActiveSpread();
+    if (mode === 'replace') {
+      if (source.pages.length !== current.pages.length) throw new Error('This layout needs a different page count. Add it as a new spread instead.');
+      if (current.elements.some(element => element.locked || this.state.layers.find(layer => layer.id === element.layerId)?.locked)) throw new Error('Unlock the spread contents before replacing its layout.');
+      if (current.elements.some(element => (element.type === 'text' && (element.storyContent || element.nextFrameId || element.prevFrameId)) || (element.type === 'table' && (element.nextFrameId || element.prevFrameId)))) throw new Error('This spread contains a structured or threaded story. Add the template as a new spread to preserve its manuscript.');
+      const ids = new Set(current.elements.map(element => element.id));
+      if (this.getFootnotes().some(note => note.elementId && ids.has(note.elementId)) || this.state.crossReferences?.some(ref => ids.has(ref.targetElementId)) || storyHeads(this.state).some(head => contentOf(head).paragraphs.some(paragraph => paragraph.runs.some(run => run.reference && ids.has(run.reference.targetElementId))))) throw new Error('This spread has publication references. Add the template as a new spread to preserve them.');
+    }
+    const generated = prepareSpreadTemplate(source, this.state.settings, size);
+    generated.elements.forEach(element => { element.layerId = this.state.activeLayerId; });
+    if (mode === 'append') {
+      generated.spreadIndex = this.state.spreads.length;
+      this.state.spreads.push(generated);
+      this.state.activeSpreadIndex = this.state.spreads.length - 1;
+    } else {
+      const pages = new Map(generated.pages.map((page, index) => [page.id, current.pages[index].id]));
+      current.elements = generated.elements.map(element => ({ ...element, pageId: pages.get(element.pageId)! }));
+    }
+    this.state.selectedElementId = null; this.state.selectedElementIds = [];
+    this.renumberPages(); this.pushHistory(); this.notify();
+  }
+
   public deleteSpread(index: number) {
     if (this.state.spreads.length <= 1) return;
     const targetSpread = this.state.spreads[index];
@@ -2161,6 +2355,7 @@ export class StateManager {
     if (index < 0 || index >= this.state.spreads.length) return;
     const src = this.state.spreads[index];
     const pageIdMap = new Map<string, string>();
+    const groupIdMap = new Map<string, string>();
     const newPages = src.pages.map((p, i) => {
       const newPageId = `page-${Date.now()}-${i}`;
       pageIdMap.set(p.id, newPageId);
@@ -2182,6 +2377,10 @@ export class StateManager {
           id: `el-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
           pageId: pageIdMap.get(el.pageId) || (newPages[0]?.id || el.pageId),
         };
+        if (cloned.groupId) {
+          if (!groupIdMap.has(cloned.groupId)) groupIdMap.set(cloned.groupId, `group-${crypto.randomUUID()}`);
+          cloned.groupId = groupIdMap.get(cloned.groupId);
+        }
         if (cloned.type === 'text') {
           const textCloned = cloned as TextElement;
           delete textCloned.prevFrameId;
@@ -2307,6 +2506,7 @@ export class StateManager {
     };
 
     this.state = blankState;
+    this.getState();
     this.renumberPages();
     this.history.clear();
     this.pushHistory();
@@ -2413,13 +2613,13 @@ export class StateManager {
     }
   }
 
-  public placeTextContent(elementId: string, content: { formattedText: string; detectedStyleId?: string; content?: StoryContent }) {
+  public placeTextContent(elementId: string, content: { formattedText: string; detectedStyleId?: string; content?: StoryContent; notes?: { id: string; kind: 'footnote' | 'endnote'; text: string }[] }) {
     const spread = this.getActiveSpread();
     const el = spread.elements.find(e => e.id === elementId);
     if (!el || el.type !== 'text') return;
     if (content.content) {
       if (content.detectedStyleId) el.paragraphStyleId = content.detectedStyleId;
-      this.setStoryContent(elementId, content.content);
+      this.placeManuscript(elementId, content.content, content.notes);
       return;
     }
 
@@ -2433,16 +2633,12 @@ export class StateManager {
   }
 
   public updateTableCell(tableId: string, row: number, col: number, text: string) {
-    const spread = this.getActiveSpread();
-    const el = spread.elements.find(e => e.id === tableId);
-    if (!el || el.type !== 'table') return;
-
-    const tableEl = el as TableElement;
+    const tableEl = this.editableTableThread(tableId)[0];
     if (tableEl.cells[row] && tableEl.cells[row][col]) {
       const newCells = tableEl.cells.map((r, rIdx) =>
         r.map((c, cIdx) => (rIdx === row && cIdx === col ? { ...c, text } : { ...c }))
       );
-      this.updateElement(tableId, { cells: newCells });
+      this.updateTableSource(tableId, { cells: newCells });
     }
   }
 
@@ -2450,7 +2646,7 @@ export class StateManager {
     csvText: string,
     mode: 'generateSpreads' | 'inPlace' = 'generateSpreads'
   ): { spreadsCreated: number; recordsMerged: number } {
-    const parsed = parseCsv(csvText);
+    const parsed = parseMergeData(csvText);
     if (parsed.records.length === 0) {
       return { spreadsCreated: 0, recordsMerged: 0 };
     }
@@ -2458,6 +2654,7 @@ export class StateManager {
     const activeSpread = this.getActiveSpread();
 
     if (mode === 'inPlace') {
+      if (activeSpread.elements.some(element => element.locked || this.state.layers.find(layer => layer.id === element.layerId)?.locked)) throw new Error('Unlock the template elements and their layers before replacing data.');
       const firstRecord = parsed.records[0];
       const newElements = activeSpread.elements.map(el => substituteElementTokens(el, firstRecord));
       activeSpread.elements = newElements;
@@ -2466,6 +2663,12 @@ export class StateManager {
       return { spreadsCreated: 1, recordsMerged: 1 };
     }
 
+    const templateIds = new Set(activeSpread.elements.map(element => element.id));
+    for (const element of activeSpread.elements) {
+      if ((element.type === 'text' || element.type === 'table') && [element.nextFrameId, element.prevFrameId].some(id => id && !templateIds.has(id))) throw new Error('Use a template whose linked frames stay within one spread.');
+      if (element.type === 'text' && (element.generated || contentOf(element).paragraphs.some(paragraph => paragraph.runs.some(run => run.noteId || run.reference || run.indexId)))) throw new Error('Use a merge template without generated lists, notes or publication references.');
+    }
+    if (parsed.records.length * activeSpread.elements.length > 100000) throw new Error('This merge exceeds 100,000 objects. Reduce the record count.');
     // Generate spreads
     const lastSpread = this.state.spreads[this.state.spreads.length - 1];
     const lastPage = lastSpread?.pages[lastSpread.pages.length - 1];
@@ -2535,6 +2738,7 @@ export class StateManager {
 
     this.state.spreads.forEach((spread, spreadIdx) => {
       for (const el of spread.elements) {
+        if (el.pasteboard) continue;
         const page = spread.pages.find((p) => p.id === el.pageId) || spread.pages[0];
         const pageNumber = page ? page.pageNumber : spreadIdx + 1;
 
@@ -2563,7 +2767,7 @@ export class StateManager {
             }
             const totalLinesCapacity = maxLinesPerCol * cols;
 
-            const overset = textEl.textContent ? layoutStory(textEl.textContent, textEl, this.state.paragraphStyles, this.state.characterStyles, undefined, 0,
+            const overset = textEl.textContent ? layoutStory(textEl.textContent, textEl, this.state.paragraphStyles, this.state.characterStyles, undefined, layoutFrameNotes(this.state, textEl).height,
               { obstacles: spread.elements, baselineGrid: settings.baselineGrid }).overset
               : approxRenderedLines > totalLinesCapacity || textContent.length > totalCapacity * 1.15;
             if (overset) {
@@ -2666,7 +2870,7 @@ export class StateManager {
         // 5. MISSING_ALT_TEXT: Images lacking Alt Text for screen readers (PDF/UA Section 508)
         if (el.type === 'image') {
           const imgEl = el as ImageElement;
-          if (!imgEl.altText || !imgEl.altText.trim()) {
+          if (!imgEl.decorative && (!imgEl.altText || !imgEl.altText.trim())) {
             issues.push({
               id: `preflight-alt-${spreadIdx}-${el.id}`,
               severity: 'warning',
@@ -2803,7 +3007,7 @@ export class StateManager {
       }
     });
 
-    return issues;
+    return [...issues, ...publicationPreflight(this.state).filter(issue => !(((issue.code === 'MISSING_ASSET' && issues.some(existing => existing.elementId === issue.elementId && existing.severity === 'error')) || (issue.code === 'MISSING_ALT_TEXT' && issues.some(existing => existing.elementId === issue.elementId && existing.code === issue.code)))))];
   }
 
   public autoFixPreflightIssue(issue: PreflightIssue): boolean {
@@ -3039,6 +3243,59 @@ export class StateManager {
     this.notify();
   }
 
+  public applyImportedFont(elementId: string, family: string) {
+    const element = this.getElementById(elementId);
+    if (!element || element.type !== 'text' || !fontManager.getFontAsset(family)) throw new Error('Select a text frame and import its font first.');
+    if (element.locked || this.state.layers.find(layer => layer.id === element.layerId)?.locked) throw new Error('Unlock the frame and its layer first.');
+    this.state.embeddedFonts = fontManager.getFontAssets();
+    this.updateElement(elementId, { fontFamily: family });
+  }
+
+  public replaceDocumentFont(from: string, to: string) {
+    if (!fontManager.getFont(to)) throw new Error('Load the replacement font file first.');
+    // A style change can affect locked frames indirectly; do not silently alter them.
+    const all = [...this.state.spreads.flatMap(spread => spread.elements), ...this.state.masterSpreads.flatMap(master => master.elements)];
+    if (all.some(element => (element.locked || this.state.layers.find(layer => layer.id === element.layerId)?.locked) && elementUsesFont(this.state, element, from))) throw new Error('Unlock affected text-bearing objects and layers before replacing this font.');
+    const backup = structuredClone(this.state);
+    try {
+      visitDocumentFonts(this.state, owner => { if (owner.fontFamily && primaryFont(owner.fontFamily) === primaryFont(from)) owner.fontFamily = to; });
+      this.state.embeddedFonts = fontManager.getFontAssets();
+      this.reflowFormattedStories(); this.pushHistory(); this.notify();
+    } catch (error) { this.state = backup; throw error; }
+  }
+
+  private assertDataFrame(elementId: string) {
+    const frame = this.assertStoryEditable(elementId);
+    if (frame.id !== elementId || frame.nextFrameId || frame.prevFrameId || frame.autoExtendStory) throw new Error('Data fields need an independent text frame with automatic page extension disabled.');
+    if (contentOf(frame).paragraphs.some(paragraph => paragraph.runs.some(run => run.noteId || run.indexId || run.reference))) throw new Error('Data fields cannot replace manuscript reference markers.');
+    return frame;
+  }
+
+  public bindTextData(elementId: string, binding: import('../types').TextDataBinding | null) {
+    const frame = binding ? this.assertDataFrame(elementId) : this.assertStoryEditable(elementId);
+    if (binding) frame.dataBinding = validateBinding(binding); else delete frame.dataBinding;
+    this.pushHistory(); this.notify();
+  }
+
+  public applyDataRefresh(changes: DataRefreshChange[]) {
+    if (!changes.length) return;
+    if (changes.length > 10000 || new Set(changes.map(change => change.elementId)).size !== changes.length) throw new Error('Invalid data refresh batch.');
+    const frames = changes.map(change => {
+      const frame = this.assertDataFrame(change.elementId);
+      if (!frame.dataBinding || JSON.stringify(validateBinding(frame.dataBinding)) !== JSON.stringify(validateBinding(change.binding)) || storyText(contentOf(frame)) !== change.before) throw new Error('A bound frame changed since preview. Preview the snapshot again.');
+      if (typeof change.after !== 'string' || change.after.length > 16000) throw new Error('A bound value exceeds the text limit.');
+      return frame;
+    });
+    const backup = structuredClone(this.state);
+    try {
+      frames.forEach((frame, index) => {
+        frame.storyContent = editStory(contentOf(frame), changes[index].after);
+        frame.rawStoryText = storyText(frame.storyContent); this.reflowStory(frame.id);
+      });
+      this.pushHistory(); this.notify();
+    } catch (error) { this.state = backup; throw error; }
+  }
+
   private loadFromStorage(): ProjectState | null {
     try {
       const data = localStorage.getItem(STORAGE_KEY);
@@ -3260,16 +3517,8 @@ export class StateManager {
   }
 
   public getFootnotesForElement(elementId: string): Footnote[] {
-    const fns = this.getFootnotes();
-    const txtEl = this.getElementById(elementId) as TextElement | null;
-    return fns.filter((fn) => {
-      if (fn.elementId === elementId) return true;
-      if (txtEl && txtEl.type === 'text') {
-        const marker = numberToSuperscript(fn.number);
-        return txtEl.text.includes(marker);
-      }
-      return false;
-    });
+    const frame = this.getElementById(elementId);
+    return frame?.type === 'text' ? notesForFrame(this.state, frame) : [];
   }
 
   public getElementById(elementId: string): CanvasElement | null {
@@ -3284,132 +3533,161 @@ export class StateManager {
     return null;
   }
 
-  public insertFootnote(elementId: string, footnoteText?: string): Footnote {
-    const el = this.getElementById(elementId);
-    if (!el || el.type !== 'text') {
-      throw new Error(`Cannot insert footnote: element ${elementId} is not a valid text frame.`);
+  private assertStoryEditable(frameId: string): TextElement {
+    const head = this.getStoryHead(frameId);
+    if (!head) throw new Error('Select a text story.');
+    const seen = new Set<string>();
+    let frame: TextElement | null = head;
+    while (frame && !seen.has(frame.id)) {
+      if (frame.locked || this.state.layers.find(layer => layer.id === frame!.layerId)?.locked) throw new Error('Unlock the story before editing.');
+      seen.add(frame.id);
+      frame = frame.nextFrameId ? this.getElementById(frame.nextFrameId) as TextElement | null : null;
     }
-    const txt = el as TextElement;
-    const currentFns = this.getFootnotes();
-    const nextNumber = currentFns.length + 1;
-    const marker = numberToSuperscript(nextNumber);
+    if (head.generated) throw new Error('This list is generated. Make it static before editing its manuscript.');
+    return head;
+  }
 
-    // Append marker to text, separating adjacent footnotes with a comma
-    const lastChar = txt.text.slice(-1);
-    const isAdjacent = Boolean(REVERSE_SUPERSCRIPTS[lastChar]);
-    const separator = isAdjacent ? ',' : '';
-    txt.text = txt.text + separator + marker;
-
-    const newFn: Footnote = {
-      id: `fn-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      number: nextNumber,
-      text: footnoteText || 'Footnote description or citation.',
-      elementId,
-      pageId: txt.pageId,
-    };
-
-    if (!Array.isArray(this.state.settings.footnotes)) {
-      this.state.settings.footnotes = [];
-    }
-    this.state.settings.footnotes.push(newFn);
-
-    this.renumberFootnotes();
-    this.pushHistory();
-    this.notify();
-    return newFn;
+  public insertFootnote(elementId: string, footnoteText?: string, position?: number, kind: 'footnote' | 'endnote' = 'footnote'): Footnote {
+    const head = this.assertStoryEditable(elementId);
+    const frame = this.getElementById(elementId) as TextElement;
+    const content = this.getStoryContent(elementId);
+    const offset = position ?? frame.storyEnd ?? storyText(content).length;
+    const note: Footnote = { id: `fn-${crypto.randomUUID()}`, number: 1, kind, anchorVersion: 1,
+      text: footnoteText || 'Footnote description or citation.', elementId, pageId: frame.pageId };
+    const inserted = insertRun(content, offset, offset, { text: noteMarker(1), noteId: note.id });
+    this.state.settings.footnotes = [...this.getFootnotes(), note];
+    head.storyContent = inserted;
+    head.rawStoryText = storyText(inserted);
+    this.reflowStory(head.id);
+    this.pushHistory(); this.notify();
+    return note;
   }
 
   public updateFootnote(id: string, updates: Partial<Footnote>) {
-    if (!Array.isArray(this.state.settings.footnotes)) return;
-    const fn = this.state.settings.footnotes.find((f) => f.id === id);
-    if (!fn) return;
-    Object.assign(fn, updates);
-    this.pushHistory();
-    this.notify();
+    const note = this.getFootnotes().find(note => note.id === id);
+    if (!note) return;
+    if (note.elementId && this.getElementById(note.elementId)) this.assertStoryEditable(note.elementId);
+    if (updates.text !== undefined) note.text = updates.text;
+    if (updates.kind !== undefined) note.kind = updates.kind;
+    this.pushHistory(); this.notify();
   }
 
   public deleteFootnote(id: string) {
-    if (!Array.isArray(this.state.settings.footnotes)) return;
-    const fn = this.state.settings.footnotes.find((f) => f.id === id);
-    if (!fn) return;
-
-    if (fn.elementId) {
-      const el = this.getElementById(fn.elementId) as TextElement | null;
-      if (el && el.type === 'text') {
-        const marker = numberToSuperscript(fn.number);
-        el.text = el.text.replace(new RegExp(`,?${marker}|${marker},?`), '');
-      }
+    const note = this.getFootnotes().find(note => note.id === id);
+    if (!note) return;
+    if (note.elementId && this.getElementById(note.elementId)) this.assertStoryEditable(note.elementId);
+    migrateLegacyNotes(this.state);
+    for (const head of storyHeads(this.state)) if (head.storyContent) {
+      head.storyContent.paragraphs.forEach(paragraph => { paragraph.runs = paragraph.runs.filter(run => run.noteId !== id); });
+      head.rawStoryText = storyText(head.storyContent);
     }
-
-    this.state.settings.footnotes = this.state.settings.footnotes.filter((f) => f.id !== id);
-    this.renumberFootnotes();
-    this.pushHistory();
-    this.notify();
+    this.state.settings.footnotes = this.getFootnotes().filter(note => note.id !== id);
+    this.reflowFormattedStories(); this.pushHistory(); this.notify();
   }
 
   public renumberFootnotes() {
-    if (!Array.isArray(this.state.settings.footnotes) || this.state.settings.footnotes.length === 0) return;
+    migrateLegacyNotes(this.state);
+    refreshPublication(this.state);
+    this.reflowFormattedStories();
+  }
 
-    const textElements: TextElement[] = [];
-    for (const spread of this.state.spreads) {
-      const sorted = [...spread.elements]
-        .filter((e) => e.type === 'text')
-        .sort((a, b) => a.y !== b.y ? a.y - b.y : a.x - b.x) as TextElement[];
-      textElements.push(...sorted);
-    }
-
-    const markerRegex = /[⁰¹²³⁴⁵⁶⁷⁸⁹]+/g;
-    let sequenceNumber = 1;
-    const updatedFns: Footnote[] = [];
-    const claimedFnIds = new Set<string>();
-
-    for (const el of textElements) {
-      const matches = Array.from(el.text.matchAll(markerRegex));
-      if (matches.length === 0) continue;
-
-      let newText = '';
-      let lastIndex = 0;
-      for (const match of matches) {
-        const oldMarker = match[0];
-        const oldNumber = superscriptToNumber(oldMarker);
-        const matchIndex = match.index!;
-
-        newText += el.text.slice(lastIndex, matchIndex);
-        lastIndex = matchIndex + oldMarker.length;
-
-        let matchedFn = this.state.settings.footnotes.find((f) => !claimedFnIds.has(f.id) && f.number === oldNumber);
-        if (!matchedFn) {
-          matchedFn = this.state.settings.footnotes.find((f) => !claimedFnIds.has(f.id) && f.elementId === el.id);
-        }
-        if (!matchedFn) {
-          matchedFn = this.state.settings.footnotes.find((f) => !claimedFnIds.has(f.id));
-        }
-
-        const newMarker = numberToSuperscript(sequenceNumber);
-        newText += newMarker;
-
-        if (matchedFn) {
-          claimedFnIds.add(matchedFn.id);
-          matchedFn.number = sequenceNumber;
-          matchedFn.elementId = el.id;
-          matchedFn.pageId = el.pageId;
-          updatedFns.push(matchedFn);
-        }
-        sequenceNumber++;
+  public refreshPublicationReferences(recordHistory = true) {
+    migrateLegacyNotes(this.state);
+    delete this.state.publicationError;
+    for (let pass = 0; pass < 8; pass++) {
+      const pageCount = this.state.spreads.reduce((n, spread) => n + spread.pages.length, 0);
+      const changed = refreshPublication(this.state);
+      this.reflowFormattedStories();
+      for (const head of storyHeads(this.state).filter(head => head.autoExtendStory)) {
+        try { this.paginateStory(head.id, 200, false); delete head.autoPaginationError; }
+        catch (error) { head.autoPaginationError = error instanceof Error ? error.message : String(error); }
       }
-      newText += el.text.slice(lastIndex);
-      el.text = newText;
+      if (!changed && pageCount === this.state.spreads.reduce((n, spread) => n + spread.pages.length, 0)) break;
+      if (pass === 7) this.state.publicationError = 'Publication references did not settle after eight layout passes. Review generated lists and page flow.';
     }
+    if (recordHistory) { this.history.push(this.state); this.notify(); }
+  }
 
-    for (const fn of this.state.settings.footnotes) {
-      if (!claimedFnIds.has(fn.id)) {
-        fn.number = sequenceNumber++;
-        updatedFns.push(fn);
+  public insertStoryReference(frameId: string, start: number, end: number, targetElementId: string, targetParagraphId?: string, format: 'page' | 'title' = 'page') {
+    const head = this.assertStoryEditable(frameId);
+    if (!this.getElementById(targetElementId)) throw new Error('Choose an existing reference target.');
+    const content = insertRun(this.getStoryContent(frameId), start, end, { text: '…', reference: { targetElementId, targetParagraphId, format } });
+    head.storyContent = content; head.rawStoryText = storyText(content);
+    this.reflowStory(head.id); this.pushHistory(); this.notify();
+  }
+
+  public markStoryIndex(frameId: string, start: number, end: number, topic: string, subtopic = '', authorityCategory?: 'cases' | 'statutes' | 'treatises') {
+    const head = this.assertStoryEditable(frameId);
+    if (authorityCategory) {
+      if (!['cases', 'statutes', 'treatises'].includes(authorityCategory)) throw new Error('Choose a valid authority category.');
+      topic = topic.normalize('NFC').trim().replace(/\s+/g, ' ');
+      if (/[\u0000-\u001F]/.test(topic) || topic.length > 2000) throw new Error('Enter a valid canonical citation of up to 2,000 characters.');
+    }
+    if (!topic.trim() || end <= start) throw new Error('Select a word or phrase and enter an index topic.');
+    const content = this.getStoryContent(frameId);
+    if (authorityCategory && storyText(content).slice(start, end).includes('\n')) throw new Error('Select a citation within one paragraph.');
+    let offset = 0;
+    for (const paragraph of content.paragraphs) {
+      for (const run of paragraph.runs) {
+        if ((run.indexId || run.noteId || run.reference) && start < offset + run.text.length && end > offset) throw new Error('This selection already contains a reference marker. Remove its mark before marking it again.');
+        offset += run.text.length;
       }
+      offset++;
     }
+    const id = `idx-${crypto.randomUUID()}`;
+    const inserted = insertRun(content, start, end, { text: storyText(content).slice(start, end), indexId: id });
+    this.state.indexEntries = [...(this.state.indexEntries || []), { id, topic: topic.trim(), subtopic: subtopic.trim() || undefined, pageNumber: 1, elementId: head.id, ...(authorityCategory ? { authorityCategory } : {}) }];
+    head.storyContent = inserted; head.rawStoryText = storyText(inserted);
+    this.reflowStory(head.id); this.pushHistory(); this.notify();
+  }
 
-    updatedFns.sort((a, b) => a.number - b.number);
-    this.state.settings.footnotes = updatedFns;
+  public removeIndexMark(id: string) {
+    if (!this.state.indexEntries?.some(entry => entry.id === id)) return;
+    const owners = storyHeads(this.state).filter(head => !head.generated && contentOf(head).paragraphs.some(paragraph => paragraph.runs.some(run => run.indexId === id)));
+    owners.forEach(head => this.assertStoryEditable(head.id));
+    for (const head of owners) {
+      head.storyContent = structuredClone(contentOf(head));
+      head.storyContent.paragraphs.forEach(paragraph => paragraph.runs.forEach(run => { if (run.indexId === id) delete run.indexId; }));
+    }
+    this.state.indexEntries = this.state.indexEntries.filter(entry => entry.id !== id);
+    this.pushHistory(); this.notify();
+  }
+
+  public createPublicationList(kind: 'toc' | 'index' | 'endnotes' | 'authorities', targetPageId?: string): TextElement {
+    const settings = this.state.settings;
+    const width = settings.widthMm - settings.margins.insideMm - settings.margins.outsideMm;
+    const height = settings.heightMm - settings.margins.topMm - settings.margins.bottomMm;
+    if (width < 10 || height < 10) throw new Error('Page margins leave too little space for a publication list.');
+    const existing = storyHeads(this.state).find(head => head.generated?.kind === kind);
+    if (existing) { this.refreshPublicationReferences(); this.zoomToElement(existing.id); return existing; }
+    const title = kind === 'toc' ? 'Contents' : kind === 'index' ? 'INDEX' : kind === 'authorities' ? 'Table of Authorities' : 'Endnotes';
+    let spread = this.state.spreads.find(spread => spread.pages.some(page => page.id === targetPageId));
+    const id = crypto.randomUUID();
+    if (!spread) {
+      targetPageId = `page-${id}`;
+      spread = { id: `publication-${id}`, spreadIndex: this.state.spreads.length,
+        pages: [{ id: targetPageId, pageNumber: 1, side: 'single' }], elements: [] };
+      this.state.spreads.push(spread);
+    }
+    const frame: TextElement = { id: `publication-text-${id}`, type: 'text', pageId: targetPageId!,
+      x: settings.margins.insideMm, y: settings.margins.topMm, width, height,
+      rotation: 0, opacity: 1, zIndex: 1, locked: false, text: title, rawStoryText: title,
+      storyContent: plainStory(title), generated: { kind, title }, autoExtendStory: true,
+      fontFamily: 'Times', fontSizePt: 11, lineHeight: 1.4, letterSpacingPt: 0, color: '#111111', alignment: 'left',
+      columns: 1, columnGutterMm: 0, paddingMm: 0, backgroundColor: 'transparent', borderColor: 'transparent', borderWidthMm: 0 };
+    spread.elements.push(frame);
+    this.renumberPages(); this.state.activeSpreadIndex = this.state.spreads.indexOf(spread);
+    this.state.selectedElementId = frame.id; this.state.selectedElementIds = [frame.id];
+    this.pushHistory(); this.notify();
+    return frame;
+  }
+
+  public makePublicationListStatic(frameId: string) {
+    const head = this.getStoryHead(frameId);
+    if (!head) return;
+    delete head.generated;
+    if (head.storyContent) head.storyContent.paragraphs.forEach(paragraph => paragraph.runs.forEach(run => { delete run.reference; }));
+    this.pushHistory(); this.notify();
   }
 
   public updateFootnoteSettings(updates: Partial<FootnoteSettings>) {
@@ -3614,88 +3892,11 @@ export class StateManager {
    * Generates a structured Table of Contents (TOC) with dot leaders and page numbers
    * by scanning headings across all document spreads.
    */
-  public generateTableOfContents(targetPageId?: string, dotLeaderChar: string = '.'): {
-    tocText: string;
-    entries: TocEntry[];
-    elementId?: string;
-  } {
-    const entries: TocEntry[] = [];
-    let currentPageNumber = 1;
-
-    for (const spread of this.state.spreads) {
-      for (const page of spread.pages) {
-        const pageElements = spread.elements.filter((el) => el.pageId === page.id && el.type === 'text');
-        const sortedTextElements = [...pageElements].sort((a, b) => a.y - b.y);
-
-        for (const el of sortedTextElements) {
-          const txtEl = el as TextElement;
-          const style = this.state.paragraphStyles.find((s) => s.id === txtEl.paragraphStyleId);
-          const isH1 = style?.pdfTag === 'H1' || txtEl.paragraphStyleId === 'style-h1' || (style?.name && style.name.toLowerCase().includes('headline'));
-          const isH2 = style?.pdfTag === 'H2' || txtEl.paragraphStyleId === 'style-h2' || (style?.name && style.name.toLowerCase().includes('header 2'));
-          const isTitle = style?.pdfTag === 'Title' || txtEl.paragraphStyleId === 'style-title' || (txtEl.fontSizePt !== undefined && txtEl.fontSizePt >= 24);
-
-          if (isH1 || isH2 || isTitle) {
-            const firstLine = txtEl.text.split('\n')[0].trim();
-            if (firstLine.length > 0) {
-              entries.push({
-                title: firstLine,
-                pageNumber: currentPageNumber,
-                level: isH2 ? 2 : 1,
-                elementId: txtEl.id,
-              });
-            }
-          }
-        }
-        currentPageNumber++;
-      }
-    }
-
-    const lineWidthChars = 44;
-    const lines = entries.map((entry) => {
-      const indent = entry.level > 1 ? '  ' : '';
-      const prefix = `${indent}${entry.title} `;
-      const suffix = ` ${entry.pageNumber}`;
-      const dotsNeeded = Math.max(3, lineWidthChars - prefix.length - suffix.length);
-      const dots = dotLeaderChar.repeat(dotsNeeded);
-      return `${prefix}${dots}${suffix}`;
-    });
-
-    const tocText = lines.join('\n');
-
-    let createdElementId: string | undefined;
-    if (targetPageId) {
-      createdElementId = `toc-${Date.now()}`;
-      const tocElement: TextElement = {
-        id: createdElementId,
-        type: 'text',
-        pageId: targetPageId,
-        x: 20,
-        y: 25,
-        width: 170,
-        height: Math.max(40, lines.length * 10 + 20),
-        rotation: 0,
-        opacity: 1,
-        zIndex: 10,
-        locked: false,
-        text: `TABLE OF CONTENTS\n\n${tocText}`,
-        fontFamily: 'Merriweather, Georgia, serif',
-        fontSizePt: 10,
-        lineHeight: 1.6,
-        letterSpacingPt: 0,
-        color: '#1a1a1a',
-        alignment: 'left',
-        columns: 1,
-        columnGutterMm: 4,
-        backgroundColor: 'transparent',
-        borderColor: 'transparent',
-        borderWidthMm: 0,
-        paddingMm: 4,
-        paragraphStyleId: 'style-body',
-      };
-      this.addElement(tocElement);
-    }
-
-    return { tocText, entries, elementId: createdElementId };
+  public generateTableOfContents(targetPageId?: string, dotLeaderChar = '.') {
+    const entries = publicationHeadings(this.state).map(heading => ({ ...heading, pageNumber: heading.pageNumber }));
+    const tocText = entries.map(entry => `${entry.title} ${dotLeaderChar.repeat(8)} ${entry.label}`).join('\n');
+    const frame = targetPageId ? this.createPublicationList('toc', targetPageId) : undefined;
+    return { tocText, entries, elementId: frame?.id };
   }
 
   /**
@@ -3825,77 +4026,8 @@ export class StateManager {
    * Collects all text matches matching the query across the specified scope.
    */
   public collectFindMatches(query: FindChangeQuery): { elementId: string; spreadIndex: number; matchText: string; index: number; length: number }[] {
-    const regex = this.compileFindRegex(query);
-    if (!regex) return [];
-
-    const matches: { elementId: string; spreadIndex: number; matchText: string; index: number; length: number }[] = [];
-    const scope = query.scope || 'document';
-
-    let targetSpreads: { spread: Spread; index: number }[] = [];
-    if (scope === 'spread') {
-      targetSpreads = [{ spread: this.getActiveSpread(), index: this.state.activeSpreadIndex }];
-    } else if (scope === 'story') {
-      const activeEl = this.state.selectedElementId ? this.getElementById(this.state.selectedElementId) : null;
-      if (activeEl && activeEl.type === 'text') {
-        const textEl = activeEl as TextElement;
-        const chain: TextElement[] = [];
-        let head: TextElement = textEl;
-        while (head.prevFrameId) {
-          const prev = this.getElementById(head.prevFrameId) as TextElement | undefined;
-          if (!prev) break;
-          head = prev;
-        }
-        let curr: TextElement | undefined = head;
-        while (curr) {
-          chain.push(curr);
-          curr = curr.nextFrameId ? (this.getElementById(curr.nextFrameId) as TextElement | undefined) : undefined;
-        }
-        for (const el of chain) {
-          const spIdx = this.state.spreads.findIndex((s) => s.elements.some((e) => e.id === el.id));
-          const text = el.text || '';
-          regex.lastIndex = 0;
-          let m: RegExpExecArray | null;
-          while ((m = regex.exec(text)) !== null) {
-            matches.push({
-              elementId: el.id,
-              spreadIndex: spIdx !== -1 ? spIdx : this.state.activeSpreadIndex,
-              matchText: m[0],
-              index: m.index,
-              length: m[0].length,
-            });
-            if (m.index === regex.lastIndex) regex.lastIndex++;
-          }
-        }
-        return matches;
-      } else {
-        targetSpreads = [{ spread: this.getActiveSpread(), index: this.state.activeSpreadIndex }];
-      }
-    } else {
-      targetSpreads = this.state.spreads.map((s, i) => ({ spread: s, index: i }));
-    }
-
-    for (const { spread, index } of targetSpreads) {
-      for (const el of spread.elements) {
-        if (el.type === 'text') {
-          const textEl = el as TextElement;
-          const text = textEl.text || '';
-          regex.lastIndex = 0;
-          let m: RegExpExecArray | null;
-          while ((m = regex.exec(text)) !== null) {
-            matches.push({
-              elementId: el.id,
-              spreadIndex: index,
-              matchText: m[0],
-              index: m.index,
-              length: m[0].length,
-            });
-            if (m.index === regex.lastIndex) regex.lastIndex++;
-          }
-        }
-      }
-    }
-
-    return matches;
+    const expression = this.compileFindRegex(query);
+    return expression ? searchManuscripts(this.state, expression, query.isGrep ? query.changeText : query.changeText.replace(/\$/g, '$$$$'), query) : [];
   }
 
   /**
@@ -3911,11 +4043,8 @@ export class StateManager {
 
     let targetIdx = 0;
     if (afterElementId !== undefined && afterIndex !== undefined) {
-      const foundIdx = matches.findIndex(
-        (m) =>
-          (m.elementId === afterElementId && m.index > afterIndex) ||
-          (m.elementId !== afterElementId && matches.indexOf(m) > matches.findIndex((x) => x.elementId === afterElementId && x.index === afterIndex))
-      );
+      const first = matches.findIndex(match => match.elementId === afterElementId);
+      const foundIdx = matches.findIndex((match, index) => (match.elementId === afterElementId && match.index >= afterIndex) || (first >= 0 && index > first && match.elementId !== afterElementId));
       if (foundIdx !== -1) {
         targetIdx = foundIdx;
       }
@@ -3925,7 +4054,9 @@ export class StateManager {
     if (chosen.spreadIndex !== this.state.activeSpreadIndex) {
       this.setActiveSpread(chosen.spreadIndex);
     }
-    this.selectElement(chosen.elementId);
+    const frames = this.getActiveSpread().elements.filter((frame): frame is TextElement => frame.type === 'text');
+    const visibleFrame = frames.find(frame => this.getStoryHead(frame.id)?.id === chosen.elementId && chosen.index >= (frame.storyStart ?? 0) && chosen.index < (frame.storyEnd ?? Infinity));
+    this.selectElement(visibleFrame?.id || chosen.elementId);
 
     return {
       ...chosen,
@@ -3941,29 +4072,13 @@ export class StateManager {
     query: FindChangeQuery,
     targetMatch: { elementId: string; index: number; length: number; matchText?: string }
   ): boolean {
-    const el = this.getElementById(targetMatch.elementId);
-    if (!el || el.type !== 'text') return false;
-
-    const textEl = el as TextElement;
-    const currentText = textEl.text || '';
-    if (targetMatch.index < 0 || targetMatch.index + targetMatch.length > currentText.length) {
-      return false;
-    }
-
-    let replacement = query.changeText;
-    if (query.isGrep && targetMatch.matchText) {
-      const regex = this.compileFindRegex(query);
-      if (regex) {
-        replacement = targetMatch.matchText.replace(regex, query.changeText);
-      }
-    }
-
-    const newText =
-      currentText.slice(0, targetMatch.index) +
-      replacement +
-      currentText.slice(targetMatch.index + targetMatch.length);
-
-    this.updateElement(targetMatch.elementId, { text: newText });
+    const expression = this.compileFindRegex(query);
+    if (!expression) return false;
+    const match = searchManuscripts(this.state, expression, query.isGrep ? query.changeText : query.changeText.replace(/\$/g, '$$$$'), query)
+      .find(item => item.elementId === targetMatch.elementId && item.index === targetMatch.index && item.length === targetMatch.length && (targetMatch.matchText === undefined || item.matchText === targetMatch.matchText));
+    if (!match) return false;
+    const head = this.assertStoryEditable(match.elementId);
+    this.setStoryContent(head.id, replaceManuscriptMatches(contentOf(head), [match]));
     return true;
   }
 
@@ -3971,46 +4086,17 @@ export class StateManager {
    * Batch replaces all occurrences matching the query in scope.
    */
   public changeAll(query: FindChangeQuery): { replacementsCount: number; elementsAffected: number } {
-    const regex = this.compileFindRegex(query);
-    if (!regex) return { replacementsCount: 0, elementsAffected: 0 };
-
-    const matches = this.collectFindMatches(query);
-    if (matches.length === 0) return { replacementsCount: 0, elementsAffected: 0 };
-
-    const elMap = new Map<string, typeof matches>();
-    for (const m of matches) {
-      if (!elMap.has(m.elementId)) elMap.set(m.elementId, []);
-      elMap.get(m.elementId)!.push(m);
-    }
-
-    let replacementsCount = 0;
-    const elementsAffected = elMap.size;
-
-    for (const [elId] of elMap.entries()) {
-      const el = this.getElementById(elId);
-      if (el && el.type === 'text') {
-        const textEl = el as TextElement;
-        const oldText = textEl.text || '';
-        regex.lastIndex = 0;
-        let countForEl = 0;
-        const newText = oldText.replace(regex, (...args) => {
-          countForEl++;
-          if (query.isGrep) {
-            return query.changeText.replace(/\$(\d+)/g, (_, group) => args[parseInt(group, 10)] || '');
-          }
-          return query.changeText;
-        });
-        replacementsCount += countForEl;
-        textEl.text = newText;
-      }
-    }
-
-    if (replacementsCount > 0) {
-      this.pushHistory();
-      this.notify();
-    }
-
-    return { replacementsCount, elementsAffected };
+    const expression = this.compileFindRegex(query);
+    if (!expression) return { replacementsCount: 0, elementsAffected: 0 };
+    const found = searchManuscripts(this.state, expression, query.isGrep ? query.changeText : query.changeText.replace(/\$/g, '$$$$'), query);
+    const heads = [...new Set(found.map(match => match.elementId))].map(id => this.assertStoryEditable(id));
+    const edits = heads.map(head => ({ head, content: replaceManuscriptMatches(contentOf(head), found.filter(match => match.elementId === head.id)) }));
+    const backup = structuredClone(this.state);
+    try {
+      for (const { head, content } of edits) { head.storyContent = content; head.rawStoryText = storyText(content); }
+      if (found.length) { this.reflowFormattedStories(); this.pushHistory(); this.notify(); }
+    } catch (reason) { this.state = backup; throw reason; }
+    return { replacementsCount: found.length, elementsAffected: heads.length };
   }
 
   // --- Object Styles Engine ---
@@ -4194,7 +4280,7 @@ export class StateManager {
       }
     }
     if (this.state.indexEntries && this.state.indexEntries.length > 0) {
-      entries.push(...this.state.indexEntries);
+      entries.push(...this.state.indexEntries.filter(entry => !entry.authorityCategory));
     }
     return entries;
   }
@@ -4253,55 +4339,9 @@ export class StateManager {
   }
 
   public insertIndexStory(targetSpreadIndex?: number): TextElement {
-    const indexData = this.generateBookIndex();
-    const lines: string[] = ['INDEX\n'];
-
-    for (const group of indexData) {
-      lines.push(`\n[ ${group.letter} ]`);
-      for (const ent of group.entries) {
-        const pageStr = ent.pages.length > 0 ? `, ${ent.pages.join(', ')}` : '';
-        lines.push(`${ent.topic}${pageStr}`);
-        for (const sub of ent.subtopics) {
-          lines.push(`   ${sub.subtopic}, ${sub.pages.join(', ')}`);
-        }
-      }
-    }
-
-    const targetSpread = targetSpreadIndex !== undefined && this.state.spreads[targetSpreadIndex]
-      ? this.state.spreads[targetSpreadIndex]
-      : this.getActiveSpread();
-
-    const page = targetSpread.pages[0];
-    const newIndexEl: TextElement = {
-      id: `index-story-${Date.now()}`,
-      name: 'Book Index Frame',
-      type: 'text',
-      pageId: page.id,
-      x: this.state.settings.margins.insideMm || 20,
-      y: this.state.settings.margins.topMm || 20,
-      width: (this.state.settings.widthMm || 210) - ((this.state.settings.margins.insideMm || 20) + (this.state.settings.margins.outsideMm || 20)),
-      height: (this.state.settings.heightMm || 297) - ((this.state.settings.margins.topMm || 20) + (this.state.settings.margins.bottomMm || 20)),
-      rotation: 0,
-      opacity: 1,
-      zIndex: 10,
-      locked: false,
-      text: lines.join('\n'),
-      fontFamily: 'serif',
-      fontSizePt: 9,
-      lineHeight: 1.35,
-      letterSpacingPt: 0,
-      color: '#111827',
-      alignment: 'left',
-      columns: 2,
-      columnGutterMm: 6,
-      backgroundColor: 'transparent',
-      borderColor: 'transparent',
-      borderWidthMm: 0,
-      paddingMm: 2,
-    };
-
-    this.addElement(newIndexEl);
-    return newIndexEl;
+    const spread = this.state.spreads[targetSpreadIndex ?? this.state.activeSpreadIndex];
+    const frame = this.createPublicationList('index', spread?.pages[0]?.id);
+    return frame;
   }
 
   // --- Span Columns & Interactive PDF AcroForm Fields ---

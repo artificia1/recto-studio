@@ -9,10 +9,15 @@
 import { ProjectState, CanvasElement, TextElement, ImageElement, ShapeElement, TableElement, VectorPathElement, Page } from './types';
 import { createZipArchive, base64ToUint8Array } from './zip';
 import { formatOpenTypeText } from './canvas';
+import { publicationHeadings, publicationId, publicationSnapshot, textFrames } from './engine/publicationReferences';
+import { publicationPreflight } from './engine/publicationPreflight';
+import { embeddedAsset, fullImageSource, prepareExportAssets } from './export/publicationAssets';
 import { resolveParagraphStyle, resolveRunStyle } from './engine/storyLayout';
 
 export interface EpubExportOptions {
   download?: boolean;
+  strict?: boolean;
+  onWarning?: (message: string) => void;
 }
 
 export function escapeXml(str: string): string {
@@ -25,44 +30,33 @@ export function escapeXml(str: string): string {
     .replace(/'/g, '&apos;');
 }
 
-export function bezierNodesToSvgPath(nodes: { x: number; y: number; handleIn?: { x: number; y: number }; handleOut?: { x: number; y: number } }[], closed: boolean): string {
-  if (!nodes || nodes.length === 0) return '';
-  let d = `M ${nodes[0].x} ${nodes[0].y}`;
-  for (let i = 1; i < nodes.length; i++) {
-    const prev = nodes[i - 1];
-    const curr = nodes[i];
-    const cp1x = prev.x + (prev.handleOut ? prev.handleOut.x : 0);
-    const cp1y = prev.y + (prev.handleOut ? prev.handleOut.y : 0);
-    const cp2x = curr.x + (curr.handleIn ? curr.handleIn.x : 0);
-    const cp2y = curr.y + (curr.handleIn ? curr.handleIn.y : 0);
-    d += ` C ${cp1x.toFixed(2)} ${cp1y.toFixed(2)}, ${cp2x.toFixed(2)} ${cp2y.toFixed(2)}, ${curr.x.toFixed(2)} ${curr.y.toFixed(2)}`;
-  }
-  if (closed && nodes.length > 2) {
-    const prev = nodes[nodes.length - 1];
-    const curr = nodes[0];
-    const cp1x = prev.x + (prev.handleOut ? prev.handleOut.x : 0);
-    const cp1y = prev.y + (prev.handleOut ? prev.handleOut.y : 0);
-    const cp2x = curr.x + (curr.handleIn ? curr.handleIn.x : 0);
-    const cp2y = curr.y + (curr.handleIn ? curr.handleIn.y : 0);
-    d += ` C ${cp1x.toFixed(2)} ${cp1y.toFixed(2)}, ${cp2x.toFixed(2)} ${cp2y.toFixed(2)}, ${curr.x.toFixed(2)} ${curr.y.toFixed(2)} Z`;
-  }
-  return d;
-}
+import { bezierNodesToSvgPath } from './engine/vectorPath';
+export { bezierNodesToSvgPath } from './engine/vectorPath';
 
 import { fontFamilyCss } from './export/fontAssets';
+import { variationCss } from './engine/fontVariations';
 
-export function generateEpubPackage(state: ProjectState): Record<string, string | Uint8Array> {
+export function generateEpubPackage(source: ProjectState, options: EpubExportOptions = {}): Record<string, string | Uint8Array> {
+  const state = publicationSnapshot(source);
+  const issues = publicationPreflight(state, 'epub');
+  const draftIssues = new Set(['MISSING_ASSET', 'MISSING_ALT_TEXT']);
+  const failures = issues.filter(issue => issue.severity === 'error' && (options.strict || !draftIssues.has(issue.code)));
+  if (failures.length) throw new Error(failures.map(issue => issue.message).join('\n'));
+  issues.filter(issue => issue.severity !== 'error' || draftIssues.has(issue.code)).forEach(issue => options.onWarning?.(issue.message));
+  const language = state.settings.language || 'en';
+  if (!/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(language)) throw new Error('Choose a valid publication language, such as en, de or en-US.');
   const files: Record<string, string | Uint8Array> = {};
   // OCF requires this to precede every other ZIP entry, including fonts.
   files['mimetype'] = 'application/epub+zip';
   const fontManifest: string[] = [];
   const equationManifest: string[] = [];
+  const imageCache = new Map<string, string>();
   const fontStyles = (state.embeddedFonts || []).map((font, index) => {
     const extension = font.fileName.match(/\.(ttf|otf|woff2?)$/i)?.[1].toLowerCase() || 'ttf';
     const location = `fonts/font-${index}.${extension}`;
     files[`OEBPS/${location}`] = Uint8Array.from(atob(font.data), char => char.charCodeAt(0));
     fontManifest.push(`    <item id="font-${index}" href="${location}" media-type="font/${extension}"/>`);
-    return `@font-face{font-family:${fontFamilyCss(font.family)};src:url("${location}");}`;
+    return `@font-face{font-family:${fontFamilyCss(font.family)};src:url("${location}");font-variation-settings:${variationCss(font.variations)};}`;
   }).join('\n');
 
   // 2. META-INF/container.xml
@@ -194,9 +188,10 @@ svg {
 
   for (const spread of state.spreads) {
     for (const page of spread.pages) {
-      const pageElements = spread.elements.filter((el) => el.pageId === page.id);
+      const pageElements = spread.elements.filter((el) => el.pageId === page.id && !el.pasteboard && !el.editorialOnly && state.layers?.find(layer => layer.id === el.layerId)?.visible !== false);
+      if (!pageElements.some(element => element.type !== 'text' || (!element.prevFrameId && element.generated?.kind !== 'endnotes'))) continue;
       // Sort reading order: top to bottom, then left to right
-      pageElements.sort((a, b) => (a.y === b.y ? a.x - b.x : a.y - b.y));
+      pageElements.sort((a, b) => (a.readingOrder ?? a.y * 1000 + a.x) - (b.readingOrder ?? b.y * 1000 + b.x));
 
       const filename = `page_${pageCounter}.xhtml`;
       pageItems.push({
@@ -210,6 +205,32 @@ svg {
     }
   }
 
+  const frameFiles = new Map<string, string>();
+  for (const item of pageItems) for (const element of item.elements) frameFiles.set(element.id, item.filename);
+  const frames = textFrames(state);
+  for (const frame of frames) {
+    let head = frame; const visited = new Set<string>();
+    while (head.prevFrameId && !visited.has(head.id)) { visited.add(head.id); const previous = frames.find(candidate => candidate.id === head.prevFrameId); if (!previous) break; head = previous; }
+    if (frameFiles.has(head.id)) frameFiles.set(frame.id, frameFiles.get(head.id)!);
+  }
+  const noteBacklinks = new Map<string, string>();
+  function runMarkup(run: import('./types').StoryRun, html: string, file: string) {
+    if (run.noteId) {
+      const note = state.settings.footnotes?.find(note => note.id === run.noteId);
+      if (!note) throw new Error('A note marker has no body. Repair it before exporting.');
+      const id = publicationId('noteref', note.id);
+      noteBacklinks.set(note.id, `${file}#${id}`);
+      return `<a id="${id}" epub:type="noteref" role="doc-noteref" href="notes.xhtml#${publicationId('note', note.id)}"><sup>${note.number}</sup></a>`;
+    }
+    if (run.reference) {
+      const ref = run.reference;
+      const file = frameFiles.get(ref.targetElementId);
+      if (!file) throw new Error('A reference target is excluded from this EPUB. Include it or remove the reference.');
+      return `<a href="${file}#${publicationId(ref.targetParagraphId ? 'paragraph' : 'frame', ref.targetParagraphId || ref.targetElementId)}">${html}</a>`;
+    }
+    return run.indexId ? `<span id="${publicationId('index', run.indexId)}">${html}</span>` : html;
+  }
+
   // 5. Generate XHTML for each page
   for (const item of pageItems) {
     let bodyContent = '';
@@ -217,27 +238,35 @@ svg {
     for (const el of item.elements) {
       if (el.type === 'text') {
         const textEl = el as TextElement;
+        if (textEl.generated?.kind === 'endnotes') continue;
         if (textEl.storyContent || textEl.textContent) {
           // Export the semantic story once, so frame boundaries cannot split paragraphs or duplicate copy.
           if (textEl.prevFrameId) continue;
           const content = textEl.storyContent || textEl.textContent!;
-          for (const paragraph of content.paragraphs) {
+          bodyContent += `  <div id="${publicationId('frame', textEl.id)}">\n`;
+          for (const [paragraphIndex, paragraph] of content.paragraphs.entries()) {
             const style = resolveParagraphStyle(paragraph, state.paragraphStyles);
             const semantic = style?.pdfTag;
-            const tag = semantic && /^H[1-6]$/.test(semantic) ? semantic.toLowerCase() : semantic === 'Title' ? 'h1' : semantic === 'BlockQuote' ? 'blockquote' : 'p';
+            const tag = textEl.generated && paragraphIndex === 0 ? 'h1' : semantic && /^H[1-6]$/.test(semantic) ? semantic.toLowerCase() : semantic === 'Title' ? 'h1' : semantic === 'BlockQuote' ? 'blockquote' : 'p';
             const runs = paragraph.runs.map(run => {
               const format = resolveRunStyle(textEl, style, run, state.characterStyles || []);
               let html = escapeXml(run.text).replace(/\n/g, '<br/>');
               if (format.bold) html = `<strong>${html}</strong>`;
               if (format.italic) html = `<em>${html}</em>`;
               if (format.underline) html = `<u>${html}</u>`;
-              return `<span style="font-family:${escapeXml(fontFamilyCss(format.fontFamily.split(',')[0].replace(/['"]/g, '').trim()))}">${html}</span>`;
+              return runMarkup(run, `<span style="font-family:${escapeXml(fontFamilyCss(format.fontFamily.split(',')[0].replace(/['"]/g, '').trim()))}">${html}</span>`, item.filename);
             }).join('');
-            const flowCss = `orphans:${style.orphanLines || 1};widows:${style.widowLines || 1};break-inside:${style.keepTogether ? 'avoid' : 'auto'};break-after:${style.keepWithNext ? 'avoid' : 'auto'};hyphens:${style.hyphenate ? 'auto' : 'manual'}`;
-            bodyContent += `  <${tag} class="text-${style?.alignment || textEl.alignment || 'left'}" xml:lang="${style.language || 'en-US'}" lang="${style.language || 'en-US'}" style="${flowCss}">${runs || '<br/>'}</${tag}>\n`;
+            const paragraphLanguage = style.language || language;
+            if (!/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(paragraphLanguage)) throw new Error('Invalid paragraph language.');
+            const count = (value?: number) => Number.isInteger(value) && value! > 0 ? Math.min(value!, 100) : 1;
+            const alignment = ['left', 'center', 'right', 'justify'].includes(style.alignment || textEl.alignment) ? style.alignment || textEl.alignment : 'left';
+            const flowCss = `orphans:${count(style.orphanLines)};widows:${count(style.widowLines)};break-inside:${style.keepTogether ? 'avoid' : 'auto'};break-after:${style.keepWithNext ? 'avoid' : 'auto'};hyphens:${style.hyphenate && !style.cjkLineBreak ? 'auto' : 'manual'};line-break:${style.cjkLineBreak ? 'strict' : 'auto'};word-break:normal`;
+            bodyContent += `  <${tag}${paragraph.id ? ` id="${publicationId('paragraph', paragraph.id)}"` : ''} class="text-${alignment}" xml:lang="${paragraphLanguage}" lang="${paragraphLanguage}" style="${flowCss}">${runs || '<br/>'}</${tag}>\n`;
           }
+          bodyContent += '  </div>\n';
           continue;
         }
+        bodyContent += `  <div id="${publicationId('frame', textEl.id)}">\n`;
         const processed = formatOpenTypeText(textEl.text, textEl.openTypeFeatures);
         const paragraphs = processed.split('\n');
         const alignClass = `text-${textEl.alignment || 'left'}`;
@@ -265,6 +294,7 @@ svg {
             }
           }
         }
+        bodyContent += '  </div>\n';
       } else if (el.type === 'table') {
         const tbl = el as TableElement;
         bodyContent += '  <table>\n';
@@ -274,10 +304,11 @@ svg {
             const isHeaderRow = hasHeaders && r < tbl.headerRowCount;
             bodyContent += '    <tr>\n';
             for (let c = 0; c < (tbl.cells[r] || []).length; c++) {
+              const span = tableCellSpan(tbl.cells[r], c); if (!span) continue;
               const cell = tbl.cells[r][c];
               const tag = isHeaderRow ? 'th' : 'td';
               const align = cell.align ? ` style="text-align: ${cell.align};"` : '';
-              bodyContent += `      <${tag}${align}>${escapeXml(cell.text || '')}</${tag}>\n`;
+              bodyContent += `      <${tag} colspan="${span}"${align}>${escapeXml(cell.text || '')}</${tag}>\n`;
             }
             bodyContent += '    </tr>\n';
           }
@@ -286,14 +317,18 @@ svg {
       } else if (el.type === 'image') {
         const img = el as ImageElement;
         if (img.src) {
-          let imageSource = img.src;
-          if (img.equation && img.src.startsWith('data:image/svg+xml;base64,')) {
-            const id = `equation-${equationManifest.length + 1}`;
-            imageSource = `images/${id}.svg`;
-            files[`OEBPS/${imageSource}`] = base64ToUint8Array(img.src.split(',')[1]);
-            equationManifest.push(`    <item id="${id}" href="${imageSource}" media-type="image/svg+xml"/>`);
+          const source = fullImageSource(img);
+          let imageSource = imageCache.get(source);
+          if (!imageSource) {
+            const asset = embeddedAsset(source);
+            if (asset.mediaType === 'image/webp') throw new Error('Convert WebP artwork to PNG or JPEG for EPUB reader compatibility.');
+            const id = `image-${imageCache.size + 1}`;
+            imageSource = `images/${id}.${asset.extension}`;
+            files[`OEBPS/${imageSource}`] = asset.bytes;
+            equationManifest.push(`    <item id="${id}" href="${imageSource}" media-type="${asset.mediaType}"/>`);
+            imageCache.set(source, imageSource);
           }
-          bodyContent += `  <figure>\n    <img src="${escapeXml(imageSource)}" alt="${escapeXml(img.altText || img.caption || 'Publication image')}"/>\n`;
+          bodyContent += `  <figure>\n    <img src="${imageSource}" alt="${escapeXml(img.decorative ? '' : img.altText || img.caption || '')}"${img.decorative ? ' role="presentation"' : ''}/>\n`;
           if (img.caption) {
             bodyContent += `    <figcaption class="caption">${escapeXml(img.caption)}</figcaption>\n`;
           }
@@ -304,17 +339,17 @@ svg {
         const d = bezierNodesToSvgPath(pathEl.nodes, pathEl.closed);
         const strokeDash = pathEl.strokeDash === 'dashed' ? ' stroke-dasharray="4,3"' : '';
         bodyContent += `  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${pathEl.width} ${pathEl.height}" width="${pathEl.width}mm" height="${pathEl.height}mm">\n`;
-        bodyContent += `    <path d="${d}" fill="${pathEl.fillColor || 'none'}" stroke="${pathEl.strokeColor || '#000000'}" stroke-width="${pathEl.strokeWidthMm || 1}" stroke-linecap="${pathEl.strokeCap || 'round'}" stroke-linejoin="${pathEl.strokeJoin || 'round'}"${strokeDash}/>\n`;
+        bodyContent += `    <path d="${d}" fill="${escapeXml(pathEl.fillColor || 'none')}" stroke="${escapeXml(pathEl.strokeColor || '#000000')}" stroke-width="${pathEl.strokeWidthMm || 1}" stroke-linecap="${pathEl.strokeCap || 'round'}" stroke-linejoin="${pathEl.strokeJoin || 'round'}"${strokeDash}/>\n`;
         bodyContent += '  </svg>\n';
       } else if (el.type === 'shape') {
         const shape = el as ShapeElement;
         bodyContent += `  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${shape.width} ${shape.height}" width="${shape.width}mm" height="${shape.height}mm">\n`;
         if (shape.shapeKind === 'ellipse') {
-          bodyContent += `    <ellipse cx="${shape.width / 2}" cy="${shape.height / 2}" rx="${shape.width / 2}" ry="${shape.height / 2}" fill="${shape.fillColor || 'none'}" stroke="${shape.strokeColor || '#000000'}" stroke-width="${shape.strokeWidthMm || 1}"/>\n`;
+          bodyContent += `    <ellipse cx="${shape.width / 2}" cy="${shape.height / 2}" rx="${shape.width / 2}" ry="${shape.height / 2}" fill="${escapeXml(shape.fillColor || 'none')}" stroke="${escapeXml(shape.strokeColor || '#000000')}" stroke-width="${shape.strokeWidthMm || 1}"/>\n`;
         } else if (shape.shapeKind === 'line') {
-          bodyContent += `    <line x1="0" y1="${shape.height / 2}" x2="${shape.width}" y2="${shape.height / 2}" stroke="${shape.strokeColor || '#000000'}" stroke-width="${shape.strokeWidthMm || 1}"/>\n`;
+          bodyContent += `    <line x1="0" y1="${shape.height / 2}" x2="${shape.width}" y2="${shape.height / 2}" stroke="${escapeXml(shape.strokeColor || '#000000')}" stroke-width="${shape.strokeWidthMm || 1}"/>\n`;
         } else {
-          bodyContent += `    <rect x="0" y="0" width="${shape.width}" height="${shape.height}" fill="${shape.fillColor || 'none'}" stroke="${shape.strokeColor || '#000000'}" stroke-width="${shape.strokeWidthMm || 1}"/>\n`;
+          bodyContent += `    <rect x="0" y="0" width="${shape.width}" height="${shape.height}" fill="${escapeXml(shape.fillColor || 'none')}" stroke="${escapeXml(shape.strokeColor || '#000000')}" stroke-width="${shape.strokeWidthMm || 1}"/>\n`;
         }
         bodyContent += '  </svg>\n';
       }
@@ -322,7 +357,7 @@ svg {
 
     const pageXhtml = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="en" lang="en">
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${language}" lang="${language}">
 <head>
   <meta charset="utf-8"/>
   <title>${escapeXml(item.title)}</title>
@@ -339,13 +374,13 @@ ${bodyContent || '  <p>(Empty spread page)</p>\n'}
   }
 
   // 6. OEBPS/nav.xhtml (EPUB 3 Navigation Document)
-  const navLinks = pageItems
-    .map((p) => `        <li><a href="${p.filename}">${escapeXml(p.title)}</a></li>`)
-    .join('\n');
+  const headings = publicationHeadings(state).filter(heading => frameFiles.has(heading.elementId));
+  const navLinks = (headings.length ? headings.map(heading => `        <li><a href="${frameFiles.get(heading.elementId)}#${publicationId(heading.paragraphId ? 'paragraph' : 'frame', heading.paragraphId || heading.elementId)}">${escapeXml(heading.title)}</a></li>`) :
+    pageItems.map(page => `        <li><a href="${page.filename}">${escapeXml(page.title)}</a></li>`)).join('\n');
 
   files['OEBPS/nav.xhtml'] = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="en" lang="en">
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${language}" lang="${language}">
 <head>
   <meta charset="utf-8"/>
   <title>${escapeXml(state.settings.title || 'Table of Contents')}</title>
@@ -361,28 +396,39 @@ ${navLinks}
 </body>
 </html>`;
 
+  const notes = (state.settings.footnotes || []).filter(note => noteBacklinks.has(note.id));
+  if (notes.length) {
+    const noteBody = notes.map(note => `<aside id="${publicationId('note', note.id)}" epub:type="${note.kind === 'endnote' ? 'endnote' : 'footnote'}"${note.kind !== 'endnote' ? ' role="doc-footnote"' : ''}><p>${note.number}. ${escapeXml(note.text).replace(/\n/g, '<br/>')} <a href="${noteBacklinks.get(note.id)}" aria-label="Back to note reference ${note.number}">Back</a></p></aside>`).join('\n');
+    files['OEBPS/notes.xhtml'] = `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${language}" lang="${language}"><head><title>Notes</title><link rel="stylesheet" type="text/css" href="styles.css"/></head><body><section epub:type="endnotes" role="doc-endnotes"><h1>Notes</h1>${noteBody}</section></body></html>`;
+  }
+
   // 7. OEBPS/package.opf (Package Document)
-  const bookId = `urn:uuid:${crypto.randomUUID()}`;
+  const bookId = state.settings.identifier || `urn:uuid:${crypto.randomUUID()}`;
   const modifiedIso = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
 
   const manifestEntries = [
     '    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>',
     '    <item id="css" href="styles.css" media-type="text/css"/>',
     ...fontManifest,
+    ...(notes.length ? ['    <item id="notes" href="notes.xhtml" media-type="application/xhtml+xml"/>'] : []),
     ...equationManifest,
     ...pageItems.map((p) => `    <item id="${p.id}" href="${p.filename}" media-type="application/xhtml+xml"${String(files[`OEBPS/${p.filename}`]).includes("<svg ") ? ' properties="svg"' : ''}/>` ),
   ].join('\n');
 
-  const spineEntries = pageItems.map((p) => `    <itemref idref="${p.id}"/>`).join('\n');
+  const spineEntries = [...pageItems.map((p) => `    <itemref idref="${p.id}"/>`), ...(notes.length ? ['    <itemref idref="notes"/>'] : [])].join('\n');
 
   files['OEBPS/package.opf'] = `<?xml version="1.0" encoding="UTF-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="en">
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="${language}">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-    <dc:identifier id="pub-id">${bookId}</dc:identifier>
+    <dc:identifier id="pub-id">${escapeXml(bookId)}</dc:identifier>
     <dc:title>${escapeXml(state.settings.title || 'Recto Publication')}</dc:title>
-    <dc:language>en</dc:language>
+    <dc:language>${language}</dc:language>
     <meta property="dcterms:modified">${modifiedIso}</meta>
-    <dc:creator>Recto DTP Studio</dc:creator>
+    <dc:creator>${escapeXml(state.settings.author || 'Recto Studio')}</dc:creator>
+    <meta property="schema:accessMode">textual</meta>
+    ${imageCache.size ? '<meta property="schema:accessMode">visual</meta>' : ''}
+    <meta property="schema:accessibilityFeature">structuralNavigation</meta>
+    <meta property="schema:accessibilitySummary">Semantic headings, navigation and note links are provided. Review descriptions, reading order and reader compatibility before distribution.</meta>
   </metadata>
   <manifest>
 ${manifestEntries}
@@ -398,8 +444,9 @@ ${spineEntries}
 export function exportDocumentToEpub(
   state: ProjectState,
   options: EpubExportOptions = { download: true }
-): { buffer: Uint8Array; filename: string } {
-  const files = generateEpubPackage(state);
+): { buffer: Uint8Array; filename: string; warnings: string[] } {
+  const warnings: string[] = [];
+  const files = generateEpubPackage(state, { ...options, onWarning: message => { warnings.push(message); options.onWarning?.(message); } });
   const buffer = createZipArchive(files);
   const baseTitle = state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'recto-publication';
   const filename = `${baseTitle}.epub`;
@@ -416,5 +463,12 @@ export function exportDocumentToEpub(
     URL.revokeObjectURL(url);
   }
 
-  return { buffer, filename };
+  return { buffer, filename, warnings };
 }
+
+export async function exportDocumentToEpubAsync(state: ProjectState, options: EpubExportOptions = {}) {
+  const { fontManager } = await import('./fontManager');
+  await fontManager.restoreFonts(state.embeddedFonts);
+  return exportDocumentToEpub(await prepareExportAssets(state, typeof window !== 'undefined'), options);
+}
+import { tableCellSpan } from './engine/tableCells';

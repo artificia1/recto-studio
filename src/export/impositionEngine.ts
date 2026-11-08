@@ -481,7 +481,7 @@ function renderPageElementsToImposedSheet(
           const imgWMm = imgW > 0 ? imgW / 3.7795275591 : img.width;
           const imgHMm = imgH > 0 ? imgH / 3.7795275591 : img.height;
           const fitMode = img.fitMode || 'fill';
-          const fit = calculateImageFitting(elX, elY, img.width, img.height, imgWMm, imgHMm, fitMode);
+          const fit = calculateImageFitting(elX, elY, img.width, img.height, imgWMm, imgHMm, fitMode, img.focalPoint);
 
           const needsClipping = fitMode === 'fill' || fitMode === 'center';
           if (needsClipping) {

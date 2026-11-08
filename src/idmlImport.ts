@@ -9,10 +9,18 @@ import {
   DocumentSettings,
   CanvasElement,
   DEFAULT_LAYERS,
+  StoryContent, StoryParagraph, StoryRun,
 } from './types';
 import { readZip, uint8ArrayToBase64 } from './zip';
 import { DEFAULT_PARAGRAPH_STYLES, DEFAULT_MASTER_SPREADS } from './state';
 import { isInddBuffer } from './engine/inddParser';
+import { reflowStoryState } from './engine/publicationReferences';
+import { storyText } from './engine/storyContent';
+
+const decodeStoryXml = (text: string) => text.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (entity, value: string) => {
+  if (value.startsWith('#')) { const n = value[1].toLowerCase() === 'x' ? parseInt(value.slice(2), 16) : Number(value.slice(1)); return n > 0 && n <= 0x10ffff && !(n >= 0xd800 && n <= 0xdfff) ? String.fromCodePoint(n) : entity; }
+  return ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" } as Record<string, string>)[value.toLowerCase()] || entity;
+});
 
 const PT_TO_MM = 25.4 / 72; // 1 point = 0.352778 mm
 
@@ -570,6 +578,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
     string,
     {
       text: string;
+      content?: StoryContent;
       styleId?: string;
       fontSizePt?: number;
       fontFamily?: string;
@@ -592,6 +601,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
 
       const pRanges = extractXmlTags(xml, 'ParagraphStyleRange');
       const paragraphs: string[] = [];
+      const richParagraphs: StoryParagraph[] = [];
       let detectedStyleId: string | undefined;
       let detectedFontSize: number | undefined;
       let detectedFontFamily: string | undefined;
@@ -617,6 +627,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
         // Extract content and breaks within paragraph
         const cRanges = extractXmlTags(pr, 'CharacterStyleRange');
         const paraTokens: string[] = [];
+        const richRuns: StoryRun[] = [];
 
         for (const cr of cRanges) {
           const ptSize = parseFloat(extractXmlAttr(cr, 'PointSize') || '');
@@ -672,6 +683,13 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
             }
           }
 
+          const fontStyle = (extractXmlAttr(cr, 'FontStyle') || '').toLowerCase();
+          richRuns.push({ text: decodeStoryXml(rangeTokens.join('')),
+            ...(fontStyle ? { bold: fontStyle.includes('bold'), italic: fontStyle.includes('italic') || fontStyle.includes('oblique') } : {}),
+            ...(extractXmlAttr(cr, 'Underline') ? { underline: extractXmlAttr(cr, 'Underline') === 'true' } : {}),
+            ...(appliedFont ? { fontFamily: decodeStoryXml(appliedFont.trim()) } : {}),
+            ...(ptSize > 0 && Number.isFinite(ptSize) ? { fontSizePt: ptSize } : {}),
+            ...(crResolvedColor && crResolvedColor !== 'transparent' ? { color: crResolvedColor } : {}) });
           const rangeText = rangeTokens.join('').trim();
           if (crResolvedColor && crResolvedColor !== 'transparent' && rangeText.length > 0 && rangeText.length <= 80 && !/[\r\n]/.test(rangeText)) {
             const fontStyle = (extractXmlAttr(cr, 'FontStyle') || '').toLowerCase();
@@ -685,6 +703,14 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
         }
 
         const paraStr = paraTokens.join('');
+        const paragraphStyle = applied ? parsedStyles.find(style => style.name.toLowerCase() === applied.replace('ParagraphStyle/', '').toLowerCase()) : undefined;
+        // Preserve hard breaks as structured paragraph boundaries with the same run formatting.
+        let currentRuns: StoryRun[] = [];
+        for (const run of richRuns) run.text.split('\n').forEach((text, index) => {
+          if (index) { richParagraphs.push({ styleId: paragraphStyle?.id, runs: currentRuns.length ? currentRuns : [{ text: '' }] }); currentRuns = []; }
+          currentRuns.push({ ...run, text });
+        });
+        richParagraphs.push({ styleId: paragraphStyle?.id, runs: currentRuns.length ? currentRuns : [{ text: '' }] });
         if (paraStr.length > 0) {
           paragraphs.push(paraStr);
         }
@@ -715,6 +741,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
 
       storiesMap.set(storyId, {
         text: fullText,
+        content: richParagraphs.length ? { version: 1, paragraphs: richParagraphs } : undefined,
         styleId: detectedStyleId,
         fontSizePt: detectedFontSize,
         fontFamily: detectedFontFamily,
@@ -1147,7 +1174,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
     },
   };
 
-  return {
+  const project: ProjectState = {
     settings,
     spreads,
     activeSpreadIndex: 0,
@@ -1168,4 +1195,9 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
     layers: DEFAULT_LAYERS,
     activeLayerId: 'layer-1',
   };
+  for (const frame of allTextElements) {
+    const content = frame.parentStoryId && storiesMap.get(frame.parentStoryId)?.content;
+    if (!frame.prevFrameId && content) { frame.storyContent = structuredClone(content); frame.rawStoryText = storyText(content); reflowStoryState(project, frame.id); }
+  }
+  return project;
 }

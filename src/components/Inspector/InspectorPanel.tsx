@@ -1,11 +1,12 @@
 import { useState } from 'preact/hooks';
 import { PropertiesTab } from './PropertiesTab';
-import { StylesTab } from './StylesTab';
 import { PagesTab } from './PagesTab';
-import { LayersTab } from './LayersTab';
 import { LinksTab } from './LinksTab';
-import { TemplatesTab } from './TemplatesTab';
-import { SetupTab } from './SetupTab';
+import { lazy, Suspense } from 'preact/compat';
+const TemplatesTab = lazy(() => import('./TemplatesTab').then(module => ({ default: module.TemplatesTab })));
+const StylesTab = lazy(() => import('./StylesTab').then(module => ({ default: module.StylesTab })));
+const SetupTab = lazy(() => import('./SetupTab').then(module => ({ default: module.SetupTab })));
+const LayersTab = lazy(() => import('./LayersTab').then(module => ({ default: module.LayersTab })));
 import { ProjectState } from '../../types';
 
 interface InspectorPanelProps {
@@ -65,12 +66,12 @@ export function InspectorPanel({ state, activeTab: propActiveTab, onTabChange, i
 
       <div className="inspector-content">
         {activeTab === 'properties' && <PropertiesTab state={state} />}
-        {activeTab === 'styles' && <StylesTab state={state} />}
+        {activeTab === 'styles' && <Suspense fallback={<p role="status">Loading styles…</p>}><StylesTab state={state} /></Suspense>}
         {activeTab === 'pages' && <PagesTab state={state} />}
-        {activeTab === 'layers' && <LayersTab state={state} />}
+        {activeTab === 'layers' && <Suspense fallback={<p role="status">Loading layers…</p>}><LayersTab state={state} /></Suspense>}
         {activeTab === 'links' && <LinksTab state={state} />}
-        {activeTab === 'templates' && <TemplatesTab state={state} />}
-        {activeTab === 'setup' && <SetupTab state={state} />}
+        {activeTab === 'templates' && <Suspense fallback={<p role="status">Loading layouts…</p>}><TemplatesTab state={state} /></Suspense>}
+        {activeTab === 'setup' && <Suspense fallback={<p role="status">Loading setup…</p>}><SetupTab state={state} /></Suspense>}
       </div>
     </aside>
   );

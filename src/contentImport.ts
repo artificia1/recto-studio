@@ -5,7 +5,9 @@ import { compactRuns, plainStory, storyText } from './engine/storyContent';
 import { child, children, descendants, nodeText, parseManuscriptXml, type XmlNode } from './import/manuscriptXml';
 
 export interface ImportSourceStyle { name: string; suggestedStyleId: string; paragraphCount: number }
+export interface ImportedNote { id: string; kind: 'footnote' | 'endnote'; text: string }
 export interface IngestedStory {
+  notes?: ImportedNote[];
   formattedText: string;
   detectedStyleId?: string;
   wordCount: number;
@@ -39,15 +41,17 @@ function result(paragraphs: StoryParagraph[], warnings: string[] = []): Ingested
 }
 
 /** Editorial Markdown subset; raw HTML is always literal text. */
-function inlineMarkdown(text: string, marks: TextFormatting = {}, depth = 0): StoryRun[] {
+function inlineMarkdown(text: string, marks: TextFormatting = {}, depth = 0, note?: (id: string) => StoryRun | undefined): StoryRun[] {
   if (depth > 16) return [{ text, ...marks }];
   const runs: StoryRun[] = [];
   let plain = '';
   const flush = () => { if (plain) { runs.push({ text: plain, ...marks }); plain = ''; } };
   for (let i = 0; i < text.length;) {
     if (text[i] === '\\' && /[\\`*_[\]{}()#+.!>~-]/.test(text[i + 1] || '')) { plain += text[i + 1]; i += 2; continue; }
+    const reference = /^\[\^([^\]]+)\]/.exec(text.slice(i));
+    if (reference && note) { const run = note(reference[1]); if (run) { flush(); runs.push({ ...marks, ...run }); i += reference[0].length; continue; } }
     const link = /^!?\[([^\]]*)\]\([^)]*\)/.exec(text.slice(i));
-    if (link) { flush(); runs.push(...inlineMarkdown(link[1], marks, depth + 1)); i += link[0].length; continue; }
+    if (link) { flush(); runs.push(...inlineMarkdown(link[1], marks, depth + 1, note)); i += link[0].length; continue; }
     const delimiter = ['***', '___', '**', '__', '*', '_', '`'].find(d => text.startsWith(d, i));
     if (delimiter && !(delimiter.includes('_') && /[\p{L}\p{N}]/u.test(text[i - 1] || ''))) {
       const close = text.indexOf(delimiter, i + delimiter.length);
@@ -56,7 +60,7 @@ function inlineMarkdown(text: string, marks: TextFormatting = {}, depth = 0): St
         const inner = text.slice(i + delimiter.length, close);
         runs.push(...(delimiter === '`' ? [{ text: inner, ...marks }] : inlineMarkdown(inner, {
           ...marks, ...(delimiter.length >= 2 ? { bold: true } : {}), ...(delimiter.length !== 2 ? { italic: true } : {}),
-        }, depth + 1)));
+        }, depth + 1, note)));
         i = close + delimiter.length; continue;
       }
     }
@@ -68,11 +72,32 @@ function inlineMarkdown(text: string, marks: TextFormatting = {}, depth = 0): St
 
 export function parseMarkdownContent(markdown: string): IngestedStory {
   const paragraphs: StoryParagraph[] = [], warnings: string[] = [];
+  const notes: ImportedNote[] = [], definitions = new Map<string, string>();
+  const input = markdown.replace(/^\uFEFF/, '').split(/\r\n?|\n/);
+  const bodyLines: string[] = []; let code = false;
+  for (let index = 0; index < input.length; index++) {
+    const line = input[index];
+    if (/^(```|~~~)/.test(line.trim())) code = !code;
+    const definition = !code && /^\[\^([^\]]+)\]:\s*(.*)$/.exec(line);
+    if (!definition) { bodyLines.push(line); continue; }
+    const key = definition[1].trim().toLowerCase();
+    if (definitions.has(key)) throw new Error(`Duplicate Markdown footnote definition: ${definition[1]}`);
+    const parts = [definition[2]];
+    while (index + 1 < input.length && /^(?: {4}|\t)/.test(input[index + 1])) parts.push(input[++index].replace(/^(?: {4}|\t)/, ''));
+    definitions.set(key, parts.join('\n'));
+  }
+  const noteRun = (id: string): StoryRun | undefined => {
+    const text = definitions.get(id.trim().toLowerCase());
+    if (text === undefined) { warnings.push(`Footnote definition “${id}” is missing; its reference remains text.`); return; }
+    const noteId = `import-note-${notes.length + 1}`;
+    notes.push({ id: noteId, kind: 'footnote', text: inlineMarkdown(text).map(run => run.text).join('') });
+    return { text: String(notes.length), noteId };
+  };
   let block: string[] = [], fenced = false;
   const add = (text: string, sourceStyle = 'Body') => paragraphs.push({ sourceStyle,
-    styleId: suggestedStyle(sourceStyle), runs: inlineMarkdown(text) });
+    styleId: suggestedStyle(sourceStyle), runs: inlineMarkdown(text, {}, 0, noteRun) });
   const flush = () => { if (block.length) { add(block.join(' ')); block = []; } };
-  for (const raw of markdown.replace(/^\uFEFF/, '').split(/\r\n?|\n/)) {
+  for (const raw of bodyLines) {
     const line = raw.trim();
     if (/^(```|~~~)/.test(line)) { flush(); fenced = !fenced; warnings.push('Code blocks are imported as plain paragraphs.'); continue; }
     if (fenced) { paragraphs.push({ sourceStyle: 'Code', styleId: 'style-body', runs: [{ text: raw }] }); continue; }
@@ -92,8 +117,7 @@ export function parseMarkdownContent(markdown: string): IngestedStory {
   if (/!\[/.test(markdown)) warnings.push('Image labels are retained; place image files separately.');
   if (/\]\(/.test(markdown)) warnings.push('Link labels are retained; hyperlink destinations are not imported.');
   if (/<\/?[a-z][^>]*>/i.test(markdown)) warnings.push('HTML is retained as literal text and is never executed.');
-  if (/\[\^/.test(markdown)) warnings.push('Footnote syntax is retained as text; automatic footnotes are not imported yet.');
-  return result(paragraphs, warnings);
+  return { ...result(paragraphs, warnings), notes };
 }
 
 function runProperties(properties?: XmlNode): TextFormatting {
@@ -127,6 +151,18 @@ export async function parseDocxContent(buffer: ArrayBuffer | Uint8Array): Promis
     const definition = definitions.get(id);
     return definition ? { ...inherited(definition.base, seen), ...definition.marks } : {};
   };
+  const notes: ImportedNote[] = [];
+  const noteDefinitions = new Map<string, string>();
+  for (const kind of ['footnote', 'endnote'] as const) {
+    const bytes = files.get(`word/${kind}s.xml`);
+    if (!bytes) continue;
+    for (const note of descendants(parseManuscriptXml(new TextDecoder().decode(bytes)), kind)) {
+      if (note.attrs.type && note.attrs.type !== 'normal') continue;
+      if (Number(note.attrs.id) < 0) continue;
+      const text = descendants(note, 'p').map(paragraph => descendants(paragraph, 't').map(nodeText).join('')).join('\n');
+      noteDefinitions.set(`${kind}:${note.attrs.id}`, text);
+    }
+  }
   const paragraphs: StoryParagraph[] = [];
   for (const p of descendants(body, 'p')) {
     const pPr = child(p, 'pPr');
@@ -145,7 +181,14 @@ export async function parseDocxContent(buffer: ArrayBuffer | Uint8Array): Promis
           else if (item.name === 'br' || item.name === 'cr') text += '\n';
           else if (item.name === 'noBreakHyphen') text += '\u2011';
           else if (item.name === 'softHyphen') text += '\u00ad';
-          else if (item.name === 'footnoteReference' || item.name === 'endnoteReference') text += `[${item.attrs.id || 'note'}]`;
+          else if (item.name === 'footnoteReference' || item.name === 'endnoteReference') {
+            if (text) { runs.push({ text, ...marks }); text = ''; }
+            const kind = item.name === 'footnoteReference' ? 'footnote' : 'endnote';
+            const body = noteDefinitions.get(`${kind}:${item.attrs.id}`);
+            if (body === undefined) warnings.push(`A ${kind} body is missing. Fill in the imported note before publication.`);
+            const id = `import-note-${notes.length + 1}`;
+            notes.push({ id, kind, text: body || '' }); runs.push({ text: String(notes.length), ...marks, noteId: id });
+          }
         }
         if (text) runs.push({ text, ...marks });
         return;
@@ -165,19 +208,10 @@ export async function parseDocxContent(buffer: ArrayBuffer | Uint8Array): Promis
   if (has('hyperlink')) warnings.push('Hyperlink text is retained; destinations are not imported.');
   if (has('ins') || has('del') || has('moveFrom') || has('moveTo')) warnings.push('Tracked changes are imported as accepted text; review the manuscript in Word first.');
   if (has('fldChar') || has('fldSimple')) warnings.push('Word fields use their cached text and will not update automatically.');
-  if (has('footnoteReference') || has('endnoteReference')) {
-    warnings.push('Note references use bracketed IDs. Note text is appended for review; automatic notes are not created.');
-    for (const kind of ['footnotes', 'endnotes']) {
-      const bytes = files.get(`word/${kind}.xml`);
-      if (!bytes) continue;
-      for (const note of descendants(parseManuscriptXml(new TextDecoder().decode(bytes)), kind === 'footnotes' ? 'footnote' : 'endnote')) {
-        if (Number(note.attrs.id) > 0) paragraphs.push({ sourceStyle: 'Notes', styleId: 'style-body', runs: [{ text: `[${note.attrs.id}] ${descendants(note, 't').map(nodeText).join('')}` }] });
-      }
-    }
-  }
+  if (notes.length) warnings.push('Notes are imported with live anchors. Note bodies use plain text; review complex formatting, images and tables. Create the endnotes list in Pages for print output.');
   if ([...files.keys()].some(name => /^word\/(header|footer)\d*\.xml$/.test(name))) warnings.push('Headers, footers, and Word page geometry are not imported; set these in Recto.');
   warnings.push('Word typography is mapped to Recto paragraph styles. Bold, italic, and underline are preserved; other direct formatting requires review.');
-  return result(paragraphs, warnings);
+  return { ...result(paragraphs, warnings), notes };
 }
 
 export function mapManuscriptStyles(story: IngestedStory, mapping: Record<string, string>): StoryContent {

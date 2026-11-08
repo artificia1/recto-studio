@@ -7,7 +7,7 @@
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { stateManager } from '../state';
 import { PAGE_PRESETS, PagePreset, ProjectState, VersionSnapshot, PeerPresence } from '../types';
-import { parseCsv } from '../dataMerge';
+import { parseMergeData } from '../dataMerge';
 import { collabSession } from '../collab';
 import { isDesktop, openDesktopDocument, savePublicationFile } from '../desktop';
 import type { IngestedStory } from '../contentImport';
@@ -78,6 +78,7 @@ export function TopBar({
   const [copiedLink, setCopiedLink] = useState(false);
 
   const [csvText, setCsvText] = useState('');
+  const [mergeError, setMergeError] = useState('');
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [showFileMenu, setShowFileMenu] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -340,6 +341,7 @@ export function TopBar({
   const handleExportPdfPress = () => runExport(async () => {
     const { exportDocumentToPdf } = await import('../pdfExport');
     await exportDocumentToPdf(state, {
+      strict: true,
       includeCropMarks: true,
       includeBleed: true,
       includeRegistrationMarks: true,
@@ -353,8 +355,8 @@ export function TopBar({
   };
 
   const handleExportEpub = () => runExport(async () => {
-    const { exportDocumentToEpub } = await import('../epubExport');
-    const result = exportDocumentToEpub(state, { download: !isDesktop() });
+    const { exportDocumentToEpubAsync } = await import('../epubExport');
+    const result = await exportDocumentToEpubAsync(state, { download: !isDesktop(), strict: true });
     if (isDesktop()) await savePublicationFile(result.filename, result.buffer, 'application/epub+zip');
   });
 
@@ -401,6 +403,7 @@ export function TopBar({
   const handleCsvUpload = async (e: Event) => {
     const file = (e.target as HTMLInputElement).files?.[0];
     if (file) {
+      if (file.size > 4 * 1024 * 1024) { setMergeError('Choose a data file smaller than 4 MB.'); return; }
       const text = await file.text();
       setCsvText(text);
     }
@@ -408,11 +411,12 @@ export function TopBar({
 
   const handleRunMerge = () => {
     if (!csvText.trim()) return;
-    stateManager.executeDataMerge(csvText, 'generateSpreads');
-    setShowDataMergeModal(false);
+    try { stateManager.executeDataMerge(csvText, 'generateSpreads'); setShowDataMergeModal(false); setMergeError(''); }
+    catch (reason) { setMergeError(reason instanceof Error ? reason.message : String(reason)); }
   };
 
-  const parsedPreview = csvText.trim() ? parseCsv(csvText) : null;
+  let previewError = '';
+  const parsedPreview = (() => { try { return csvText.trim() ? parseMergeData(csvText) : null; } catch (reason) { previewError = reason instanceof Error ? reason.message : String(reason); return null; } })();
 
   const openVersionModal = () => {
     const list = stateManager.getSnapshots();
@@ -906,7 +910,7 @@ export function TopBar({
                 }}
                 title="Batch populate records via CSV dataset"
               >
-                <span>Data Merge (CSV)...</span>
+                <span>Data Merge (CSV / JSON)...</span>
               </button>
               {selectedElements.length === 1 && selectedElements[0].type === 'text' && (
                 <button
@@ -1344,7 +1348,8 @@ export function TopBar({
                 marginBottom: '14px',
               }}
             >
-              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>CSV Data Merge</h3>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>CSV / JSON Data Merge</h3>
+              {(previewError || mergeError) && <p role="alert">{previewError || mergeError}</p>}
               <button className="icon-btn" onClick={() => setShowDataMergeModal(false)}>
                 ✕
               </button>
@@ -1361,7 +1366,7 @@ export function TopBar({
                   className="sm-btn"
                   onClick={() => csvInputRef.current?.click()}
                 >
-                  Upload .CSV File
+                  Upload CSV / JSON
                 </button>
                 <button
                   className="sm-btn"
@@ -1376,7 +1381,7 @@ export function TopBar({
                 <input
                   type="file"
                   ref={csvInputRef}
-                  accept=".csv,text/csv"
+                  accept=".csv,.json,text/csv,application/json"
                   style={{ display: 'none' }}
                   onChange={handleCsvUpload}
                 />

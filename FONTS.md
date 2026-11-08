@@ -13,9 +13,11 @@ activate show an error and are not added as installed fonts.
 The normal PDF exporter uses the font's shaped vector outlines for imported fonts
 in text frames, master text, footnotes, and tables. This preserves appearance for
 TrueType and CFF outlines, including compressed web-font inputs. Outlined text is
-not selectable/searchable and is not a substitute for accessible PDF text.
+supplemented with searchable Unicode text for supported static TTF faces whose
+embedding permissions allow it. CFF, WOFF and WOFF2 retain outline-only output.
+Neither path is a substitute for a tagged accessible PDF.
 Custom outline paragraphs currently use left, center, or right placement; full
-justification, tracking, and selectable font embedding need further work.
+justification and tracking need further work.
 Specialized cover and imposition exporters retain their existing text handling.
 
 EPUB packages include font files and font declarations. Flipbooks embed font data.
@@ -29,4 +31,25 @@ PDF export: import the corresponding font file for that purpose.
 No font contains every Unicode character. Missing glyphs, bitmap-only/color emoji
 fonts, font collections (TTC/OTC/DFONT), legacy Type 1/EOT fonts, and unusual font
 formats are not universally supported. Export an individual TTF/OTF face when
-necessary. Variable fonts use their default instance; there are no axis controls yet.
+necessary.
+
+Imported variable fonts expose their advertised axes under **Properties → Variable
+font axes**. Sliders preview the face live; Apply creates a named instance used by
+layout measurements, browser rendering and PDF outlines. Coordinates persist in
+the project and in EPUB/flipbook font CSS. Optical size is manual when an `opsz`
+axis exists. Bold/italic flags do not choose axis coordinates automatically.
+PDF variable instances remain outlined, with no claim of searchable variable-font
+embedding. Reader support still varies. Each applied instance currently stores a
+copy of the source font bytes; avoid creating large numbers of instances in a book.
+
+Open **Links → Document fonts & replacement** to audit font references, import a
+licensed TTF/OTF/WOFF/WOFF2 source, and replace a family throughout the document.
+The audit includes paragraph and character styles, master text, tables, text on
+paths and formatted runs. Counts are font references, not unique frames. A system
+font may display locally while its source file remains unavailable for export.
+
+Replacement reflows stories and reports overset frames. Undo restores font
+choices; save/reopen preserves imported sources. Review line endings and page
+count after substitution: a different face is not guaranteed to have matching
+metrics. Recto does not activate Adobe Fonts or extract protected commercial font
+files. Obtain font files or suitable replacements through your licensing workflow.

@@ -43,6 +43,7 @@
     "recto": "./bin/recto.js"
   },
   "dependencies": {
+    "@resvg/resvg-js": "2.6.2",
     "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-updater": "^2.14.1",
     "acorn": "^8.19.0",

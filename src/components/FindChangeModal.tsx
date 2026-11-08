@@ -29,6 +29,8 @@ export function FindChangeModal({ isOpen, onClose }: FindChangeModalProps) {
   const [isGrep, setIsGrep] = useState(false);
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [wholeWord, setWholeWord] = useState(false);
+  const [paragraphStyleId, setParagraphStyleId] = useState('');
+  const [characterStyleId, setCharacterStyleId] = useState('');
   const [scope, setScope] = useState<'document' | 'spread' | 'story'>('document');
   const [activeMatch, setActiveMatch] = useState<FindResult | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
@@ -50,6 +52,8 @@ export function FindChangeModal({ isOpen, onClose }: FindChangeModalProps) {
     caseSensitive,
     wholeWord,
     scope,
+    paragraphStyleId: paragraphStyleId || undefined,
+    characterStyleId: characterStyleId || undefined,
   });
 
   const handleFindNext = () => {
@@ -79,6 +83,7 @@ export function FindChangeModal({ isOpen, onClose }: FindChangeModalProps) {
       return;
     }
 
+    try {
     const success = stateManager.change(getQuery(), activeMatch);
     if (success) {
       setStatusMessage('Replaced 1 occurrence.');
@@ -93,6 +98,7 @@ export function FindChangeModal({ isOpen, onClose }: FindChangeModalProps) {
         setStatusMessage(`Replaced. Next match ${next.currentMatchIndex} of ${next.totalMatches}`);
       }
     }
+    } catch (reason) { setStatusMessage(reason instanceof Error ? reason.message : String(reason)); }
   };
 
   const handleChangeFind = () => {
@@ -105,11 +111,11 @@ export function FindChangeModal({ isOpen, onClose }: FindChangeModalProps) {
       return;
     }
 
-    const result = stateManager.changeAll(getQuery());
-    setActiveMatch(null);
-    setStatusMessage(
-      `Search complete. Replaced ${result.replacementsCount} occurrence(s) across ${result.elementsAffected} text frame(s).`
-    );
+    try {
+      const result = stateManager.changeAll(getQuery());
+      setActiveMatch(null);
+      setStatusMessage(`Search complete. Replaced ${result.replacementsCount} occurrence(s) across ${result.elementsAffected} stories.`);
+    } catch (reason) { setStatusMessage(reason instanceof Error ? reason.message : String(reason)); }
   };
 
   const handleGrepPresetSelect = (e: Event) => {
@@ -335,6 +341,8 @@ export function FindChangeModal({ isOpen, onClose }: FindChangeModalProps) {
             </div>
           </div>
 
+          <label>Paragraph style<select aria-label="Find paragraph style" value={paragraphStyleId} onChange={event => { setParagraphStyleId(event.currentTarget.value); setActiveMatch(null); }}><option value="">Any</option>{stateManager.getState().paragraphStyles.map(style => <option key={style.id} value={style.id}>{style.name}</option>)}</select></label>
+          <label>Character style<select aria-label="Find character style" value={characterStyleId} onChange={event => { setCharacterStyleId(event.currentTarget.value); setActiveMatch(null); }}><option value="">Any</option>{stateManager.getState().characterStyles?.map(style => <option key={style.id} value={style.id}>{style.name}</option>)}</select></label>
           {/* Status readout */}
           {statusMessage && (
             <div

@@ -1,6 +1,7 @@
 import type { CanvasElement, CharacterStyle, ParagraphStyle, StoryContent, StoryParagraph, StoryRun, TextElement, TextFormatting } from '../types';
 import { fontManager } from '../fontManager';
 import { hyphenateLanguage } from './languageHyphenation';
+import { cjkRunTokens, graphemes } from './globalTypography';
 
 export interface RunStyle extends TextFormatting {
   fontFamily: string;
@@ -142,18 +143,33 @@ function composeStory(content: StoryContent, frame: TextElement, styles: Paragra
       segments = []; lineWidth = 0; lineStart = offset; height = paragraphHeight;
       return true;
     };
-    for (const run of paragraph.runs) {
+    const cjk = !!style.cjkLineBreak;
+    const tokens = cjk ? cjkRunTokens(paragraph.runs, (text, run) => {
+      const resolved = resolveRunStyle(frame, style, run, characters);
+      if (run.noteId) resolved.fontSizePt *= 0.7;
+      return measure(text, resolved) + Array.from(text).length * resolved.letterSpacingPt * PT;
+    }) : paragraph.runs.map(run => ({ run, text: run.text, groupWidth: undefined }));
+    for (const item of tokens) {
+      const run = item.run;
       const runStyle = resolveRunStyle(frame, style, run, characters);
+      if (run.noteId) runStyle.fontSizePt *= 0.7;
+      const renderedText = run.noteId ? item.text.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]/g, digit => String('⁰¹²³⁴⁵⁶⁷⁸⁹'.indexOf(digit))) : item.text;
       // Keep ordinary words together; split overlong tokens by Unicode code point.
-      for (let token of run.text.match(/[^\S\n]+|\n|[^\s]+/gu) || []) {
+      for (let token of cjk ? [renderedText] : renderedText.match(/[^\S\n]+|\n|[^\s]+/gu) || []) {
         if (!prepare()) return { lines, consumed, overset: true };
+        if (cjk && item.groupWidth !== undefined && token !== '\n') {
+          if (lineWidth && lineWidth + item.groupWidth > availableWidth + 0.0001) {
+            if (!flush(false) || !prepare()) return { lines, consumed, overset: true };
+          }
+          if (item.groupWidth > availableWidth + 0.0001) return { lines, consumed, overset: true };
+        }
         if (token === '\n') {
           offset++;
           if (!flush(true)) return { lines, consumed, overset: true };
           continue;
         }
         const measured = (text: string) => measure(text, runStyle) + Array.from(text).length * runStyle.letterSpacingPt * PT;
-        if (style.hyphenate && /^\p{L}+$/u.test(token)) {
+        if (!cjk && style.hyphenate && /^\p{L}+$/u.test(token)) {
           while (measured(token) > availableWidth - lineWidth + 0.0001) {
             const syllables = hyphenateLanguage(token, style.language);
             let prefix = '', fitting = '';
@@ -174,18 +190,20 @@ function composeStory(content: StoryContent, frame: TextElement, styles: Paragra
           }
         }
         const tokenWidth = measured(token);
-        if (lineWidth && lineWidth + tokenWidth > availableWidth && !/^\s+$/.test(token)) {
+        if (run.noteId && tokenWidth > availableWidth) return { lines, consumed, overset: true };
+        if (!cjk && lineWidth && lineWidth + tokenWidth > availableWidth && !/^\s+$/.test(token)) {
           if (!flush(false)) return { lines, consumed, overset: true };
           if (!prepare()) return { lines, consumed, overset: true };
         }
-        const parts = tokenWidth > availableWidth ? Array.from(token) : [token];
+        const parts = !cjk && tokenWidth > availableWidth ? graphemes(token) : [token];
         for (const part of parts) {
           if (!prepare()) return { lines, consumed, overset: true };
           const w = measure(part, runStyle) + Array.from(part).length * runStyle.letterSpacingPt * PT;
-          if (lineWidth && lineWidth + w > availableWidth + 0.0001) {
+          if (!cjk && lineWidth && lineWidth + w > availableWidth + 0.0001) {
             if (!flush(false)) return { lines, consumed, overset: true };
             if (!prepare()) return { lines, consumed, overset: true };
           }
+          if (w > availableWidth + 0.0001 && !cjk) return { lines, consumed, overset: true };
           segments.push({ text: part, x: lineWidth, width: w, style: runStyle });
           lineWidth += w; offset += part.length;
           height = Math.max(height, runStyle.fontSizePt * PT * leading);
