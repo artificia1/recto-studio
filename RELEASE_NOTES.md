@@ -1,46 +1,60 @@
-## Recto Studio 1.2.4
+# Recto Studio 1.3.1
 
-### Editable mathematics
+Expanded publishing workflows for books, magazines, editorial layouts and marketing documents, with Windows and Linux desktop packages.
 
-- **File → Insert Equation (LaTeX)** opens a live equation editor.
-- Templates for quadratic formulas, integrals, sums, matrices, aligned equations and cases.
-- Type size, colour, display/compact math style and accessible descriptions.
-- Select an equation and choose **Properties → Edit equation** to revise it.
-- Source survives save/reopen, undo/redo and duplication.
-- Sharp vector PDF output and standalone SVG downloads, with bundled math glyphs.
-- Works offline in the desktop app; no LaTeX installation or remote renderer required.
+## Downloads
+- **Windows x64 setup.exe**: recommended installer, including shortcuts and a WebView2 bootstrapper when needed.
+- **Windows x64 portable ZIP**: extract and run Recto Studio.exe; requires WebView2.
+- **Linux x64 .deb**: install with `sudo apt install ./Recto-Studio-1.3.1-Linux-x64.deb` to resolve dependencies.
+- **Linux x64 AppImage**: run `chmod +x Recto-Studio-1.3.1-Linux-x64.AppImage`, then launch. Some distributions require FUSE compatibility packages.
+- **Source code ZIP / tar.gz**: tagged source supplied by GitHub. See DESKTOP.md for Node.js, Rust and native build prerequisites.
+- **SHA256SUMS.txt**: checksums for downloadable assets.
 
-### Publishing fixes
+Linux packages are built on Ubuntu 22.04 for x86-64 systems with WebKitGTK 4.1 support. ARM builds are not included.
 
-- EPUB exports use accessible image descriptions and package equations as SVG assets.
-- SVG artwork is identified as scalable vector content, avoiding false low-resolution warnings.
-- Replacing equation artwork with a photo clears obsolete math metadata.
+## Books and manuscripts
+- Self-contained .rectobook chapter archives, chapter ordering, right-hand openings and continuous pagination.
+- Chapter style synchronization, unified contents export and combined PDF containing actual chapter artwork.
+- Paragraph style inheritance, local overrides, cycle protection and portable style sets.
+- Complete-manuscript Find/Change with style filters, overset-text coverage and formatting-preserving undoable replacement.
+- Fiction, nonfiction and editorial starters, publication outline, story navigation and printed-page lookup.
+- Anchored notes, live heading references, contents, indexes and reviewed Table of Authorities suggestions.
 
-### InDesign import corrections
+## Proposed manuscript revisions
+- Story Editor → Proposed revisions captures a selection or insertion point, reviewer, replacement and review note.
+- Compare original and proposed passages, then accept or reject; acceptance reflows the story and supports undo.
+- Pending proposals remain outside publication output. Changed originals and locked stories block acceptance.
+- Pages → Manuscript revisions locates pending edits, opens their stories and rejects orphaned proposals.
+- Review records persist in project files and book chapter snapshots. Ordinary typing continues to edit directly.
 
-- INDD now offers an IDML conversion kit for your installed InDesign.
-- Content recovery is explicitly labelled and requires confirmation before replacing a project.
-- Recovery retains all detected fragments instead of fabricating original layouts or discarding later fragments.
-- Binary files cannot silently enter the IDML importer as a simulated layout.
-- See `INDESIGN_IMPORT.md` for workflow and limitations. Native standalone INDD decoding is not included.
+## Tables and catalog production
+- Quoted CSV/TSV table import and horizontal cell merging that retains text.
+- Opt-in Fit rows to content wraps cells and continues whole measured rows through linked frames, reserving repeated headers and footers.
+- Add continuation page appends a linked frame in one undo step.
+- Cell and shared-style edits from a continuation update canonical data and respect whole-thread locks.
+- Preflight and PDF export detect rows that cannot fit and hidden or excluded continuations.
+- Scalar JSON/CSV merge, reviewed data refresh and unique frame/group identities per generated record.
 
-Equations are separate layout objects. This release supports mathematical LaTeX
-with base/AMS notation, not full `.tex` documents or inline story equations.
-PDF math tagging and MathML are not included; equation vector colours are RGB.
-See `EQUATIONS.md` for syntax, workflow and output details.
+## Layout, typography and artwork
+- Multi-spread spatial workspace, drag scrolling, cross-page movement and saved pasteboard objects.
+- Numerical alignment/spacing, flat grouping, rotated bounds and locked-group protection.
+- Cascading master inheritance, source-item editing and descendant updates.
+- Font-source auditing, local font import, document-wide replacement and variable-font axes.
+- Grapheme-aware wrapping, horizontal CJK punctuation rules and publication language metadata.
+- Object Multiply, Screen and Overlay, consistent opacity and live ordinary-PDF blend states.
+- Focal-point cropping, editable vector equation objects and bounded ornamental patterns.
 
-### Installation and updates
+## Export and reliability
+- Screen, desktop-print and printer-review PDF presets plus downloadable publication reports.
+- EPUB navigation, note links, image descriptions and embedded assets; searchable Unicode PDF text for supported embedded static TTF fonts.
+- Improved structured IDML character formatting import and safer SVG/XML ingestion.
+- Bounded native reads, contained chapter paths and safer export archives.
+- Fixed stale Story Editor reopening, continuation-table edits, review-note spread identities and template undo history.
+- Pages, Links, table controls and the desktop updater now load on demand to meet the existing startup bundle budget.
 
-Users on **1.2.2 or 1.2.3** can choose **Check for updates → Install update**.
-The updater downloads the package, saves pending work, and installs the update.
+## Updating and current limits
+Updater-enabled Windows installations can use Check for updates after the signed installer and latest.json are published. Pending work is saved before installation. Updater signatures are separate from publisher code signing; Windows may still show a reputation warning. Linux packages are installed manually; this release does not advertise Linux auto-updates.
 
-- Installer: `Recto-Studio-1.2.4-Windows-x64-setup.exe`
-- Portable: `Recto-Studio-1.2.4-Windows-x64-portable.zip`
+Book chapters need matching page sizes and bleed. Individual table rows must fit in one frame; row splitting and vertical merges remain pending. Explicit revision proposals support 100 records per document and manuscripts up to 200,000 characters; automatic inline change tracking is not included.
 
-Windows x64 is supported. The installer can install WebView2 if needed; that
-initial setup may require a connection. The portable app needs an existing
-WebView2 runtime. No Node.js, npm or terminal is needed.
-
-Update packages have updater signatures. The executable does not have a Windows
-publisher certificate, so Windows may show a reputation warning. SHA-256
-checksums are included with the release.
+INDD provides conversion and explicitly labelled content recovery. Faithful standalone INDD decoding and complete IDML fidelity are not implemented. PDF presets and CMYK operators do not certify PDF/X, PDF/A or PDF/UA compliance. Review production output with the intended printer and readers.

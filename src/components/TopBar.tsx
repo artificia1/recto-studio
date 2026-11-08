@@ -14,7 +14,8 @@ import type { IngestedStory } from '../contentImport';
 import type { TextElement } from '../types';
 import { BookletImpositionModal, CoverSpineModal } from './LazyPrintDialogs';
 
-import { AppUpdater } from './AppUpdater';
+import { lazy, Suspense } from 'preact/compat';
+const AppUpdater = lazy(() => import('./AppUpdater').then(module => ({ default: module.AppUpdater })));
 
 interface TopBarProps {
   state: ProjectState;
@@ -547,7 +548,7 @@ export function TopBar({
           >
             ↻
           </button>
-          {isDesktop() && <AppUpdater />}
+          {isDesktop() && <Suspense fallback={<span role="status">Loading updater…</span>}><AppUpdater /></Suspense>}
           {onOpenShortcuts && (
             <button
               className="icon-btn"
