@@ -2,6 +2,7 @@ import { useMemo, useState } from 'preact/hooks';
 import type { ProjectState } from '../../types';
 import { stateManager } from '../../state';
 import { editorialOutline, editorialStories, findPublicationPages } from '../../engine/editorialNavigation';
+import { reviewPinPosition } from '../../engine/reviewPins';
 
 export default function EditorialPanel({ state }: { state: ProjectState }) {
   const [query, setQuery] = useState('');
@@ -60,16 +61,19 @@ export default function EditorialPanel({ state }: { state: ProjectState }) {
         setNote('');
       })}>Add review note to active spread</button>
       <label>Show review notes<select value={filter} onChange={event => setFilter(event.currentTarget.value as typeof filter)}><option value="open">Open</option><option value="resolved">Resolved</option><option value="all">All</option></select></label>
-      <ul className="editorial-list review-list">{visible.map(comment => <li key={comment.id}>
-        <div className="review-heading"><strong>{comment.author}</strong><small>Spread {comment.spreadIndex + 1} · {comment.resolved ? 'Resolved' : 'Open'}</small></div>
+      <ul className="editorial-list review-list">{visible.map(comment => {
+        const position = reviewPinPosition(state, comment);
+        return <li key={comment.id}>
+        <div className="review-heading"><strong>{comment.author}</strong><small>{position ? `Spread ${position.spreadIndex + 1}` : `Proof page ${comment.proofPage || '?'} · Placement needed`} · {comment.resolved ? 'Resolved' : 'Open'}</small></div>
         {editing === comment.id ? <><label>Edit review note<textarea rows={3} maxLength={10000} value={editText} onInput={event => setEditText(event.currentTarget.value)}/></label><div className="publication-actions"><button className="sm-btn" onClick={() => act(() => { stateManager.updateComment(comment.id, editText); setEditing(''); })}>Save review note</button><button className="sm-btn" onClick={() => setEditing('')}>Cancel</button></div></> : <p className="review-text">{comment.text}</p>}
         <div className="publication-actions">
-          <button className="sm-btn" onClick={() => stateManager.setActiveSpread(comment.spreadIndex)}>Go to spread</button>
+          {position ? <button className="sm-btn" onClick={() => stateManager.setActiveSpread(position.spreadIndex)}>Go to spread</button>
+            : comment.proofPage && <button className="sm-btn" onClick={() => act(() => stateManager.placeProofNote(comment.id))}>Place on active page</button>}
           <button className="sm-btn" onClick={() => { setEditing(comment.id); setEditText(comment.text); }}>Edit</button>
           <button className="sm-btn" onClick={() => stateManager.resolveComment(comment.id)}>{comment.resolved ? 'Reopen' : 'Resolve'}</button>
           <button className="sm-btn" onClick={() => { if (window.confirm('Delete this review note?')) stateManager.deleteComment(comment.id); }}>Delete</button>
         </div>
-      </li>)}</ul>
+      </li>})}</ul>
       {!visible.length && <p>No {filter === 'all' ? '' : filter} review notes.</p>}
     </details>
     <details className="publication-panel">

@@ -5,6 +5,7 @@ import { layoutStory, measureStoryText } from './storyLayout';
 import { publicationWrapObjects } from './publicationWrap';
 import { hierarchicalIndex } from './indexLayout';
 import { applyEditionVisibility } from './publicationEditions';
+import { publicationCaptions } from './publicationCaptions';
 
 export const noteMarker = (number: number) => String(number).replace(/\d/g, digit => '⁰¹²³⁴⁵⁶⁷⁸⁹'[Number(digit)]);
 export const textFrames = (state: ProjectState) => state.spreads.flatMap(spread => spread.elements).filter((item): item is TextElement => item.type === 'text');
@@ -252,14 +253,17 @@ export function refreshPublication(state: ProjectState): boolean {
     if (run.text !== noteMarker(number)) { run.text = noteMarker(number); changed = true; }
   }
   const headings = publicationHeadings(state);
+  const captions = publicationCaptions(state);
+  const captionById = new Map(captions.map(item => [item.id, item]));
+  const frameById = new Map(textFrames(state).map(frame => [frame.id, frame]));
   for (const head of heads) {
     if (!head.storyContent) continue;
     for (const paragraph of head.storyContent.paragraphs) for (const run of paragraph.runs) if (run.reference) {
       const ref = run.reference;
       const heading = ref.targetParagraphId ? headings.find(heading => ref.targetParagraphId === heading.paragraphId) : undefined;
       if (heading && ref.targetElementId !== heading.elementId) { ref.targetElementId = heading.elementId; changed = true; }
-      const target = textFrames(state).find(frame => frame.id === ref.targetElementId);
-      const label = heading ? (ref.format === 'title' ? heading.title : heading.label) :
+      const target = frameById.get(ref.targetElementId);
+      const label = ref.format === 'caption' ? captionById.get(ref.targetElementId)?.label || '[missing caption]' : heading ? (ref.format === 'title' ? heading.title : heading.label) :
         !ref.targetParagraphId && target ? (ref.format === 'title' ? target.text.split('\n')[0] : pageLabel(pages, target.pageId).label) : '[missing reference]';
       if (run.text !== label) { run.text = label; changed = true; }
     }
@@ -267,7 +271,15 @@ export function refreshPublication(state: ProjectState): boolean {
   for (const head of heads.filter(head => head.generated)) {
     const generated = head.generated!;
     let content: StoryContent;
-    if (generated.kind === 'toc') content = { version: 1, paragraphs: [{ runs: [{ text: generated.title }] }, ...headings.map(heading => ({ runs: [
+    if (generated.kind === 'caption') {
+      const caption = captionById.get(head.id);
+      content = plainStory(caption ? `${caption.label} — ${caption.title}` : generated.title);
+    } else if (generated.kind === 'figures' || generated.kind === 'tables') {
+      const kind = generated.kind === 'figures' ? 'Figure' : 'Table';
+      content = { version: 1, paragraphs: [{ runs: [{ text: generated.title }] }, ...captions.filter(item => item.kind === kind).map(item => ({ runs: [
+        { text: `${item.label} — ${item.title} · ` }, { text: item.page, reference: { targetElementId: item.id, format: 'page' as const } },
+      ] }))] };
+    } else if (generated.kind === 'toc') content = { version: 1, paragraphs: [{ runs: [{ text: generated.title }] }, ...headings.map(heading => ({ runs: [
       { text: '  '.repeat(heading.level - 1) },
       { text: heading.title, reference: { targetElementId: heading.elementId, targetParagraphId: heading.paragraphId, format: 'title' as const } },
       { text: ' ········ ' }, { text: heading.label, reference: { targetElementId: heading.elementId, targetParagraphId: heading.paragraphId, format: 'page' as const } },

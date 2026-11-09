@@ -1,22 +1,28 @@
 import { useRef, useState } from 'preact/hooks';
+import { lazy, Suspense } from 'preact/compat';
 import type { ProjectState } from '../../types';
 import { INITIAL_STATE, stateManager } from '../../state';
 import { parseProject } from '../../state/projectValidation';
 import { bookEngine } from '../../engine/bookEngine';
 import { assembleBook } from '../../engine/bookAssembly';
-import { publicationHeadings } from '../../engine/publicationReferences';
+import { publicationHeadings, publicationSnapshot } from '../../engine/publicationReferences';
 import { publicationPreflight } from '../../engine/publicationPreflight';
 import { documentFontUsage } from '../../engine/documentFonts';
 import { PDF_PRESETS, type PdfPreset } from '../../export/presets';
 import { savePublicationFile } from '../../desktop';
+import { checkPrinterProfile, type PrinterProfile } from '../../engine/printerProfiles';
+import PrinterProfilesPanel from './PrinterProfilesPanel';
 
 interface Chapter { name: string; state: ProjectState; recto: boolean }
+const ProofReviewDialog = lazy(() => import('../ProofReviewDialog'));
 
 export default function ProductionPanel({ state }: { state: ProjectState }) {
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [title, setTitle] = useState('Untitled Book');
   const [preset, setPreset] = useState<PdfPreset>('screen');
   const [busy, setBusy] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [printer, setPrinter] = useState<PrinterProfile>();
   const [message, setMessage] = useState('');
   const [editionName, setEditionName] = useState('');
   const selected = state.spreads[state.activeSpreadIndex]?.elements.find(element => element.id === state.selectedElementId);
@@ -28,8 +34,20 @@ export default function ProductionPanel({ state }: { state: ProjectState }) {
   const book = () => bookEngine.createBook(title, chapters.map(chapter => ({ title: chapter.state.settings.title || chapter.name, filePath: chapter.name, forceRectoOpening: chapter.recto })));
   const load = (name: string) => { const chapter = chapters.find(item => item.name === name); if (!chapter) throw new Error(`Missing chapter ${name}`); return chapter.state; };
   const safeName = (title || 'publication').replace(/[^\p{L}\p{N} _-]/gu, '').trim().slice(0, 100) || 'publication';
+  const options = PDF_PRESETS[preset].options;
+  const exportOptions = { ...options, ...(trapping ? { trapping: { widthPt: trapWidth, tacLimit: printer?.maxInk } } : {}) };
+  const printerIssues = (snapshot: ProjectState) => printer ? checkPrinterProfile(printer, snapshot, options.includeBleed) : [];
+  const printerWarnings = (snapshot: ProjectState) => {
+    const issues = printerIssues(snapshot);
+    const describe = (issue: (typeof issues)[number]) => issue.page ? `Page ${issue.page}: ${issue.message}` : issue.message;
+    const errors = issues.filter(issue => issue.severity === 'error');
+    if (errors.length) throw new Error(errors.slice(0, 8).map(describe).join(' ') + (errors.length > 8 ? ' See the publication report for more issues.' : ''));
+    return issues.slice(0, 8).map(describe);
+  };
   return <details className="publication-panel">
     <summary>Production & books</summary>
+    <button className="sm-btn" onClick={() => setReviewOpen(true)}>Compare proofs</button>
+    {reviewOpen && <Suspense fallback={<p role="status">Loading proof tools…</p>}><ProofReviewDialog onClose={() => setReviewOpen(false)}/></Suspense>}
     <details><summary>Publication editions</summary>
       <p>Choose which editions to include when exporting the current document. Assign an edition to a selected object here or to a paragraph in Story Editor.</p>
       {(state.conditions || []).map(condition => <label className="publication-check" key={condition.id}>
@@ -45,16 +63,23 @@ export default function ProductionPanel({ state }: { state: ProjectState }) {
     </details>
     <label>PDF preset<select value={preset} onChange={event => setPreset(event.currentTarget.value as PdfPreset)}>{Object.entries(PDF_PRESETS).map(([id, item]) => <option key={id} value={id}>{item.label}</option>)}</select></label>
     <p>{PDF_PRESETS[preset].description} PDF presets do not certify PDF/X, PDF/A or PDF/UA conformance.</p>
+    <PrinterProfilesPanel state={state} includeBleed={options.includeBleed} selected={printer} onSelect={setPrinter}/>
     <details><summary>Process-colour trapping</summary>
       <label className="publication-check"><input type="checkbox" checked={trapping} onChange={event => setTrapping(event.currentTarget.checked)}/>Spread lighter opaque fills into adjacent darker fills</label>
       <label>Trap width (pt)<input aria-label="Trap width in points" type="number" min={0.001} max={2} step={0.001} value={trapWidth} onChange={event => setTrapWidth(Number(event.currentTarget.value))}/></label>
       <p>Export-only vector traps for closed process-colour fills without visible strokes. Text, photographs, stroked or transparent artwork and spot inks require printer trapping. Confirm the trap width with your printer; 0.144 pt is a starting value, not a press guarantee.</p>
     </details>
     <div className="publication-actions">
-      <button className="sm-btn" disabled={busy} onClick={() => run(async () => { const { exportDocumentToPdf } = await import('../../export/pdfExport'); const warnings: string[] = []; await exportDocumentToPdf(structuredClone(stateManager.getState()), { ...PDF_PRESETS[preset].options, ...(trapping ? { trapping: { widthPt: trapWidth } } : {}), onWarning: warning => warnings.push(warning) }); setMessage(`PDF export completed.${warnings.length ? ` Review: ${warnings.join(' ')}` : ''}`); })}>Export document PDF</button>
       <button className="sm-btn" disabled={busy} onClick={() => run(async () => {
         const snapshot = structuredClone(stateManager.getState());
-        const report = { title: snapshot.settings.title, created: new Date().toISOString(), preset, issues: publicationPreflight(snapshot, 'print'), fonts: documentFontUsage(snapshot), headings: publicationHeadings(snapshot) };
+        const warnings = printer ? printerWarnings(publicationSnapshot(snapshot)) : [];
+        const { exportDocumentToPdf } = await import('../../export/pdfExport');
+        await exportDocumentToPdf(snapshot, { ...exportOptions, onWarning: warning => warnings.push(warning) });
+        setMessage(`PDF export completed.${warnings.length ? ` Review: ${warnings.join(' ')}` : ''}`);
+      })}>Export document PDF</button>
+      <button className="sm-btn" disabled={busy} onClick={() => run(async () => {
+        const snapshot = publicationSnapshot(stateManager.getState());
+        const report = { title: snapshot.settings.title, created: new Date().toISOString(), preset, printer, printerIssues: printerIssues(snapshot), issues: publicationPreflight(snapshot, 'print'), fonts: documentFontUsage(snapshot), headings: publicationHeadings(snapshot) };
         await savePublicationFile('publication-report.json', JSON.stringify(report, null, 2), 'application/json'); setMessage('Publication report saved.');
       })}>Save publication report</button>
     </div>
@@ -107,8 +132,8 @@ export default function ProductionPanel({ state }: { state: ProjectState }) {
       <button className="sm-btn" disabled={busy || !chapters.length} onClick={() => run(async () => {
         const manifest = book(); const combined = assembleBook(manifest, load);
         const { exportDocumentToPdf } = await import('../../export/pdfExport');
-        const warnings: string[] = [];
-        const doc = await exportDocumentToPdf(combined, { ...PDF_PRESETS[preset].options, ...(trapping ? { trapping: { widthPt: trapWidth } } : {}), download: false, onWarning: warning => warnings.push(warning) });
+        const warnings = printer ? printerWarnings(publicationSnapshot(combined)) : [];
+        const doc = await exportDocumentToPdf(combined, { ...exportOptions, download: false, onWarning: warning => warnings.push(warning) });
         await savePublicationFile(`${safeName}.pdf`, doc.output('arraybuffer'), 'application/pdf'); setMessage(`Book exported: ${combined.spreads.reduce((n, spread) => n + spread.pages.length, 0)} pages.${warnings.length ? ` Review: ${warnings.join(' ')}` : ''}`);
       })}>Export book PDF</button>
       <button className="sm-btn" disabled={busy || !chapters.length} onClick={() => run(async () => {

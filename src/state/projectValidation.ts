@@ -94,7 +94,7 @@ const storyContent: Validator = (value, path) => {
         widowLines: optional(count), orphanLines: optional(count), keepTogether: optional(boolean), keepWithNext: optional(boolean) })),
       runs: array(object({ text, characterStyleId: optional(identifier), ...textFormatting,
         noteId: optional(identifier), indexId: optional(identifier),
-        reference: optional(object({ targetElementId: identifier, targetParagraphId: optional(identifier), format: choice('page', 'title') })),
+        reference: optional(object({ targetElementId: identifier, targetParagraphId: optional(identifier), format: choice('page', 'title', 'caption') })),
       })) })),
   })(value, path);
   if (!(value as { paragraphs: unknown[] }).paragraphs.length) fail(path, 'a story requires at least one paragraph');
@@ -102,7 +102,8 @@ const storyContent: Validator = (value, path) => {
 const elementSchemas: Record<string, Schema> = {
   text: {
     dataBinding: optional(object({ source: identifier, keyField: identifier, recordKey: text, field: identifier })),
-    generated: optional(object({ kind: choice('toc', 'index', 'endnotes', 'authorities'), title: text })),
+    generated: optional(object({ kind: choice('toc', 'index', 'endnotes', 'authorities', 'figures', 'tables', 'caption'), title: text })),
+    captionForId: optional(identifier),
     text, ...typography, lineHeight: positive, letterSpacingPt: number,
     color: optional(text), alignment, columns: count, columnGutterMm: nonnegative,
     backgroundColor: text, borderColor: text, borderWidthMm: nonnegative, paddingMm: optional(nonnegative),
@@ -256,7 +257,7 @@ export function parseProject(json: string, defaults: ProjectState): ProjectState
     conditions: optional(array(object({ id: identifier, name: text, visible: boolean, colorHex: text }))),
     crossReferences: optional(array(object({ id: identifier }))),
     indexEntries: optional(array(object({ id: identifier, topic: text, subtopics: optional(array(text)), see: optional(text), seeAlso: optional(array(text)), pageNumber: number, authorityCategory: optional(choice('cases', 'statutes', 'treatises')) }))),
-    comments: optional(array(object({ id: identifier, spreadId: optional(identifier), text, author: text, x: number, y: number, spreadIndex: integer, timestamp: number, resolved: boolean }))),
+    comments: optional(array(object({ id: identifier, spreadId: optional(identifier), pageId: optional(identifier), proofPage: optional(positive), unplaced: optional(boolean), text, author: text, x: number, y: number, spreadIndex: integer, timestamp: number, resolved: boolean }))),
     activeSpreadIndex: integer, selectedElementIds: array(identifier),
     activeTool: choice('select', 'text', 'frame', 'table', 'pen', 'pencil', 'shape-rect', 'shape-ellipse', 'shape-line', 'measure', 'hand', 'zoom'),
     zoom: positive, panX: number, panY: number, showGuides: boolean, showBleed: boolean,

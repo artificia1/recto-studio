@@ -3,17 +3,20 @@ import { stateManager } from '../state';
 import { publicationHeadings } from '../engine/publicationReferences';
 import { authoritySuggestions, type AuthoritySuggestion } from '../engine/authoritySuggestions';
 import { storyText } from '../engine/storyContent';
+import { publicationCaptions } from '../engine/publicationCaptions';
 
 export function StoryReferenceTools({ frameId, start, end, apply }: { frameId: string; start: number; end: number; apply: (action: () => void) => void }) {
   const [note, setNote] = useState('');
   const [kind, setKind] = useState<'footnote' | 'endnote'>('footnote');
   const [target, setTarget] = useState('0');
+  const [captionTarget, setCaptionTarget] = useState('');
   const [topic, setTopic] = useState('');
   const [authorityCategory, setAuthorityCategory] = useState<'cases' | 'statutes' | 'treatises'>('cases');
   const [citation, setCitation] = useState('');
   const [suggestions, setSuggestions] = useState<AuthoritySuggestion[]>([]);
   const [scannedText, setScannedText] = useState('');
   const headings = publicationHeadings(stateManager.getState());
+  const captions = publicationCaptions(stateManager.getState());
   return <details className="story-reference-tools"><summary>Notes, references &amp; index markers</summary>
     <div className="publication-panel">
       <label>Note text<input type="text" value={note} onInput={event => setNote(event.currentTarget.value)} placeholder="Citation or explanation"/></label>
@@ -27,6 +30,11 @@ export function StoryReferenceTools({ frameId, start, end, apply }: { frameId: s
       <button className="sm-btn" disabled={!headings[Number(target)]} onMouseDown={event => event.preventDefault()} onClick={() => apply(() => {
         const heading = headings[Number(target)]; stateManager.insertStoryReference(frameId, start, end, heading.elementId, heading.paragraphId);
       })}>Insert live page reference</button>
+      {!!captions.length && <><label>Figure or table reference<select aria-label="Figure or table reference" value={captionTarget} onChange={event => setCaptionTarget(event.currentTarget.value)}>
+        <option value="">Choose a caption</option>{captions.map(caption => <option key={caption.id} value={caption.id}>{caption.label} · {caption.title}</option>)}
+      </select></label>
+      <button className="sm-btn" disabled={!captions.some(caption => caption.id === captionTarget)} onMouseDown={event => event.preventDefault()}
+        onClick={() => apply(() => stateManager.insertStoryReference(frameId, start, end, captionTarget, undefined, 'caption'))}>Insert live caption reference</button></>}
       <label>Index topic<input type="text" value={topic} onInput={event => setTopic(event.currentTarget.value)} placeholder="Leave blank to use selected text"/></label>
       <button className="sm-btn" disabled={end <= start} onMouseDown={event => event.preventDefault()} onClick={() => apply(() => {
         const selected = stateManager.getStoryContent(frameId).paragraphs.map(paragraph => paragraph.runs.map(run => run.text).join('')).join('\n').slice(start, end);

@@ -247,7 +247,7 @@ svg {
           for (const [paragraphIndex, paragraph] of content.paragraphs.entries()) {
             const style = resolveParagraphStyle(paragraph, state.paragraphStyles);
             const semantic = style?.pdfTag;
-            const tag = textEl.generated && paragraphIndex === 0 ? 'h1' : semantic && /^H[1-6]$/.test(semantic) ? semantic.toLowerCase() : semantic === 'Title' ? 'h1' : semantic === 'BlockQuote' ? 'blockquote' : 'p';
+            const tag = textEl.generated && textEl.generated.kind !== 'caption' && paragraphIndex === 0 ? 'h1' : semantic && /^H[1-6]$/.test(semantic) ? semantic.toLowerCase() : semantic === 'Title' ? 'h1' : semantic === 'BlockQuote' ? 'blockquote' : 'p';
             const runs = paragraph.runs.map(run => {
               const format = resolveRunStyle(textEl, style, run, state.characterStyles || []);
               let html = escapeXml(run.text).replace(/\n/g, '<br/>');

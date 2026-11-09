@@ -240,6 +240,32 @@ TypeScript or JavaScript module. Export a default object implementing
 the input bytes and filename and returns records of scalar fields. These modules
 run with the CLI's permissions. Use modules you trust.
 
+## Proof review and production references
+
+Open **Pages → Production & books → Compare proofs**. Download a clean review
+PDF, then load it alongside a revised or annotated copy. The comparison lists
+text, artwork, page-size and page-count changes by physical position. The selected
+page can show both previews or highlight changed pixels. The scan uses bounded
+previews, so fine details still need a full-resolution review. Export a JSON
+comparison report to keep a record of the page checks.
+
+Import text-bearing PDF comments from the revised proof. Recto places a note
+automatically when its page matches uniquely in the original proof, revised proof
+and current publication. Unmatched notes are retained under **Review notes** and
+can be placed manually. The two PDFs are processed locally. Reviews are limited
+to 75 MiB and 500 pages per PDF.
+
+**Printer profiles** save reusable bleed, image-resolution, ink and ICC
+requirements in the local editor. An active profile checks both document and
+book PDFs. Resolution checks use available source dimensions. Ink checks cover
+explicit CMYK values, and raster, blend and converted-ink limits need a final
+printer proof.
+
+Select an image or the first frame of a table, then open **Contents, notes &
+references → Numbered caption**. Figures and tables number separately in each
+section, including chapters assembled into a book. Insert a live reference from
+Story Editor, and generate lists of figures or tables from the same Pages panel.
+
 ## Dependency checks
 
 The project uses jsPDF 4.2.1, DOMPurify 3.4.17, and Vite 6.4.5 or their compatible

@@ -85,7 +85,7 @@ export class PdfSemantics {
       bodyId = this.group({ id, role: 'LBody', parentId: item, order: 1 });
       labelRemaining = Math.max(0, label.length - (start - offset));
     } else {
-      const role = /^H[1-6]$/.test(style.pdfTag || '') ? style.pdfTag! : style.pdfTag === 'Title' ? 'H1' : ['Caption', 'BlockQuote'].includes(style.pdfTag || '') ? style.pdfTag! : 'P';
+      const role = frame.generated?.kind === 'caption' ? 'Caption' : /^H[1-6]$/.test(style.pdfTag || '') ? style.pdfTag! : style.pdfTag === 'Title' ? 'H1' : ['Caption', 'BlockQuote'].includes(style.pdfTag || '') ? style.pdfTag! : 'P';
       bodyId = this.group({ id, role, order });
     }
     return {

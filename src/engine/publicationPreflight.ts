@@ -3,12 +3,14 @@ import { contentOf, layoutFrameNotes, publicationHeadings, storyHeads, textFrame
 import { printReadiness } from './printReadiness';
 import { tableThread } from './tableCells';
 import { layoutContentTables } from './tableLayout';
+import { publicationCaptions } from './publicationCaptions';
 
 export function publicationPreflight(state: ProjectState, target: 'editor' | 'epub' | 'print' = 'editor'): PreflightIssue[] {
   const issues: PreflightIssue[] = [];
   const frames = textFrames(state).filter(frame => !frame.pasteboard);
   const allRuns = storyHeads(state).filter(head => !head.pasteboard).flatMap(head => contentOf(head).paragraphs.flatMap(paragraph => paragraph.runs.map(run => ({ run, head }))));
   const headings = publicationHeadings(state);
+  const captions = new Set(publicationCaptions(state).map(caption => caption.id));
   function issue(code: PreflightIssue['code'], message: string, elementId?: string, severity: PreflightIssue['severity'] = 'error') {
     const spreadIndex = Math.max(0, state.spreads.findIndex(spread => spread.elements.some(element => element.id === elementId)));
     const element = state.spreads[spreadIndex]?.elements.find(element => element.id === elementId);
@@ -24,7 +26,7 @@ export function publicationPreflight(state: ProjectState, target: 'editor' | 'ep
     if (run.noteId && !state.settings.footnotes?.some(note => note.id === run.noteId)) issue('ORPHAN_NOTE', 'A note marker has no note body. Remove or replace the marker.', head.id);
     if (run.reference) {
       const ref = run.reference;
-      const exists = ref.targetParagraphId ? headings.some(heading => heading.paragraphId === ref.targetParagraphId) : frames.some(frame => frame.id === ref.targetElementId);
+      const exists = ref.format === 'caption' ? captions.has(ref.targetElementId) : ref.targetParagraphId ? headings.some(heading => heading.paragraphId === ref.targetParagraphId) : frames.some(frame => frame.id === ref.targetElementId);
       if (!exists) issue('MISSING_REFERENCE', 'A reference target was removed or is no longer a heading. Choose a new target in the Story Editor.', head.id);
     }
   }
@@ -32,6 +34,7 @@ export function publicationPreflight(state: ProjectState, target: 'editor' | 'ep
     issue('MISSING_REFERENCE', `Index topic “${entry.topic}” has no live text anchor. Mark the text again or remove the entry.`, entry.elementId, 'warning');
   }
   for (const frame of frames) {
+    if (frame.generated?.kind === 'caption' && !captions.has(frame.id)) issue('MISSING_REFERENCE', 'This caption no longer has visible artwork. Move or remove the caption before export.', frame.id);
     if (layoutFrameNotes(state, frame).height > frame.height - 2 * (frame.paddingMm ?? 2) - frame.fontSizePt * 25.4 / 72) {
       issue('NOTE_OVERFLOW', 'Footnotes leave no room for their reference line. Shorten the notes, enlarge the frame, or convert them to endnotes.', frame.id);
     }

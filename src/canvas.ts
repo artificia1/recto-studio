@@ -6,6 +6,7 @@ export { formatOpenTypeText, segmentTextWithGrep, type TextRunSegment } from './
 import { publicationWrapObjects, wrappedPlainContent } from './engine/publicationWrap';
 export { calculateImageFitting, type ImageFitTransform } from './engine/imageFitting';
 import { layoutFrameNotes, publicationText } from './engine/publicationReferences';
+import { reviewPinPosition } from './engine/reviewPins';
 import { handleCanvasKeyDown } from './engine/interaction/keyboard';
 import { masterTargetPage } from './engine/pageLabels';
 import {
@@ -625,10 +626,11 @@ export class SpreadCanvas {
     const { x: mmX, y: mmY } = this.screenToSpreadMm(screenX, screenY, state);
 
     if (state.comments && state.comments.length > 0 && !state.previewMode) {
-      const activeComments = state.comments.filter(c => c.spreadIndex === state.activeSpreadIndex);
-      for (const c of activeComments) {
-        const dx = mmX - c.x;
-        const dy = mmY - c.y;
+      for (const c of state.comments) {
+        const position = reviewPinPosition(state, c, state.activeSpreadIndex);
+        if (position?.spreadIndex !== state.activeSpreadIndex) continue;
+        const dx = mmX - position.x;
+        const dy = mmY - position.y;
         if (Math.sqrt(dx * dx + dy * dy) <= 4) {
           stateManager.resolveComment(c.id);
           return;
@@ -4253,12 +4255,12 @@ export class SpreadCanvas {
     state: ProjectState
   ) {
     if (!state.comments || state.comments.length === 0 || state.previewMode) return;
-    const comments = state.comments.filter(c => c.spreadIndex === state.activeSpreadIndex);
-
     ctx.save();
-    for (const c of comments) {
-      const px = origin.x + c.x * pxPerMm;
-      const py = origin.y + c.y * pxPerMm;
+    for (const c of state.comments) {
+      const position = reviewPinPosition(state, c, state.activeSpreadIndex);
+      if (position?.spreadIndex !== state.activeSpreadIndex) continue;
+      const px = origin.x + position.x * pxPerMm;
+      const py = origin.y + position.y * pxPerMm;
 
       ctx.fillStyle = c.resolved ? '#2ec4b6' : '#f4a261';
       ctx.strokeStyle = '#ffffff';

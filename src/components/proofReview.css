@@ -1,0 +1,16 @@
+.proof-dialog { width: min(1120px, 95vw); max-height: 92vh; overflow: auto; background: #20242b; color: #f2f4f8; border: 1px solid #495568; border-radius: 12px; padding: 20px; box-shadow: 0 18px 60px #0008; }
+.proof-dialog header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.proof-dialog h2 { margin: 0; font-size: 20px; }
+.proof-dialog p, .proof-dialog figcaption { color: #c1c8d4; }
+.proof-inputs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 12px 0; }
+.proof-inputs label { display: grid; gap: 6px; }
+.proof-inputs input { max-width: 100%; }
+.proof-workspace { display: grid; grid-template-columns: minmax(140px, 190px) minmax(0, 1fr); gap: 14px; }
+.proof-workspace ol { list-style: none; margin: 8px 0; padding: 0; max-height: 54vh; overflow: auto; }
+.proof-workspace li + li { margin-top: 4px; }
+.proof-workspace aside button { width: 100%; text-align: left; }
+.proof-workspace button[aria-current] { border-color: #85b5fa; background: #304767; }
+.proof-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; max-height: 62vh; overflow: auto; background: #15181d; padding: 10px; }
+.proof-pair figure { margin: 0; min-width: 0; }
+.proof-pair img { width: 100%; height: auto; display: block; margin-top: 6px; background: white; }
+@media (max-width: 650px) { .proof-inputs, .proof-workspace { grid-template-columns: 1fr; } .proof-workspace ol { max-height: 120px; } }

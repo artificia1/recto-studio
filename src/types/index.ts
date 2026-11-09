@@ -313,7 +313,7 @@ export interface CharacterStyle extends TextFormatting {
 
 export interface StoryRun extends TextFormatting {
   noteId?: string;
-  reference?: { targetElementId: string; targetParagraphId?: string; format: 'page' | 'title' };
+  reference?: { targetElementId: string; targetParagraphId?: string; format: 'page' | 'title' | 'caption' };
   indexId?: string;
   text: string;
   characterStyleId?: string;
@@ -342,7 +342,8 @@ export interface TextDataBinding { source: string; keyField: string; recordKey: 
 
 export interface TextElement extends BaseElement {
   dataBinding?: TextDataBinding;
-  generated?: { kind: 'toc' | 'index' | 'endnotes' | 'authorities'; title: string };
+  generated?: { kind: 'toc' | 'index' | 'endnotes' | 'authorities' | 'figures' | 'tables' | 'caption'; title: string };
+  captionForId?: string;
   autoExtendStory?: boolean;
   autoPaginationError?: string;
   type: 'text';
@@ -552,6 +553,9 @@ export type ToolType = 'select' | 'text' | 'frame' | 'table' | 'pen' | 'pencil' 
 
 export interface CommentPin {
   id: string;
+  pageId?: string;
+  proofPage?: number;
+  unplaced?: boolean;
   spreadId?: string;
   spreadIndex: number;
   x: number; // mm

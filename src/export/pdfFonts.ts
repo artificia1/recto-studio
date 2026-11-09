@@ -2,6 +2,7 @@ import type { jsPDF } from 'jspdf';
 import type { Font, Glyph, GlyphRun } from 'fontkit';
 import type { ProjectState } from '../types';
 import { fontManager } from '../fontManager';
+import { bindFontDrawing } from './pdfFontDrawing';
 
 export interface PdfGlyphCode { code: number; cid: number; glyphId: number; unicode: string; width: number }
 export interface PdfFontSubset {
@@ -26,6 +27,7 @@ export function pdfFontName(doc: jsPDF, family: string) {
 export function registerPdfFonts(doc: jsPDF, assets: ProjectState['embeddedFonts'] = []): string[] {
   const fonts = new Map<Font, PdfFontSubset>();
   embedded.set(doc, fonts);
+  bindFontDrawing(doc, (...args) => drawEmbeddedText(doc, ...args));
   const warnings: string[] = [];
   for (const asset of assets) {
     const font = fontManager.getFont(asset.family);
@@ -57,7 +59,7 @@ function encode(entry: PdfFontSubset, glyph: Glyph, unicode: string): PdfGlyphCo
 }
 
 /** Draw shaped glyphs as PDF text when glyph order also preserves logical Unicode order. */
-export function drawEmbeddedText(doc: jsPDF, font: Font, run: GlyphRun, text: string, x: number, y: number, size: number, invisible = false) {
+function drawEmbeddedText(doc: jsPDF, font: Font, run: GlyphRun, text: string, x: number, y: number, size: number, invisible = false) {
   const entry = embedded.get(doc)?.get(font);
   if (!entry || !text) return false;
   const logical = run.glyphs.map(glyph => String.fromCodePoint(...glyph.codePoints));

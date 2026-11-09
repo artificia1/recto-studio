@@ -1,11 +1,13 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { stateManager } from '../../state';
 import type { ProjectState } from '../../types';
+import { canCaption } from '../../engine/publicationCaptions';
 
 export default function ReferencesPanel({ state }: { state: ProjectState }) {
   const [message, setMessage] = useState('');
   const [editing, setEditing] = useState('');
   const [text, setText] = useState('');
+  const [captionText, setCaptionText] = useState('');
   const [targetPage, setTargetPage] = useState('');
   const [entryQuery, setEntryQuery] = useState('');
   const [concordance, setConcordance] = useState(''), [wholeWords, setWholeWords] = useState(true);
@@ -14,7 +16,11 @@ export default function ReferencesPanel({ state }: { state: ProjectState }) {
     try { action(); setMessage(message); } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
   };
   const head = stateManager.getStoryHead(state.selectedElementId || '');
-  const createList = (kind: 'toc' | 'index' | 'endnotes' | 'authorities') => act(() => {
+  const selected = state.spreads[state.activeSpreadIndex]?.elements.find(element => element.id === state.selectedElementId);
+  const caption = state.spreads.flatMap(spread => spread.elements).find(element => element.type === 'text' && element.captionForId === selected?.id && element.generated?.kind === 'caption');
+  const savedCaption = caption?.type === 'text' ? caption.generated?.title : undefined;
+  useEffect(() => { setCaptionText(savedCaption || ''); }, [selected?.id, savedCaption]);
+  const createList = (kind: Parameters<typeof stateManager.createPublicationList>[0]) => act(() => {
     const spread = targetPage ? state.spreads.find(spread => spread.pages.some(page => page.id === targetPage)) : undefined;
     if (targetPage && (!spread || spread.elements.some(element => element.pageId === targetPage))) throw new Error('Choose an empty page or add a new page at the end.');
     stateManager.createPublicationList(kind, targetPage || undefined); setTargetPage('');
@@ -36,9 +42,17 @@ export default function ReferencesPanel({ state }: { state: ProjectState }) {
       <button className="sm-btn" onClick={() => createList('index')}>Create or update index</button>
       <button className="sm-btn" onClick={() => createList('endnotes')}>Create or update endnotes</button>
       <button className="sm-btn" onClick={() => createList('authorities')}>Create or update authorities</button>
+      <button className="sm-btn" onClick={() => createList('figures')}>Create or update list of figures</button>
+      <button className="sm-btn" onClick={() => createList('tables')}>Create or update list of tables</button>
       <button className="sm-btn" onClick={() => act(() => stateManager.refreshPublicationReferences())}>Refresh references</button>
     </div>
-    {head?.generated && <button className="sm-btn" onClick={() => act(() => stateManager.makePublicationListStatic(head.id), 'List is now ordinary editable text and will no longer refresh.')}>Make selected list static</button>}
+    {head?.generated && <button className="sm-btn" onClick={() => act(() => stateManager.makePublicationListStatic(head.id), 'Generated text converted to ordinary editable text.')}>Make selected generated text static</button>}
+    {selected && canCaption(selected) && <details><summary>Numbered caption</summary>
+      <label>Caption text<input maxLength={500} value={captionText} onInput={event => setCaptionText(event.currentTarget.value)}/></label>
+      <button className="sm-btn" disabled={!captionText.trim()} onClick={() => act(() => stateManager.saveObjectCaption(selected.id, captionText), 'Numbered caption saved.')}>Save numbered caption</button>
+      {caption && <button className="sm-btn" onClick={() => stateManager.zoomToElement(caption.id)}>Go to caption</button>}
+      <p>Figures and tables count separately in each section. Insert a live reference from Story Editor.</p>
+    </details>}
     <details><summary>Marked text references</summary>
       <label>Index concordance<textarea aria-label="Index concordance" rows={5} value={concordance} onInput={event => setConcordance(event.currentTarget.value)} placeholder={'term\tTopic > Subtopic > Detail\tSee also: Related topic'}/></label>
       <p>One term per line. Optional tab-separated topic hierarchy and “See:” or “See also:” targets. Existing index markers, notes and references are preserved.</p>

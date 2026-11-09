@@ -528,6 +528,32 @@ export class StateManager {
     }
   }
 
+  public importProofNotes(notes: CommentPin[], expectedRevision: number) {
+    if (this.getDocumentRevision() !== expectedRevision) throw new Error('The publication changed during review import. Compare it again before importing comments.');
+    if (notes.length > 2000) throw new Error('Import up to 2,000 proof notes at once.');
+    const ids = new Set(this.state.comments?.map(note => note.id));
+    const additions = notes.filter(note => {
+      if (ids.has(note.id)) return false;
+      ids.add(note.id);
+      return true;
+    });
+    if (!additions.length) return 0;
+    this.state.comments = [...this.state.comments || [], ...structuredClone(additions)];
+    this.pushHistory(); this.notify();
+    return additions.length;
+  }
+
+  public placeProofNote(commentId: string) {
+    const note = this.state.comments?.find(item => item.id === commentId && item.proofPage);
+    const spread = this.getActiveSpread();
+    const selected = spread.elements.find(element => element.id === this.state.selectedElementId);
+    const page = spread.pages.find(item => item.id === selected?.pageId) || spread.pages[0];
+    if (!note || !page) throw new Error('Select a page for this review note.');
+    Object.assign(note, { pageId: page.id, spreadId: spread.id, spreadIndex: this.state.activeSpreadIndex, unplaced: false,
+      x: selected?.x ?? this.state.settings.margins.insideMm, y: selected?.y ?? this.state.settings.margins.topMm });
+    this.pushHistory(); this.notify();
+  }
+
   public updateComment(commentId: string, text: string) {
     const note = this.state.comments?.find(note => note.id === commentId);
     if (!note) throw new Error('This review note no longer exists.');
@@ -3639,7 +3665,7 @@ export class StateManager {
     if (recordHistory) { this.history.push(this.state); this.notify(); }
   }
 
-  public insertStoryReference(frameId: string, start: number, end: number, targetElementId: string, targetParagraphId?: string, format: 'page' | 'title' = 'page') {
+  public insertStoryReference(frameId: string, start: number, end: number, targetElementId: string, targetParagraphId?: string, format: 'page' | 'title' | 'caption' = 'page') {
     const head = this.assertStoryEditable(frameId);
     if (!this.getElementById(targetElementId)) throw new Error('Choose an existing reference target.');
     const content = insertRun(this.getStoryContent(frameId), start, end, { text: '…', reference: { targetElementId, targetParagraphId, format } });
@@ -3684,14 +3710,14 @@ export class StateManager {
     this.pushHistory(); this.notify();
   }
 
-  public createPublicationList(kind: 'toc' | 'index' | 'endnotes' | 'authorities', targetPageId?: string): TextElement {
+  public createPublicationList(kind: 'toc' | 'index' | 'endnotes' | 'authorities' | 'figures' | 'tables', targetPageId?: string): TextElement {
     const settings = this.state.settings;
     const width = settings.widthMm - settings.margins.insideMm - settings.margins.outsideMm;
     const height = settings.heightMm - settings.margins.topMm - settings.margins.bottomMm;
     if (width < 10 || height < 10) throw new Error('Page margins leave too little space for a publication list.');
     const existing = storyHeads(this.state).find(head => head.generated?.kind === kind);
     if (existing) { this.refreshPublicationReferences(); this.zoomToElement(existing.id); return existing; }
-    const title = kind === 'toc' ? 'Contents' : kind === 'index' ? 'INDEX' : kind === 'authorities' ? 'Table of Authorities' : 'Endnotes';
+    const title = { toc: 'Contents', index: 'INDEX', authorities: 'Table of Authorities', endnotes: 'Endnotes', figures: 'List of Figures', tables: 'List of Tables' }[kind];
     let spread = this.state.spreads.find(spread => spread.pages.some(page => page.id === targetPageId));
     const id = crypto.randomUUID();
     if (!spread) {
@@ -3717,8 +3743,36 @@ export class StateManager {
     const head = this.getStoryHead(frameId);
     if (!head) return;
     delete head.generated;
+    delete head.captionForId;
     if (head.storyContent) head.storyContent.paragraphs.forEach(paragraph => paragraph.runs.forEach(run => { delete run.reference; }));
     this.pushHistory(); this.notify();
+  }
+
+  public saveObjectCaption(targetId: string, description: string) {
+    const title = description.trim();
+    if (!title || title.length > 500 || /[\r\n]/.test(title)) throw new Error('Enter a caption of up to 500 characters on one line.');
+    const spread = this.state.spreads.find(item => item.elements.some(element => element.id === targetId));
+    const target = spread?.elements.find(item => item.id === targetId);
+    if (!spread || !target || target.pasteboard || (target.type !== 'image' && (target.type !== 'table' || target.prevFrameId))) throw new Error('Select an image or the first frame of a table on a page.');
+    const current = this.state.spreads.flatMap(item => item.elements).find((item): item is TextElement => item.type === 'text' && item.generated?.kind === 'caption' && item.captionForId === targetId);
+    if (current) {
+      if (current.locked || this.state.layers.find(layer => layer.id === current.layerId)?.locked) throw new Error('Unlock the caption before editing it.');
+      current.generated!.title = title;
+      this.pushHistory(); this.notify(); return current;
+    }
+    const settings = this.state.settings;
+    const height = Math.min(20, settings.heightMm);
+    const x = Math.max(0, Math.min(target.x, settings.widthMm - 20));
+    const below = target.y + target.height + 2;
+    const y = below + height <= settings.heightMm ? below : Math.max(0, target.y - height - 2);
+    const frame: TextElement = { id: `caption-${crypto.randomUUID()}`, type: 'text', pageId: target.pageId, layerId: target.layerId,
+      x, y, width: Math.min(settings.widthMm - x, Math.max(65, target.width)), height,
+      rotation: 0, opacity: 1, locked: false, zIndex: target.zIndex + 1, text: title, storyContent: plainStory(title),
+      generated: { kind: 'caption', title }, captionForId: targetId,
+      fontFamily: 'Times', fontSizePt: 10, lineHeight: 1.3, letterSpacingPt: 0, color: '#111111', alignment: 'left',
+      columns: 1, columnGutterMm: 0, paddingMm: 0, backgroundColor: 'transparent', borderColor: 'transparent', borderWidthMm: 0 };
+    spread.elements.push(frame); this.pushHistory(); this.notify();
+    return frame;
   }
 
   public updateFootnoteSettings(updates: Partial<FootnoteSettings>) {

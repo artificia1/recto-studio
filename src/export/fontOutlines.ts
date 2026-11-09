@@ -1,6 +1,6 @@
 import type { Font } from 'fontkit';
 import type { jsPDF } from 'jspdf';
-import { drawEmbeddedText } from './pdfFonts';
+import { drawEmbeddedText } from './pdfFontDrawing';
 
 /** Measure custom text with the same shaped advances used for PDF drawing. */
 export function fontTextWidth(font: Font, text: string, sizePt: number): number {
