@@ -7,6 +7,7 @@ import { publicationHeadings } from '../engine/publicationReferences';
 import { savePublicationFile } from '../desktop';
 import type { PdfStructureGroup } from './pdfSemantics';
 import { installPdfFonts } from './pdfFontResources';
+import { installPdfGradients } from './pdfGradients';
 
 export interface PdfContentTag { page: number; mcid: number; role: string; text?: string; alt?: string; order: number; parentId?: string }
 export function elementPdfTag(state: ProjectState, element: CanvasElement, page: number, mcid: number): PdfContentTag | undefined {
@@ -70,6 +71,7 @@ export async function finishPdf(doc: jsPDF, state: ProjectState, spots: FreeTone
       colors.set(PDFName.of(`CS_${name}`), context.obj([PDFName.of('Separation'), PDFName.of(name), PDFName.of('DeviceCMYK'), fn]));
     }
   }
+  installPdfGradients(doc, pdf);
   if (tags) {
     const root = context.obj({ Type: 'StructTreeRoot' }), rootRef = context.register(root);
     const document = context.obj({ Type: 'StructElem', S: 'Document', P: rootRef }), documentRef = context.register(document);

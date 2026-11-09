@@ -29,6 +29,11 @@ font faces in the receiving application. Verify the handoff in InDesign before
 replacing a production document. Advanced effects, unsupported objects, arbitrary
 spot swatch definitions, and exact InDesign composition still require review.
 
+Editable single-contour Bézier artwork and supported linear and radial gradient
+fills travel in both directions. Gradient stops retain their process CMYK values.
+Check handoffs that use compound paths, special inks, custom gradient midpoints,
+or skewed and non-uniformly scaled gradient frames in the receiving application.
+
 ## INDD recovery is not layout import
 
 The binary INDD database is not decoded by Recto. Its optional content-recovery

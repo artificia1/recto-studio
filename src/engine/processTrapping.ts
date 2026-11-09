@@ -7,7 +7,7 @@ export function calculateProcessTraps(elements: CanvasElement[], colour: (css: s
   if (!Number.isFinite(widthPt) || widthPt <= 0 || widthPt > 2) throw new Error('Choose a trap width above 0 and no greater than 2 pt.');
   const candidates = elements.filter((element): element is ShapeElement | VectorPathElement => (element.type === 'shape' || element.type === 'path') && !!element.fillColor && !['none', 'transparent'].includes(element.fillColor) &&
     !(element.strokeWidthMm > 0 && element.strokeColor && !['none', 'transparent'].includes(element.strokeColor)) &&
-    !element.spotColor && element.opacity === 1 && (!element.blendMode || element.blendMode === 'normal') && !element.shadow);
+    !element.fillGradient && !element.spotColor && element.opacity === 1 && (!element.blendMode || element.blendMode === 'normal') && !element.shadow);
   if (candidates.length > 500) throw new Error('Automatic trapping is limited to 500 opaque filled objects per page.');
   const records = candidates.flatMap(element => {
     const paths = elementInkPaths(element);

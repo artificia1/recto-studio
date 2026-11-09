@@ -1,5 +1,5 @@
 import { getFreeToneColor, getSafeSpotName } from '../engine/spotColors';
-import { explicitCmyk, type Cmyk } from '../engine/inkColors';
+import { explicitCmyk, rgbColor, type Cmyk } from '../engine/inkColors';
 
 const managedColors = new WeakMap<object, ReadonlyMap<string, Cmyk>>();
 export const setManagedPdfColors = (doc: object, colors: ReadonlyMap<string, Cmyk>) => managedColors.set(doc, colors);
@@ -59,6 +59,8 @@ export function colorToCmyk(colorStr: string | undefined): [number, number, numb
       g = parseInt(m[1], 10);
       b = parseInt(m[2], 10);
     }
+  } else {
+    [r, g, b] = rgbColor(clean) || [0, 0, 0];
   }
 
   const rNorm = r / 255;

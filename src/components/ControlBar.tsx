@@ -357,7 +357,7 @@ export function ControlBar({ state }: ControlBarProps) {
             style={{ width: '22px', height: '20px', padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
             value={shp.fillColor || '#cccccc'}
             onChange={(e) =>
-              stateManager.updateElement(shp.id, { fillColor: (e.target as HTMLInputElement).value })
+              stateManager.updateElement(shp.id, { fillColor: (e.target as HTMLInputElement).value, fillGradient: undefined })
             }
           />
         </div>

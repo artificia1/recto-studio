@@ -281,6 +281,16 @@ open as individual pages. Mixed trims, asymmetric bleed, and per-page margins
 are normalized to document settings. Check fonts, line breaks and overset after
 opening. Import supports 500 pages, 5,000 objects and 32 MiB of expanded XML.
 
+Scribus 1.6 linear and circular radial fills carry over with editable stops when
+they use opaque process colours and extend the endpoint colours. The report
+flags unsupported fill settings. Edit compatible fills in **Properties →
+Gradient fill**. Use **Convert to editable path** to turn a basic shape into
+Bézier nodes while retaining its frame, fill and stroke.
+
+PDF export writes the fills as CMYK vector shadings and uses the selected ICC
+output profile for RGB stops when conversion is active. IDML and the HTML
+flipbook also carry supported fills. Check the print proof before production.
+
 ## Reusing artwork and navigating PDFs
 
 Select independent artwork, then use **Templates → Artwork library → Save

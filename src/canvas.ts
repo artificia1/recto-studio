@@ -30,6 +30,7 @@ import { stateManager, numberToSuperscript } from './state';
 import { collabSession } from './collab';
 import { registerProofCapture } from './engine/proofCapture';
 import { spotProofContext } from './engine/spotProofContext';
+import { canvasGradient, displayGradientColor } from './engine/fillGradients';
 import { assetStore } from './engine/assetStore';
 import { tableEngine } from './engine/tableEngine';
 import { tableThread } from './engine/tableCells';
@@ -2938,8 +2939,9 @@ export class SpreadCanvas {
 
       if (el.type === 'shape') {
         const shape = el as ShapeElement;
-        ctx.fillStyle = shape.fillColor || '#ffffff';
-        ctx.strokeStyle = shape.strokeColor || '#000000';
+        const gradient = !shape.spotColor && shape.fillGradient;
+        ctx.fillStyle = gradient ? canvasGradient(ctx, gradient, elScreenX, elScreenY, elScreenW, elScreenH) : displayGradientColor(shape.fillColor || '#ffffff');
+        ctx.strokeStyle = displayGradientColor(shape.strokeColor || '#000000');
         ctx.lineWidth = (shape.strokeWidthMm || 0.3) * pxPerMm;
 
         if (shape.strokeDash === 'dashed') {
@@ -2947,7 +2949,7 @@ export class SpreadCanvas {
         }
 
         if (shape.shapeKind === 'rectangle') {
-          if (shape.fillColor && shape.fillColor !== 'transparent') ctx.fillRect(elScreenX, elScreenY, elScreenW, elScreenH);
+          if (gradient || shape.fillColor && shape.fillColor !== 'transparent') ctx.fillRect(elScreenX, elScreenY, elScreenW, elScreenH);
           if (shape.strokeWidthMm > 0) ctx.strokeRect(elScreenX, elScreenY, elScreenW, elScreenH);
         } else if (shape.shapeKind === 'ellipse') {
           ctx.beginPath();
@@ -2960,7 +2962,7 @@ export class SpreadCanvas {
             0,
             Math.PI * 2
           );
-          if (shape.fillColor && shape.fillColor !== 'transparent') ctx.fill();
+          if (gradient || shape.fillColor && shape.fillColor !== 'transparent') ctx.fill();
           if (shape.strokeWidthMm > 0) ctx.stroke();
         } else if (shape.shapeKind === 'line') {
           ctx.beginPath();
@@ -3051,7 +3053,7 @@ export class SpreadCanvas {
         }
       } else if (el.type === 'path') {
         const pathEl = el as VectorPathElement;
-        this.renderVectorPath(ctx, pathEl, origin, pageStartMm, pxPerMm, isSelected, this.activePenPathId);
+        this.renderVectorPath(ctx, pathEl, origin, pageStartMm, pxPerMm, isSelected, this.activePenPathId, !!proof?.spot);
       } else if (el.type === 'table') {
         const table = el as TableElement;
         tableEngine.renderCanvasTable(ctx, table, elScreenX, elScreenY, elScreenW, elScreenH, pxPerMm, state.zoom, tableThread(state.spreads, table));
@@ -4722,7 +4724,8 @@ export class SpreadCanvas {
     pageStartMm: number,
     pxPerMm: number,
     isSelected: boolean,
-    activePathId: string | null
+    activePathId: string | null,
+    monochrome = false,
   ) {
     if (!el.nodes || el.nodes.length === 0) return;
 
@@ -4760,14 +4763,15 @@ export class SpreadCanvas {
     }
 
     // Fill
-    if (el.fillColor && el.fillColor !== 'transparent') {
-      ctx.fillStyle = el.fillColor;
+    const gradient = el.closed && el.fillGradient;
+    if (gradient || el.fillColor && el.fillColor !== 'transparent') {
+      ctx.fillStyle = gradient ? canvasGradient(ctx, gradient, elScreenX, elScreenY, el.width * pxPerMm, el.height * pxPerMm, monochrome) : displayGradientColor(el.fillColor);
       ctx.fill();
     }
 
     // Stroke
     if (el.strokeWidthMm > 0 && el.strokeColor !== 'transparent') {
-      ctx.strokeStyle = el.strokeColor;
+      ctx.strokeStyle = displayGradientColor(el.strokeColor);
       ctx.lineWidth = Math.max(0.5, el.strokeWidthMm * pxPerMm);
       ctx.lineCap = el.strokeCap || 'round';
       ctx.lineJoin = el.strokeJoin || 'round';

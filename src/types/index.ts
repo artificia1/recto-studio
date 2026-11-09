@@ -444,7 +444,16 @@ export interface EquationSource {
 
 export type ShapeKind = 'rectangle' | 'ellipse' | 'line';
 
+export interface FillGradient {
+  kind: 'linear' | 'radial';
+  /** Start and end are fractions of the frame width and height. */
+  start: { x: number; y: number };
+  end: { x: number; y: number };
+  stops: { offset: number; color: string }[];
+}
+
 export interface ShapeElement extends BaseElement {
+  fillGradient?: FillGradient;
   type: 'shape';
   shapeKind: ShapeKind;
   fillColor: string;
@@ -510,6 +519,7 @@ export interface TextOnPathSettings {
 }
 
 export interface VectorPathElement extends BaseElement {
+  fillGradient?: FillGradient;
   type: 'path';
   nodes: BezierNode[];
   closed: boolean;

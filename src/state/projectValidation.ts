@@ -1,4 +1,5 @@
-import type { ProjectState } from '../types';
+import type { FillGradient, ProjectState } from '../types';
+import { validGradient } from '../engine/fillGradients';
 import { resolveMaster } from '../engine/masterInheritance';
 import { cascadeStyles } from '../engine/styleInheritance';
 import { revisedStory } from '../engine/storyRevisions';
@@ -70,6 +71,11 @@ const object = (schema: Schema): Validator => (value, path) => {
 const point = object({ x: number, y: number });
 const alignment = choice('left', 'center', 'right', 'justify');
 const stroke = { strokeColor: text, strokeWidthMm: nonnegative, strokeDash: choice('solid', 'dashed') };
+const fillGradient = optional((value, path) => {
+  const point = object({ x: number, y: number });
+  object({ kind: choice('linear', 'radial'), start: point, end: point, stops: array(object({ offset: number, color: text })) })(value, path);
+  if (!validGradient(value as FillGradient)) fail(path, 'invalid gradient geometry or colour stops');
+});
 const typography = { fontFamily: text, fontSizePt: positive };
 const grepRule = object({ id: identifier, pattern: text, color: optional(text), bold: optional(boolean), italic: optional(boolean) });
 const paragraphStyle = object({
@@ -120,10 +126,10 @@ const elementSchemas: Record<string, Schema> = {
     focalPoint: optional(object({ x: (value, path) => { number(value, path); if ((value as number) < 0 || (value as number) > 1) fail(path, 'must be between 0 and 1'); }, y: (value, path) => { number(value, path); if ((value as number) < 0 || (value as number) > 1) fail(path, 'must be between 0 and 1'); } })),
     borderColor: text, borderWidthMm: nonnegative, altText: optional(text), proxySrc: optional(text),
   },
-  shape: { shapeKind: choice('rectangle', 'ellipse', 'line'), fillColor: text, ...stroke },
+  shape: { shapeKind: choice('rectangle', 'ellipse', 'line'), fillColor: text, fillGradient, ...stroke },
   path: {
     nodes: array(object({ x: number, y: number, handleIn: optional(point), handleOut: optional(point) })),
-    closed: boolean, fillColor: text, ...stroke,
+    closed: boolean, fillColor: text, fillGradient, ...stroke,
     strokeCap: choice('butt', 'round', 'square'), strokeJoin: choice('miter', 'round', 'bevel'),
   },
   table: {

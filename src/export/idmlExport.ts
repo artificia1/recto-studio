@@ -12,6 +12,9 @@ import { assetStore } from '../engine/assetStore';
 import { contentOf } from '../engine/publicationReferences';
 import { resolveParagraphStyle, resolveRunStyle } from '../engine/storyLayout';
 import { explicitCmyk, rgbColor } from '../engine/inkColors';
+import { gradientCoordinates } from '../engine/fillGradients';
+import type { FillGradient } from '../types';
+import { shapeToPath } from '../engine/vectorPath';
 
 const MM_TO_PT = 72 / 25.4; // 1 mm = 2.83464567 pt
 const IDML_NS = 'http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging';
@@ -30,6 +33,7 @@ function escapeXml(str: string): string {
 export function exportDocumentToIdml(state: ProjectState): Uint8Array {
   const files: Record<string, string | Uint8Array> = {};
   const swatches = new Map<string, string>();
+  const gradients = new Map<string, string>();
   const swatch = (color?: string) => {
     if (!color || color === 'transparent' || color === 'none') return 'Swatch/None';
     const cmyk = explicitCmyk(color);
@@ -41,6 +45,20 @@ export function exportDocumentToIdml(state: ProjectState): Uint8Array {
     const id = `Color/${name}`;
     if (!swatches.has(id)) swatches.set(id, `<Color Self="${id}" Name="${name}" Model="Process" Space="${space}" ColorValue="${channels.join(' ')}"/>`);
     return id;
+  };
+  const paintFill = (fill: string, gradient: FillGradient | undefined, x: number, y: number, width: number, height: number) => {
+    if (!gradient) return `FillColor="${swatch(fill)}"`;
+    const type = gradient.kind === 'linear' ? 'Linear' : 'Radial';
+    const stops = gradient.stops.map(stop => ({ location: stop.offset * 100, color: swatch(stop.color) }));
+    const key = JSON.stringify([type, stops]);
+    let id = gradients.get(key);
+    if (!id) {
+      id = 'Gradient/RectoGradient' + (gradients.size + 1);
+      gradients.set(key, id);
+    }
+    const { x1, y1, x2, y2, radius } = gradientCoordinates(gradient, x, y, width, height);
+    const angle = Math.atan2(y1 - y2, x2 - x1) * 180 / Math.PI;
+    return `FillColor="${id}" GradientFillStart="${x1} ${y1}" GradientFillLength="${radius}" GradientFillAngle="${angle}"`;
   };
   const styleIds = new Map(state.paragraphStyles.map((style, index) => [style.id, `ParagraphStyle/RectoStyle${index + 1}`]));
   const parents = new Map(state.masterSpreads.map((master, index) => [master.id, `MasterSpread_m${index + 1}`]));
@@ -85,11 +103,11 @@ export function exportDocumentToIdml(state: ProjectState): Uint8Array {
 
   const pwPt = Math.round(state.settings.widthMm * MM_TO_PT * 100) / 100;
   const phPt = Math.round(state.settings.heightMm * MM_TO_PT * 100) / 100;
-  const bleedPt = Math.round((state.settings.bleedMm || 3) * MM_TO_PT * 100) / 100;
-  const topPt = Math.round((state.settings.margins.topMm || 20) * MM_TO_PT * 100) / 100;
-  const btmPt = Math.round((state.settings.margins.bottomMm || 20) * MM_TO_PT * 100) / 100;
-  const leftPt = Math.round((state.settings.margins.insideMm || 25) * MM_TO_PT * 100) / 100;
-  const rightPt = Math.round((state.settings.margins.outsideMm || 18) * MM_TO_PT * 100) / 100;
+  const bleedPt = Math.round((state.settings.bleedMm ?? 3) * MM_TO_PT * 100) / 100;
+  const topPt = Math.round((state.settings.margins.topMm ?? 20) * MM_TO_PT * 100) / 100;
+  const btmPt = Math.round((state.settings.margins.bottomMm ?? 20) * MM_TO_PT * 100) / 100;
+  const leftPt = Math.round((state.settings.margins.insideMm ?? 25) * MM_TO_PT * 100) / 100;
+  const rightPt = Math.round((state.settings.margins.outsideMm ?? 18) * MM_TO_PT * 100) / 100;
   const facingPages = Boolean(state.settings.facingPages);
 
   // 1. mimetype (MUST be first, uncompressed)
@@ -182,7 +200,7 @@ ${styleDefs}
 
     const elementXmls: string[] = [];
 
-    for (const el of spread.elements) {
+    for (const el of [...spread.elements].sort((a, b) => a.zIndex - b.zIndex)) {
       if (el.pasteboard || el.editorialOnly) continue;
       const pageIdx = Math.max(0, spread.pages.findIndex(p => p.id === el.pageId));
       const spreadXMm = (pageIdx * state.settings.widthMm) + el.x;
@@ -269,10 +287,26 @@ ${styleDefs}
           <Link Self="Link_${escapeXml(el.id)}" AssetURL="${escapeXml(fileName)}" StoredState="${b64Data ? 'Embedded' : 'Normal'}" />
         </Image>
       </Rectangle>`);
+      } else if (el.type === 'path' || (el.type === 'shape' && el.shapeKind === 'line')) {
+        const path = el.type === 'path' ? el : shapeToPath(el);
+        if (path.nodes.length < 2) continue;
+        const type = path.closed ? 'Polygon' : 'GraphicLine';
+        const radians = path.rotation * Math.PI / 180;
+        const cos = Math.cos(radians), sin = Math.sin(radians), cx = (x1Pt + x2Pt) / 2, cy = (y1Pt + y2Pt) / 2;
+        const matrix = [cos, sin, -sin, cos, cx - cos * cx + sin * cy, cy - sin * cx - cos * cy].join(' ');
+        const point = (x: number, y: number) => `${x1Pt + x * MM_TO_PT} ${y1Pt + y * MM_TO_PT}`;
+        const nodes = path.nodes.map(node => `<PathPointType Anchor="${point(node.x, node.y)}" LeftDirection="${point(node.x + (node.handleIn?.x || 0), node.y + (node.handleIn?.y || 0))}" RightDirection="${point(node.x + (node.handleOut?.x || 0), node.y + (node.handleOut?.y || 0))}"/>`).join('');
+        const fill = paintFill(path.closed ? path.fillColor : 'transparent', path.closed ? path.fillGradient : undefined, x1Pt, y1Pt, el.width * MM_TO_PT, el.height * MM_TO_PT);
+        elementXmls.push(`<${type} Self="${type}_${escapeXml(el.id)}" ItemLayer="RectoLayer" ${fill} StrokeColor="${swatch(path.strokeColor)}" StrokeWeight="${path.strokeWidthMm * MM_TO_PT}" ContentType="Unassigned" ItemTransform="${matrix}">
+          <Properties><PathGeometry><GeometryPathType PathOpen="${!path.closed}"><PathPointArray>${nodes}</PathPointArray></GeometryPathType></PathGeometry></Properties></${type}>`);
       } else if (el.type === 'shape') {
         const shape = el as ShapeElement;
-        const paint = `ItemLayer="RectoLayer" FillColor="${swatch(shape.fillColor)}" StrokeColor="${swatch(shape.strokeColor)}" StrokeWeight="${shape.strokeWidthMm * MM_TO_PT}"`;
-        const pathGeometry = `
+        const fill = paintFill(shape.fillColor, shape.shapeKind !== 'line' && !shape.spotColor ? shape.fillGradient : undefined, x1Pt, y1Pt, el.width * MM_TO_PT, el.height * MM_TO_PT);
+        const paint = `ItemLayer="RectoLayer" ${fill} StrokeColor="${swatch(shape.strokeColor)}" StrokeWeight="${shape.strokeWidthMm * MM_TO_PT}"`;
+        const pathGeometry = shape.shapeKind === 'ellipse' ? `<PathGeometry><GeometryPathType PathOpen="false"><PathPointArray>${shapeToPath(shape).nodes.map(node => {
+          const point = (x: number, y: number) => `${x1Pt + x * MM_TO_PT} ${y1Pt + y * MM_TO_PT}`;
+          return `<PathPointType Anchor="${point(node.x, node.y)}" LeftDirection="${point(node.x + node.handleIn!.x, node.y + node.handleIn!.y)}" RightDirection="${point(node.x + node.handleOut!.x, node.y + node.handleOut!.y)}"/>`;
+        }).join('')}</PathPointArray></GeometryPathType></PathGeometry>` : `
           <PathGeometry>
             <GeometryPathType PathOpen="false">
               <PathPointArray>
@@ -309,7 +343,12 @@ ${elementXmls.join('\n')}
   </${spread.kind}>
 </idPkg:${spread.kind}>`;
   });
-  files['Resources/Graphic.xml'] = `<?xml version="1.0" encoding="UTF-8"?>\n<idPkg:Graphic xmlns:idPkg="${IDML_NS}" DOMVersion="8.0">${[...swatches.values()].join('\n')}</idPkg:Graphic>`;
+  const gradientXml = [...gradients].map(([key, id]) => {
+    const [type, stops] = JSON.parse(key) as ['Linear' | 'Radial', { location: number; color: string }[]];
+    return `<Gradient Self="${id}" Name="${id.split('/')[1]}" Type="${type}">${stops.map((stop, index) =>
+      `<GradientStop Self="${id}/stop${index}" StopColor="${stop.color}" Location="${stop.location}" Midpoint="50"/>`).join('')}</Gradient>`;
+  });
+  files['Resources/Graphic.xml'] = `<?xml version="1.0" encoding="UTF-8"?>\n<idPkg:Graphic xmlns:idPkg="${IDML_NS}" DOMVersion="8.0">${[...swatches.values(), ...gradientXml].join('\n')}</idPkg:Graphic>`;
 
   // 6. designmap.xml
   files['designmap.xml'] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

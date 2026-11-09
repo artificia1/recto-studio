@@ -55,7 +55,7 @@ export function checkPrinterProfile(profile: PrinterProfile, state: ProjectState
           if (profile.minDpi && !dpi) add('review', `Resolution is unknown for ${label}.`);
           else if (dpi && dpi < profile.minDpi) add('error', `${label} is approximately ${Math.round(dpi)} dpi. ${profile.name} requires ${profile.minDpi} dpi.`);
         }
-        const inks = element.type === 'shape' || element.type === 'path' ? [element.fillColor, element.strokeColor] :
+        const inks = element.type === 'shape' || element.type === 'path' ? [...(element.fillGradient?.stops.map(stop => stop.color) || [element.fillColor]), element.strokeColor] :
           element.type === 'text' ? [element.color, element.backgroundColor, element.borderColor,
             ...element.textContent?.paragraphs.flatMap(paragraph => paragraph.runs.map(run => run.color)) || []] : [];
         for (const color of inks) {

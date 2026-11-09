@@ -4,10 +4,12 @@ import { fontManager } from '../../fontManager';
 import { PAGE_PRESETS, ProjectState, CanvasElement, TextElement, ImageElement, ShapeElement, TableElement, ParagraphStyle, VectorPathElement } from '../../types';
 import { MathInput } from '../common/MathInput';
 import { getAllFreeToneColors } from '../../engine/spotColors';
+import { shapeToPath } from '../../engine/vectorPath';
 import { lazy, Suspense } from 'preact/compat';
 const TableInspector = lazy(() => import('./TableInspector'));
 const TextInspector = lazy(() => import('./TextInspector'));
 const TextWrapInspector = lazy(() => import('./TextWrapInspector'));
+const GradientInspector = lazy(() => import('./GradientInspector'));
 
 interface PropertiesTabProps {
   state: ProjectState;
@@ -488,8 +490,14 @@ export function PropertiesTab({ state }: PropertiesTabProps) {
       )}
       {selectedEl.type === 'image' && <ImageInspector element={selectedEl as ImageElement} />}
       {selectedEl.type === 'shape' && <ShapeInspector element={selectedEl as ShapeElement} />}
+      {selectedEl.type === 'shape' && <div className="inspector-section"><button className="sm-btn"
+        disabled={selectedEl.locked || !!selectedEl.spotColor || !!state.layers.find(layer => layer.id === selectedEl.layerId)?.locked}
+        onClick={() => stateManager.updateElement(selectedEl.id, shapeToPath(selectedEl))}>Convert to editable path</button></div>}
       {selectedEl.type === 'table' && <Suspense fallback={<p role="status">Loading table controls…</p>}><TableInspector element={selectedEl as TableElement} /></Suspense>}
       {selectedEl.type === 'path' && <VectorPathInspector element={selectedEl as VectorPathElement} />}
+      {((selectedEl.type === 'shape' && selectedEl.shapeKind !== 'line') || (selectedEl.type === 'path' && selectedEl.closed)) &&
+        <Suspense fallback={null}><GradientInspector key={selectedEl.id} element={selectedEl}
+          disabled={selectedEl.locked || !!selectedEl.spotColor || !!state.layers.find(layer => layer.id === selectedEl.layerId)?.locked} /></Suspense>}
       <Suspense fallback={<p role="status">Loading wrap controls…</p>}><TextWrapInspector element={selectedEl} /></Suspense>
     </div>
   );
@@ -702,7 +710,7 @@ function ShapeInspector({ element }: { element: ShapeElement }) {
             value={element.fillColor || '#e5e5e5'}
             onInput={(e) =>
               stateManager.updateElement(element.id, {
-                fillColor: (e.target as HTMLInputElement).value,
+                fillColor: (e.target as HTMLInputElement).value, fillGradient: undefined,
               })}
           />
         </label>
@@ -808,7 +816,7 @@ function VectorPathInspector({ element }: { element: VectorPathElement }) {
             disabled={element.locked}
             onInput={(e) =>
               stateManager.updateElement(element.id, {
-                fillColor: (e.target as HTMLInputElement).value,
+                fillColor: (e.target as HTMLInputElement).value, fillGradient: undefined,
               })
             }
           />
@@ -816,11 +824,11 @@ function VectorPathInspector({ element }: { element: VectorPathElement }) {
         <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <input
             type="checkbox"
-            checked={element.fillColor === 'transparent' || !element.fillColor}
+            checked={!element.fillGradient && (element.fillColor === 'transparent' || !element.fillColor)}
             disabled={element.locked}
             onChange={(e) =>
               stateManager.updateElement(element.id, {
-                fillColor: (e.target as HTMLInputElement).checked ? 'transparent' : '#e5e5e5',
+                fillColor: (e.target as HTMLInputElement).checked ? 'transparent' : '#e5e5e5', fillGradient: undefined,
               })
             }
           />

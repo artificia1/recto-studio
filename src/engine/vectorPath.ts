@@ -1,4 +1,18 @@
-import type { BezierNode } from '../types';
+import type { BezierNode, ShapeElement, VectorPathElement } from '../types';
+
+export function shapeToPath(shape: ShapeElement): VectorPathElement {
+  const { shapeKind, width, height, ...properties } = shape;
+  const rx = width / 2, ry = height / 2, k = 4 / 3 * Math.tan(Math.PI / 8);
+  const nodes: BezierNode[] = shapeKind === 'ellipse' ? [
+    { x: rx, y: 0, handleIn: { x: -rx * k, y: 0 }, handleOut: { x: rx * k, y: 0 } },
+    { x: width, y: ry, handleIn: { x: 0, y: -ry * k }, handleOut: { x: 0, y: ry * k } },
+    { x: rx, y: height, handleIn: { x: rx * k, y: 0 }, handleOut: { x: -rx * k, y: 0 } },
+    { x: 0, y: ry, handleIn: { x: 0, y: ry * k }, handleOut: { x: 0, y: -ry * k } },
+  ] : shapeKind === 'line' ? [{ x: 0, y: 0 }, { x: width, y: height }] :
+    [{ x: 0, y: 0 }, { x: width, y: 0 }, { x: width, y: height }, { x: 0, y: height }];
+  return { ...properties, width, height, type: 'path', nodes, closed: shapeKind !== 'line', strokeCap: 'butt', strokeJoin: 'miter',
+    ...(shapeKind === 'line' ? { fillColor: 'transparent', fillGradient: undefined } : {}) };
+}
 
 /** Handles are offsets from their anchors, including the closing curve. */
 export function bezierNodesToSvgPath(nodes: BezierNode[], closed: boolean): string {

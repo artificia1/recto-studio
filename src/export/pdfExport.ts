@@ -27,6 +27,7 @@ import { prepareManagedPdf } from './iccPdf';
 import { publicationWrapObjects, wrappedPlainContent } from '../engine/publicationWrap';
 import { formatOpenTypeText } from '../engine/legacyTypography';
 import { drawVectorPathPdf } from './vectorPathPdf';
+import { drawPdfGradient, hasPdfGradients } from './pdfGradients';
 import { documentColor } from './pdfColors';
 import type { PdfContentTag } from './pdfStructure';
 import type { PressStandard } from './pdfPress';
@@ -275,7 +276,8 @@ export async function exportDocumentToPdf(
 
       if (el.type === 'shape') {
         const shape = el as ShapeElement;
-        const fill = !!shape.spotColor || !!shape.fillColor && !['transparent', 'none'].includes(shape.fillColor);
+        const gradient = shape.shapeKind !== 'line' && !shape.spotColor && shape.fillGradient;
+        const fill = !gradient && (!!shape.spotColor || !!shape.fillColor && !['transparent', 'none'].includes(shape.fillColor));
         const stroke = shape.strokeWidthMm > 0 && !!shape.strokeColor && !['transparent', 'none'].includes(shape.strokeColor);
         if (shape.spotColor) {
           applySpotColor(doc, shape.spotColor, false);
@@ -287,6 +289,10 @@ export async function exportDocumentToPdf(
         doc.setLineDashPattern(shape.strokeDash === 'dashed' ? [2, 1] : [], 0);
         const paint = fill && stroke ? 'FD' : fill ? 'F' : stroke ? 'S' : undefined;
 
+        if (gradient) drawPdfGradient(doc, gradient, elX, elY, shape.width, shape.height, () => {
+          if (shape.shapeKind === 'rectangle') doc.rect(elX, elY, shape.width, shape.height, null);
+          else doc.ellipse(elX + shape.width / 2, elY + shape.height / 2, shape.width / 2, shape.height / 2, null);
+        });
         if (shape.shapeKind === 'rectangle') {
           if (paint) doc.rect(elX, elY, shape.width, shape.height, paint);
         } else if (shape.shapeKind === 'ellipse') {
@@ -624,7 +630,7 @@ export async function exportDocumentToPdf(
   for (const warning of preflightWarnings) options.onWarning?.(warning);
   semantic?.validate();
 
-  let finalized = (structure || usedSpotColors.size || usedPdfFonts(doc).length) ? await (structure || await import('./pdfStructure')).finishPdf(
+  let finalized = (structure || usedSpotColors.size || usedPdfFonts(doc).length || hasPdfGradients(doc)) ? await (structure || await import('./pdfStructure')).finishPdf(
     doc, state, [...usedSpotColors.values()], semantic?.tags || (structure ? tags : undefined), options.compress !== false,
     semantic?.groups, structure ? pagesToExport.map(({ page }) => page.id) : undefined,
   ) : undefined;

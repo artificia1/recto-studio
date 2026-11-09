@@ -11,12 +11,14 @@ import {
   CanvasElement,
   DEFAULT_LAYERS,
   StoryContent, StoryParagraph, StoryRun,
+  FillGradient, VectorPathElement,
 } from './types';
 import { readZip, uint8ArrayToBase64 } from './zip';
 import { DEFAULT_PARAGRAPH_STYLES, DEFAULT_MASTER_SPREADS } from './state';
 import { isInddBuffer } from './engine/inddParser';
 import { reflowStoryState } from './engine/publicationReferences';
 import { storyText } from './engine/storyContent';
+import { validGradient } from './engine/fillGradients';
 
 const decodeStoryXml = (text: string) => text.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (entity, value: string) => {
   if (value.startsWith('#')) { const n = value[1].toLowerCase() === 'x' ? parseInt(value.slice(2), 16) : Number(value.slice(1)); return n > 0 && n <= 0x10ffff && !(n >= 0xd800 && n <= 0xdfff) ? String.fromCodePoint(n) : entity; }
@@ -369,7 +371,7 @@ export function parseIdmlTextVariables(files: Map<string, Uint8Array>): Map<stri
   return variablesMap;
 }
 
-export function parseIdmlColors(files: Map<string, Uint8Array>): Map<string, string> {
+export function parseIdmlColors(files: Map<string, Uint8Array>, processInk?: Map<string, string>): Map<string, string> {
   const colorsMap = new Map<string, string>();
   colorsMap.set('Color/Black', '#000000');
   colorsMap.set('Color/Paper', '#ffffff');
@@ -403,6 +405,9 @@ export function parseIdmlColors(files: Map<string, Uint8Array>): Map<string, str
             colorsMap.set(self, hex);
             colorsMap.set(self.replace(/^(Color|Swatch)\//, ''), hex);
           } else {
+            if (space === 'CMYK' && vals.length >= 4 && vals.slice(0, 4).every(value => value >= 0 && value <= 100) && extractXmlAttr(cTag, 'Model') !== 'Spot') {
+              processInk?.set(self, `cmyk(${vals.slice(0, 4).join(',')})`);
+            }
             const c = (vals[0] || 0) / 100;
             const m = (vals[1] || 0) / 100;
             const y = (vals[2] || 0) / 100;
@@ -489,7 +494,39 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
   }
   const files = await readZip(idmlBuffer);
   const textDecoder = new TextDecoder();
-  const colorsMap = parseIdmlColors(files);
+  const processInks = new Map<string, string>();
+  const colorsMap = parseIdmlColors(files, processInks);
+  const gradientSwatches = new Map<string, Pick<FillGradient, 'kind' | 'stops'>>();
+  for (const [name, data] of files) {
+    if (!/\/Graphic\.xml$/i.test(name)) continue;
+    for (const entry of extractXmlTags(new TextDecoder().decode(data), 'Gradient')) {
+      const id = extractXmlAttr(entry, 'Self');
+      const type = extractXmlAttr(entry, 'Type');
+      if (!id || (type !== 'Linear' && type !== 'Radial')) continue;
+      const children = extractXmlTags(entry, 'GradientStop');
+      if (children.length < 2 || children.length > 16 || children.some(stop => Number(extractXmlAttr(stop, 'Midpoint') ?? 50) !== 50)) continue;
+      const stops = children.map(stop => {
+        const key = extractXmlAttr(stop, 'StopColor') || '';
+        return { offset: Number(extractXmlAttr(stop, 'Location') ?? NaN) / 100, color: processInks.get(key) || colorsMap.get(key) || '' };
+      }).sort((a, b) => a.offset - b.offset);
+      gradientSwatches.set(id, { kind: type === 'Linear' ? 'linear' : 'radial', stops });
+    }
+  }
+  const frameGradient = (xml: string, bounds: ReturnType<typeof parseElementSpreadBounds>): FillGradient | undefined => {
+    const swatch = gradientSwatches.get(extractXmlAttr(xml, 'FillColor') || '');
+    if (!swatch || bounds.widthPt <= 0 || bounds.heightPt <= 0) return;
+    const source = (extractXmlAttr(xml, 'GradientFillStart') || '').trim().split(/\s+/).map(Number);
+    const length = Number(extractXmlAttr(xml, 'GradientFillLength'));
+    const angle = -Number(extractXmlAttr(xml, 'GradientFillAngle') ?? 0) * Math.PI / 180;
+    const [a, b, c, d, tx, ty] = parseTransform(extractXmlAttr(xml, 'ItemTransform'));
+    if (source.length !== 2 || !source.every(Number.isFinite) || !(length > 0) || !Number.isFinite(angle)) return;
+    if (Math.abs(a * c + b * d) > 1e-6 || Math.abs(a * a + b * b - c * c - d * d) > 1e-6) return;
+    const point = (x: number, y: number) => ({ x: (a * x + c * y + tx - bounds.spreadLeft) / bounds.widthPt,
+      y: (b * x + d * y + ty - bounds.spreadTop) / bounds.heightPt });
+    const [x, y] = source;
+    const gradient = { ...swatch, start: point(x, y), end: point(x + Math.cos(angle) * length, y + Math.sin(angle) * length) };
+    return validGradient(gradient) ? gradient : undefined;
+  };
   const textVariablesMap = parseIdmlTextVariables(files);
 
   // 1. Parse Preferences & Document Settings
@@ -519,7 +556,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
     else if (ppsAttr !== null) facingPages = parseInt(ppsAttr) > 1;
 
     const bleedPt = parseFloat(extractXmlAttr(xml, 'DocumentBleedTopOffset') || '8.5');
-    if (!isNaN(bleedPt) && bleedPt > 0) bleedMm = Math.round(bleedPt * PT_TO_MM * 10) / 10;
+    if (Number.isFinite(bleedPt) && bleedPt >= 0) bleedMm = Math.round(bleedPt * PT_TO_MM * 10) / 10;
 
     const topPt = parseFloat(extractXmlAttr(xml, 'Top') || '56.7');
     const btmPt = parseFloat(extractXmlAttr(xml, 'Bottom') || '56.7');
@@ -813,6 +850,12 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
     }));
 
     const spreadElements: CanvasElement[] = [];
+    const sourceOrder = new Map<string, number>();
+    for (const match of xml.matchAll(/<(?:TextFrame|Rectangle|Oval|Polygon|GraphicLine)\b[^>]*>/gi)) {
+      const id = extractXmlAttr(match[0], 'Self');
+      if (id) sourceOrder.set(id, match.index);
+    }
+    const order = (tag: string, fallback: number) => sourceOrder.get(extractXmlAttr(tag, 'Self') || '') ?? fallback;
 
     // Helper to find target page for an element in spread coordinates
     const findTargetPage = (b: { spreadLeft: number; spreadTop: number; widthPt: number; heightPt: number }): { page: PageSpreadBox; localX: number; localY: number } => {
@@ -903,7 +946,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
         height: heightMm,
         rotation: 0,
         opacity: 1,
-        zIndex: 10 + tfIdx,
+        zIndex: order(tfXml, 10 + tfIdx),
         locked: false,
         text: storyData ? storyData.text : 'Text Frame',
         fontFamily: storyData?.fontFamily || 'serif',
@@ -1013,7 +1056,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
           height: heightMm,
           rotation: 0,
           opacity: 1,
-          zIndex: 5 + rIdx,
+          zIndex: order(rXml, 5 + rIdx),
           locked: false,
           src: imageSrc,
           fitMode: 'fill',
@@ -1024,6 +1067,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
         };
         spreadElements.push(imgEl);
       } else {
+        const fillGradient = frameGradient(rXml, b);
         const shapeEl: ShapeElement = {
           id: `idml-rect-${sIdx}-${rIdx}`,
           type: 'shape',
@@ -1034,10 +1078,10 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
           height: heightMm,
           rotation: 0,
           opacity: 1,
-          zIndex: 4 + rIdx,
+          zIndex: order(rXml, 4 + rIdx),
           locked: false,
           shapeKind: 'rectangle',
-          fillColor: rFillColor,
+          fillColor: fillGradient?.stops[0].color || rFillColor, fillGradient,
           strokeColor: rStrokeColor,
           strokeWidthMm: rStrokeWidthMm,
           strokeDash: 'solid',
@@ -1072,6 +1116,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
         ? Math.round(oStrokeWeightPt * PT_TO_MM * 10) / 10
         : 0;
 
+      const fillGradient = frameGradient(oXml, b);
       const ovalEl: ShapeElement = {
         id: `idml-oval-${sIdx}-${oIdx}`,
         type: 'shape',
@@ -1082,15 +1127,54 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
         height: heightMm,
         rotation: 0,
         opacity: 1,
-        zIndex: 4 + oIdx,
+        zIndex: order(oXml, 4 + oIdx),
         locked: false,
         shapeKind: 'ellipse',
-        fillColor: oFillColor,
+        fillColor: fillGradient?.stops[0].color || oFillColor, fillGradient,
         strokeColor: oStrokeColor,
         strokeWidthMm: oStrokeWidthMm,
         strokeDash: 'solid',
       };
       spreadElements.push(ovalEl);
+    }
+
+    for (const [index, item] of [...extractXmlTags(xml, 'Polygon'), ...extractXmlTags(xml, 'GraphicLine')].entries()) {
+      const contours = extractXmlTags(item, 'GeometryPathType');
+      if (contours.length !== 1 || /<Image\b/i.test(item)) continue;
+      const contour = contours[0];
+      const [a, b, c, d, tx, ty] = parseTransform(extractXmlAttr(item, 'ItemTransform'));
+      const point = (value: string | null) => {
+        const [x, y] = (value || '').trim().split(/\s+/).map(Number);
+        return { x: a * x + c * y + tx, y: b * x + d * y + ty };
+      };
+      const points = extractXmlTags(contour, 'PathPointType');
+      if (points.length < 2 || points.length > 10_000) continue;
+      const anchors = points.map(tag => point(extractXmlAttr(tag, 'Anchor')));
+      if (anchors.some(({ x, y }) => !Number.isFinite(x) || !Number.isFinite(y))) continue;
+      const xs = anchors.map(p => p.x), ys = anchors.map(p => p.y);
+      const spreadLeft = Math.min(...xs), spreadTop = Math.min(...ys);
+      const widthPt = Math.max(...xs) - spreadLeft, heightPt = Math.max(...ys) - spreadTop;
+      const bounds = { spreadLeft, spreadTop, widthPt, heightPt };
+      const { page, localX, localY } = findTargetPage(bounds);
+      const nodes = points.map((tag, i) => {
+        const anchor = anchors[i];
+        const handle = (key: string) => {
+          const target = point(extractXmlAttr(tag, key));
+          return Number.isFinite(target.x) && Number.isFinite(target.y) && (target.x !== anchor.x || target.y !== anchor.y)
+            ? { x: (target.x - anchor.x) * PT_TO_MM, y: (target.y - anchor.y) * PT_TO_MM } : undefined;
+        };
+        return { x: (anchor.x - spreadLeft) * PT_TO_MM, y: (anchor.y - spreadTop) * PT_TO_MM, handleIn: handle('LeftDirection'), handleOut: handle('RightDirection') };
+      });
+      const closed = /^<Polygon\b/i.test(item) && extractXmlAttr(contour, 'PathOpen') !== 'true';
+      const fillGradient = closed ? frameGradient(item, bounds) : undefined;
+      const ink = (attr: string) => { const key = extractXmlAttr(item, attr) || ''; return processInks.get(key) || resolveIdmlColor(key || 'Swatch/None', undefined, colorsMap); };
+      const strokeWeight = Number(extractXmlAttr(item, 'StrokeWeight') || 0);
+      const path: VectorPathElement = { id: `idml-path-${sIdx}-${index}`, type: 'path', pageId: page.id, x: localX, y: localY,
+        width: widthPt * PT_TO_MM, height: heightPt * PT_TO_MM, rotation: 0, opacity: 1, zIndex: order(item, 4 + index), locked: extractXmlAttr(item, 'Locked') === 'true',
+        nodes, closed, fillGradient, fillColor: closed ? fillGradient?.stops[0].color || ink('FillColor') : 'transparent',
+        strokeColor: ink('StrokeColor'), strokeWidthMm: Number.isFinite(strokeWeight) ? Math.max(0, strokeWeight * PT_TO_MM) : 0,
+        strokeDash: 'solid', strokeCap: 'butt', strokeJoin: 'miter' };
+      spreadElements.push(path);
     }
 
     if (master) {

@@ -1,7 +1,8 @@
 import { DEFAULT_LAYERS } from '../types';
-import type { BaseElement, BezierNode, CanvasElement, Layer, MasterSpread, Page, ProjectState, Spread, StoryContent, StoryParagraph, TextElement, TextFormatting } from '../types';
+import type { BaseElement, BezierNode, CanvasElement, FillGradient, Layer, MasterSpread, Page, ProjectState, Spread, StoryContent, StoryParagraph, TextElement, TextFormatting } from '../types';
 import { INITIAL_STATE } from '../state/defaults';
 import { storyText } from '../engine/storyContent';
+import { validGradient } from '../engine/fillGradients';
 import { child, children, parseManuscriptXml } from './manuscriptXml';
 import type { XmlNode } from './manuscriptXml';
 
@@ -143,6 +144,7 @@ export function parseScribus(xml: string, filename = 'Untitled.sla'): ScribusImp
   const activeLayerId = layers.find(layer => layer.visible && !layer.locked)?.id || layers[0].id;
 
   const colours = new Map(children(doc, 'COLOR').map(node => [node.attrs.NAME, node.attrs]));
+  const namedGradients = new Map(children(doc, 'Gradient').map(node => [node.attrs.Name, node]));
   const colour = (name?: string, shade = 100): string => {
     if (!name || name === 'None') return 'transparent';
     const c = colours.get(name);
@@ -272,7 +274,7 @@ export function parseScribus(xml: string, filename = 'Untitled.sla'): ScribusImp
       opacity: 1 - clamp(number(o.TransValue), 0, 1), layerId: layerIds.get(o.LAYER) || activeLayerId,
       editorialOnly: nonprinting || o.PRINTABLE === '0' || nonprintingLayers.has(o.LAYER) || undefined,
     };
-    if (number(o.GRTYP) || number(o.GRTYPS) || number(o.GRTYPM) || o.pattern) warnings.add('Some gradients, patterns or masks were reduced to solid fills.');
+    if (number(o.GRTYPS) || number(o.GRTYPM) || o.pattern) warnings.add('Some stroke gradients, patterns or masks were simplified.');
     if (number(o.TransValueS) || number(o.TransBlend) || number(o.TransBlendS)) warnings.add('Some stroke transparency or object blend settings were simplified.');
     if (number(o.TEXTFLOWMODE)) warnings.add('Imported object text wrap needs to be reapplied.');
     const fill = colour(o.PCOLOR, number(o.SHADE, 100)), stroke = colour(o.PCOLOR2, number(o.SHADE2, 100));
@@ -318,6 +320,25 @@ export function parseScribus(xml: string, filename = 'Untitled.sla'): ScribusImp
       element = { ...base, ...path, type: 'path', fillColor: path.closed ? fill : 'transparent', strokeColor: stroke,
         strokeWidthMm, strokeCap: 'butt', strokeJoin: 'miter', strokeDash: number(o.PLINEART) > 1 ? 'dashed' : 'solid' };
     } else { skip('unsupported object type ' + type); continue; }
+    if (number(o.GRTYP) && !o.pattern) {
+      const gradientType = number(o.GRTYP);
+      const source = o.GRNAME ? namedGradients.get(o.GRNAME) : node;
+      const radial = gradientType === 7;
+      const sx = number(o.GRSTARTX), sy = number(o.GRSTARTY);
+      const extend = number(o.GRExt ?? source?.attrs.Ext, 3);
+      const compatible = (gradientType === 6 || radial) && extend === 3 && number(o.GRSCALE, 1) === 1 && !number(o.GRSKEW) &&
+        (!radial || (Math.abs(number(o.GRFOCALX, sx) - sx) < 0.001 && Math.abs(number(o.GRFOCALY, sy) - sy) < 0.001));
+      const stops = (source ? children(source, 'CSTOP') : []).map(({ attrs }) => ({
+        offset: number(attrs.RAMP, -1), color: colour(attrs.NAME, number(attrs.SHADE, 100)), opacity: number(attrs.TRANS, 1),
+      })).sort((a, b) => a.offset - b.offset);
+      const gradient: FillGradient = { kind: radial ? 'radial' : 'linear', start: { x: sx / w, y: sy / h },
+        end: { x: number(o.GRENDX) / w, y: number(o.GRENDY) / h }, stops: stops.map(({ offset, color }) => ({ offset, color })) };
+      if (((element.type === 'shape' && element.shapeKind !== 'line') || (element.type === 'path' && element.closed)) &&
+        compatible && stops.every(stop => stop.opacity === 1) && validGradient(gradient)) {
+        element.fillGradient = gradient;
+        element.fillColor = gradient.stops[0].color;
+      } else warnings.add('Some gradients use unsupported geometry, repeat modes, transparency or frame types. Review the source appearance.');
+    }
     target.elements.push(element);
     imported++;
   }

@@ -11,12 +11,24 @@ import { bezierNodesToSvgPath, escapeXml } from './epubExport';
 import { calculateImageFitting, formatOpenTypeText } from './canvas';
 
 import { stateManager } from './state';
+import { displayGradientColor, gradientCoordinates } from './engine/fillGradients';
+import type { FillGradient } from './types';
 
 export interface FlipbookExportOptions {
   download?: boolean;
 }
 
 import { embeddedFontCss } from './export/fontAssets';
+
+function svgGradient(gradient: FillGradient | undefined, id: string, width: number, height: number) {
+  if (!gradient) return '';
+  const { x1, y1, x2, y2, radius } = gradientCoordinates(gradient, 0, 0, width, height);
+  const radial = gradient.kind === 'radial';
+  const tag = radial ? 'radialGradient' : 'linearGradient';
+  const geometry = radial ? `cx="${x1}" cy="${y1}" r="${radius}"` : `x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"`;
+  const stops = gradient.stops.map(stop => `<stop offset="${stop.offset}" stop-color="${escapeXml(displayGradientColor(stop.color))}"/>`).join('');
+  return `<defs><${tag} id="${id}" gradientUnits="userSpaceOnUse" ${geometry}>${stops}</${tag}></defs>`;
+}
 
 export function generateFlipbookHtml(state: ProjectState): string {
   const widthMm = state.settings.widthMm || 210;
@@ -55,7 +67,7 @@ export function generateFlipbookHtml(state: ProjectState): string {
   function renderPageContent(p: FlatPage): string {
     let elementsHtml = '';
 
-    for (const el of p.elements) {
+    for (const [elementIndex, el] of p.elements.entries()) {
       const elXPx = Math.round(el.x * PX_PER_MM * 10) / 10;
       const elYPx = Math.round(el.y * PX_PER_MM * 10) / 10;
       const elWPx = Math.round(el.width * PX_PER_MM * 10) / 10;
@@ -64,6 +76,7 @@ export function generateFlipbookHtml(state: ProjectState): string {
       const opacity = `opacity: ${el.opacity ?? 1}; mix-blend-mode: ${{ normal: 'normal', multiply: 'multiply', screen: 'screen', overlay: 'overlay' }[el.blendMode || 'normal'] || 'normal'};`;
       const zIndex = `z-index: ${el.zIndex || 1};`;
       const baseStyle = `position: absolute; left: ${elXPx}px; top: ${elYPx}px; width: ${elWPx}px; height: ${elHPx}px; ${transform} ${opacity} ${zIndex} box-sizing: border-box;`;
+      const fillId = `fill-${p.pageNumber}-${elementIndex}`;
 
       if (el.type === 'text') {
         const textEl = el as TextElement;
@@ -160,19 +173,24 @@ export function generateFlipbookHtml(state: ProjectState): string {
         const strokeWPx = Math.max(1, Math.round((pathEl.strokeWidthMm || 1) * PX_PER_MM));
         elementsHtml += `    <div style="${baseStyle}">\n`;
         elementsHtml += `      <svg viewBox="0 0 ${elWPx} ${elHPx}" style="width: 100%; height: 100%; overflow: visible;">\n`;
-        elementsHtml += `        <path d="${d}" fill="${pathEl.fillColor || 'none'}" stroke="${pathEl.strokeColor || '#000'}" stroke-width="${strokeWPx}" stroke-linecap="${pathEl.strokeCap || 'round'}" stroke-linejoin="${pathEl.strokeJoin || 'round'}"${strokeDash}/>\n`;
+        const definition = svgGradient(pathEl.closed ? pathEl.fillGradient : undefined, fillId, elWPx, elHPx);
+        const fill = definition ? `url(#${fillId})` : escapeXml(displayGradientColor(pathEl.fillColor || 'none'));
+        elementsHtml += `${definition}        <path d="${d}" fill="${fill}" stroke="${pathEl.strokeColor || '#000'}" stroke-width="${strokeWPx}" stroke-linecap="${pathEl.strokeCap || 'round'}" stroke-linejoin="${pathEl.strokeJoin || 'round'}"${strokeDash}/>\n`;
         elementsHtml += '      </svg>\n    </div>\n';
       } else if (el.type === 'shape') {
         const shape = el as ShapeElement;
         const strokeWPx = shape.strokeWidthMm > 0 ? Math.max(1, Math.round(shape.strokeWidthMm * PX_PER_MM)) : 0;
         elementsHtml += `    <div style="${baseStyle}">\n`;
         elementsHtml += `      <svg viewBox="0 0 ${elWPx} ${elHPx}" style="width: 100%; height: 100%;">\n`;
+        const definition = svgGradient(shape.shapeKind !== 'line' && !shape.spotColor ? shape.fillGradient : undefined, fillId, elWPx, elHPx);
+        const fill = definition ? `url(#${fillId})` : escapeXml(displayGradientColor(shape.fillColor || 'none'));
+        elementsHtml += definition;
         if (shape.shapeKind === 'ellipse') {
-          elementsHtml += `        <ellipse cx="${elWPx / 2}" cy="${elHPx / 2}" rx="${Math.max(1, elWPx / 2 - strokeWPx / 2)}" ry="${Math.max(1, elHPx / 2 - strokeWPx / 2)}" fill="${shape.fillColor || 'none'}" stroke="${shape.strokeColor || '#000'}" stroke-width="${strokeWPx}"/>\n`;
+          elementsHtml += `        <ellipse cx="${elWPx / 2}" cy="${elHPx / 2}" rx="${Math.max(1, elWPx / 2 - strokeWPx / 2)}" ry="${Math.max(1, elHPx / 2 - strokeWPx / 2)}" fill="${fill}" stroke="${shape.strokeColor || '#000'}" stroke-width="${strokeWPx}"/>\n`;
         } else if (shape.shapeKind === 'line') {
           elementsHtml += `        <line x1="0" y1="${elHPx / 2}" x2="${elWPx}" y2="${elHPx / 2}" stroke="${shape.strokeColor || '#000'}" stroke-width="${strokeWPx || 1}"/>\n`;
         } else {
-          elementsHtml += `        <rect x="${strokeWPx / 2}" y="${strokeWPx / 2}" width="${Math.max(1, elWPx - strokeWPx)}" height="${Math.max(1, elHPx - strokeWPx)}" fill="${shape.fillColor || 'none'}" stroke="${shape.strokeColor || '#000'}" stroke-width="${strokeWPx}"/>\n`;
+          elementsHtml += `        <rect x="${strokeWPx / 2}" y="${strokeWPx / 2}" width="${Math.max(1, elWPx - strokeWPx)}" height="${Math.max(1, elHPx - strokeWPx)}" fill="${fill}" stroke="${shape.strokeColor || '#000'}" stroke-width="${strokeWPx}"/>\n`;
         }
         elementsHtml += '      </svg>\n    </div>\n';
       }
