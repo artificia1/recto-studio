@@ -252,6 +252,7 @@ export interface Layer {
   name: string;
   colorHex: string;
   visible: boolean;
+  printable?: boolean;
   locked: boolean;
   order: number;
 }
@@ -263,6 +264,7 @@ export const DEFAULT_LAYERS: Layer[] = [
 ];
 
 export interface BaseElement {
+  nonprinting?: boolean;
   conditionId?: string;
   groupId?: string;
   pasteboard?: boolean;

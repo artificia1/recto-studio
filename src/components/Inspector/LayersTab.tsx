@@ -153,6 +153,11 @@ export function LayersTab({ state }: LayersTabProps) {
         </div>
       </div>
 
+      {layers.filter(layer => layer.id === state.activeLayerId).map(layer => <label key={layer.id} className="publication-panel">
+        <input type="checkbox" checked={layer.printable !== false} onChange={event => stateManager.updateLayer(layer.id, { printable: event.currentTarget.checked })} />
+        Include “{layer.name}” in publication output
+      </label>)}
+
       {/* Selected Element Quick Layer Assignment */}
       {selectedElements.length > 0 && (
         <div

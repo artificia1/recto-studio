@@ -2,6 +2,7 @@ import { PDFDict, PDFDocument, PDFName, PDFString } from 'pdf-lib';
 import type { jsPDF } from 'jspdf';
 import { pdfCode, usedPdfFonts } from './pdfFonts';
 import { compileVariableTrueType } from './variableTrueTypeSubset';
+import { compileCff2 } from './cff2Subset';
 
 const identity = { Registry: PDFString.of('Adobe'), Ordering: PDFString.of('Identity'), Supplement: 0 };
 
@@ -23,19 +24,22 @@ export function installPdfFonts(doc: jsPDF, pdf: PDFDocument) {
   const { context } = pdf;
   const pages = pdf.getPages();
   for (const [index, entry] of usedPdfFonts(doc).entries()) {
-    const { font, cff, subset } = entry;
+    const { font, program } = entry;
+    const cff = program.type === 'cff' || program.type === 'cff2';
     const glyphs = [...entry.glyphs.values()];
     const prefix = index.toString(26).replace(/./g, digit => String.fromCharCode(65 + parseInt(digit, 26))).padStart(6, 'A');
-    const name = `${prefix}+${(font.postscriptName || 'RectoEmbedded').replace(/[^A-Za-z0-9_.-]/g, '-')}`;
+    const family = (font.postscriptName || 'RectoEmbedded').replace(/[^A-Za-z0-9_.-]/g, '-');
+    const name = program.type === 'full-truetype' ? family : `${prefix}+${family}`;
     const glyphIds = new Map(glyphs.map(glyph => [glyph.cid, glyph.glyphId]));
-    const bytes = entry.variable
-      ? compileVariableTrueType(font, [0, ...[...glyphIds].sort(([a], [b]) => a - b).map(([, id]) => id)])
-      : subset.encode();
+    const sortedIds = () => [0, ...[...glyphIds].sort(([a], [b]) => a - b).map(([, id]) => id)];
+    const compiled = program.type === 'cff2' ? compileCff2(font, sortedIds(), name) : undefined;
+    const bytes = program.type === 'full-truetype' ? program.bytes : program.type === 'cff2' ? compiled!.bytes :
+      program.type === 'variable-truetype' ? compileVariableTrueType(font, sortedIds()) : program.subset.encode();
     const stream = context.register(context.flateStream(bytes, cff ? { Subtype: 'CIDFontType0C' } : { Length1: bytes.length }));
     const scale = 1000 / font.unitsPerEm;
     const bbox = font.bbox;
     const descriptor = context.register(context.obj({ Type: 'FontDescriptor', FontName: name,
-      Flags: 4 | (font.italicAngle ? 64 : 0), FontBBox: [bbox.minX, bbox.minY, bbox.maxX, bbox.maxY].map(value => value * scale),
+      Flags: 4 | (font.italicAngle ? 64 : 0), FontBBox: (compiled?.bounds || [bbox.minX, bbox.minY, bbox.maxX, bbox.maxY]).map(value => value * scale),
       ItalicAngle: font.italicAngle || 0, Ascent: font.ascent * scale, Descent: font.descent * scale,
       CapHeight: (font.capHeight || font.ascent) * scale, StemV: 80, [cff ? 'FontFile3' : 'FontFile2']: stream }));
     const widths = [...new Map(glyphs.map(glyph => [glyph.cid, glyph.width]))].sort(([a], [b]) => a - b);

@@ -5,12 +5,14 @@ import { fontManager } from '../fontManager';
 import { bindFontDrawing } from './pdfFontDrawing';
 
 export interface PdfGlyphCode { code: number; cid: number; glyphId: number; unicode: string; width: number }
+type FontProgram = { type: 'cff' | 'truetype' | 'variable-truetype'; subset: ReturnType<Font['createSubset']> }
+  | { type: 'cff2'; cids: Map<number, number> }
+  | { type: 'full-truetype'; bytes: Uint8Array };
+
 export interface PdfFontSubset {
   resource: string;
   font: Font;
-  subset: ReturnType<Font['createSubset']>;
-  cff: boolean;
-  variable: boolean;
+  program: FontProgram;
   glyphs: Map<string, PdfGlyphCode>;
   pages: Set<number>;
 }
@@ -34,13 +36,23 @@ export function registerPdfFonts(doc: jsPDF, assets: ProjectState['embeddedFonts
     if (!font || fonts.has(font)) continue;
     const tables = (font as Font & { directory?: { tables: Record<string, unknown> } }).directory?.tables || {};
     const rights = font['OS/2']?.fsType as { noEmbedding?: boolean; noSubsetting?: boolean; bitmapOnly?: boolean } | undefined;
-    const cff = !!tables['CFF '];
-    if ((!cff && !tables.glyf) || rights?.noEmbedding || rights?.noSubsetting || rights?.bitmapOnly) {
-      warnings.push(`Font “${asset.family}” remains outlined because its format or embedding permissions prevent subsetting.`);
+    let program: FontProgram | undefined;
+    if (!rights?.noEmbedding && !rights?.bitmapOnly) {
+      if (rights?.noSubsetting) {
+        if (tables.glyf && !tables.fvar) {
+          const source = atob(asset.data);
+          // Only a standalone sfnt can be embedded byte-for-byte in FontFile2.
+          if (source.startsWith('\x00\x01\x00\x00')) program = { type: 'full-truetype', bytes: Uint8Array.from(source, char => char.charCodeAt(0)) };
+        }
+      } else if (tables['CFF ']) program = { type: 'cff', subset: font.createSubset() };
+      else if (tables.CFF2) program = { type: 'cff2', cids: new Map() };
+      else if (tables.glyf) program = { type: tables.fvar ? 'variable-truetype' : 'truetype', subset: font.createSubset() };
+    }
+    if (!program) {
+      warnings.push(`Font “${asset.family}” uses outlines because its format or embedding permissions prevent embedding.`);
       continue;
     }
-    const variable = !cff && Object.keys(font.variationAxes || {}).length > 0;
-    fonts.set(font, { resource: `RectoFont${fonts.size + 1}`, font, subset: font.createSubset(), cff, variable, glyphs: new Map(), pages: new Set() });
+    fonts.set(font, { resource: `RectoFont${fonts.size + 1}`, font, program, glyphs: new Map(), pages: new Set() });
   }
   return warnings;
 }
@@ -50,8 +62,16 @@ function encode(entry: PdfFontSubset, glyph: Glyph, unicode: string): PdfGlyphCo
   let code = entry.glyphs.get(key);
   if (!code) {
     if (entry.glyphs.size >= 65535) throw new Error(`Font “${entry.font.fullName}” uses too many distinct PDF character codes.`);
-    // Fontkit's declaration says boolean, but its subset API returns the subset glyph ID.
-    const cid = Number(entry.subset.includeGlyph(entry.font.getGlyph(glyph.id)));
+    const { program } = entry;
+    let cid = glyph.id;
+    if (program.type === 'cff2') {
+      cid = program.cids.get(glyph.id) || program.cids.size + 1;
+      if (cid >= 65535) throw new Error('A CFF2 font subset exceeds the PDF glyph limit.');
+      program.cids.set(glyph.id, cid);
+    } else if (program.type !== 'full-truetype') {
+      // Fontkit's declaration says boolean, but the API returns the subset glyph ID.
+      cid = Number(program.subset.includeGlyph(entry.font.getGlyph(glyph.id)));
+    }
     code = { code: entry.glyphs.size + 1, cid, glyphId: glyph.id, unicode, width: glyph.advanceWidth * 1000 / entry.font.unitsPerEm };
     entry.glyphs.set(key, code);
   }

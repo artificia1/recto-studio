@@ -11,7 +11,7 @@ import {
   CanvasElement,
   DEFAULT_LAYERS,
   StoryContent, StoryParagraph, StoryRun,
-  FillGradient, VectorPathElement,
+  FillGradient, Layer, VectorPathElement,
 } from './types';
 import { readZip, uint8ArrayToBase64 } from './zip';
 import { DEFAULT_PARAGRAPH_STYLES, DEFAULT_MASTER_SPREADS } from './state';
@@ -817,14 +817,34 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
 
   // 4. Determine Spread Sequence from designmap.xml
   let spreadFileOrder: string[] = [];
+  const layers: Layer[] = [];
+  const layerIds = new Map<string, string>();
+  let activeLayer: string | null = null;
   const designmapFile = files.get('designmap.xml');
   if (designmapFile) {
     const dmXml = textDecoder.decode(designmapFile);
+    activeLayer = extractXmlAttr(dmXml.match(/<Document\b[^>]*>/i)?.[0] || '', 'ActiveLayer');
+    for (const xml of extractXmlTags(dmXml, 'Layer')) {
+      const self = extractXmlAttr(xml, 'Self');
+      if (!self || layerIds.has(self)) continue;
+      const order = layers.length;
+      const id = 'idml-layer-' + (order + 1);
+      layerIds.set(self, id);
+      layers.push({ id, order, name: decodeStoryXml(extractXmlAttr(xml, 'Name') || 'Layer ' + (order + 1)),
+        colorHex: DEFAULT_LAYERS[order % DEFAULT_LAYERS.length].colorHex, visible: extractXmlAttr(xml, 'Visible') !== 'false',
+        locked: extractXmlAttr(xml, 'Locked') === 'true', printable: extractXmlAttr(xml, 'Printable') !== 'false' });
+    }
     const spreadSrcMatches = Array.from(dmXml.matchAll(/<idPkg:Spread\s+src="([^"]+)"/gi)).map((m) => m[1]);
     if (spreadSrcMatches.length > 0) {
       spreadFileOrder = spreadSrcMatches;
     }
   }
+  if (!layers.length) layers.push(...structuredClone(DEFAULT_LAYERS));
+  const itemFlags = (xml: string) => {
+    const tag = xml.slice(0, xml.indexOf('>') + 1);
+    return { layerId: layerIds.get(extractXmlAttr(tag, 'ItemLayer') || '') || layers[0].id,
+      locked: extractXmlAttr(tag, 'Locked') === 'true', nonprinting: extractXmlAttr(tag, 'Nonprinting') === 'true' || undefined };
+  };
 
   if (spreadFileOrder.length === 0) {
     spreadFileOrder = Array.from(files.keys())
@@ -962,7 +982,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
         rotation: 0,
         opacity: 1,
         zIndex: order(tfXml, 10 + tfIdx),
-        locked: false,
+        ...itemFlags(tfXml),
         text: storyData ? storyData.text : 'Text Frame',
         fontFamily: storyData?.fontFamily || 'serif',
         fontSizePt: storyData?.fontSizePt || 10,
@@ -1072,7 +1092,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
           rotation: 0,
           opacity: 1,
           zIndex: order(rXml, 5 + rIdx),
-          locked: false,
+          ...itemFlags(rXml),
           src: imageSrc,
           fitMode: 'fill',
           borderColor: rStrokeColor !== 'transparent' ? rStrokeColor : '#111111',
@@ -1094,7 +1114,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
           rotation: 0,
           opacity: 1,
           zIndex: order(rXml, 4 + rIdx),
-          locked: false,
+          ...itemFlags(rXml),
           shapeKind: 'rectangle',
           fillColor: fillGradient?.stops[0].color || rFillColor, fillGradient,
           strokeColor: rStrokeColor,
@@ -1143,7 +1163,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
         rotation: 0,
         opacity: 1,
         zIndex: order(oXml, 4 + oIdx),
-        locked: false,
+        ...itemFlags(oXml),
         shapeKind: 'ellipse',
         fillColor: fillGradient?.stops[0].color || oFillColor, fillGradient,
         strokeColor: oStrokeColor,
@@ -1185,7 +1205,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
       const ink = (attr: string) => { const key = extractXmlAttr(item, attr) || ''; return processInks.get(key) || resolveIdmlColor(key || 'Swatch/None', undefined, colorsMap); };
       const strokeWeight = Number(extractXmlAttr(item, 'StrokeWeight') || 0);
       const path: VectorPathElement = { id: `idml-path-${sIdx}-${index}`, type: 'path', pageId: page.id, x: localX, y: localY,
-        width: widthPt * PT_TO_MM, height: heightPt * PT_TO_MM, rotation: 0, opacity: 1, zIndex: order(item, 4 + index), locked: extractXmlAttr(item, 'Locked') === 'true',
+        width: widthPt * PT_TO_MM, height: heightPt * PT_TO_MM, rotation: 0, opacity: 1, zIndex: order(item, 4 + index), ...itemFlags(item),
         nodes, closed, fillGradient, fillColor: closed ? fillGradient?.stops[0].color || ink('FillColor') : 'transparent',
         strokeColor: ink('StrokeColor'), strokeWidthMm: Number.isFinite(strokeWeight) ? Math.max(0, strokeWeight * PT_TO_MM) : 0,
         strokeDash: 'solid', strokeCap: 'butt', strokeJoin: 'miter' };
@@ -1314,8 +1334,8 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
     paragraphStyles: parsedStyles,
     masterSpreads: masterSpreads.length ? masterSpreads : DEFAULT_MASTER_SPREADS,
     linkingFromFrameId: null,
-    layers: DEFAULT_LAYERS,
-    activeLayerId: 'layer-1',
+    layers,
+    activeLayerId: layerIds.get(activeLayer || '') || layers.find(layer => layer.visible && !layer.locked)?.id || layers[0].id,
   };
   const knownMasters = new Set(masterSpreads.map(master => master.id));
   for (const spread of spreads) if (spread.masterSpreadId && !knownMasters.has(spread.masterSpreadId)) spread.masterSpreadId = null;

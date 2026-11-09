@@ -12,7 +12,7 @@ import subprocess
 def main():
     home = Path(os.environ['VERAPDF_HOME']).resolve()
     java = str(Path(os.environ['JAVA_HOME']) / 'bin' / ('java.exe' if os.name == 'nt' else 'java')) if os.environ.get('JAVA_HOME') else 'java'
-    for name in ('accessible-ua1', 'accessible-continuation', 'accessible-cff', 'accessible-variable'):
+    for name in ('accessible-ua1', 'accessible-continuation', 'accessible-cff', 'accessible-variable', 'accessible-cff2', 'accessible-full-truetype'):
         path = Path('test-results/export-validation') / f'{name}.pdf'
         result = subprocess.run([java, '-cp', str(home / 'bin' / '*'), 'org.verapdf.apps.GreenfieldCliWrapper', '--flavour', 'ua1', '--format', 'json', str(path)], capture_output=True, text=True, timeout=120)
         if result.returncode:

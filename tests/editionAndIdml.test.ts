@@ -6,12 +6,38 @@ import { publicationSnapshot } from '../src/engine/publicationReferences';
 import { storyText } from '../src/engine/storyContent';
 import type { ShapeElement, TextElement } from '../src/types';
 import { readZip } from '../src/zip';
+import { prepareExportAssets } from '../src/export/publicationAssets';
 
 const frame = (id: string, pageId: string, text = ''): TextElement => ({ id, pageId, type: 'text', text, x: 20, y: 20, width: 130, height: 35,
   rotation: 0, opacity: 1, locked: false, zIndex: 1, fontFamily: 'Times', fontSizePt: 11, lineHeight: 1.3, letterSpacingPt: 0,
   color: '#263b77', alignment: 'left', columns: 1, columnGutterMm: 4, paddingMm: 0, backgroundColor: 'transparent', borderColor: 'transparent', borderWidthMm: 0 });
 
 describe('publication editions and IDML handoff', () => {
+  it('preserves layer order, visibility, locks and editable nonprinting artwork in IDML', async () => {
+    const manager = new StateManager();
+    manager.createBlankProject('A4', 'Layered handoff', false);
+    const state = manager.getState(), spread = state.spreads[0], pageId = spread.pages[0].id;
+    state.layers = [
+      { id: 'notes', name: 'Notes & guides', order: 2, colorHex: '#556677', visible: true, printable: false, locked: true },
+      { id: 'base', name: 'Main artwork', order: 0, colorHex: '#224488', visible: true, locked: false },
+      { id: 'hidden', name: 'Drafts', order: 1, colorHex: '#888888', visible: false, locked: false },
+    ];
+    state.activeLayerId = 'notes';
+    spread.elements = [{ ...frame('print', pageId, 'Published text'), layerId: 'base' },
+      { ...frame('nonprinting', pageId, 'Frame note'), layerId: 'base', nonprinting: true },
+      { ...frame('guide', pageId, 'Layer note'), layerId: 'notes' }];
+    const imported = await parseIdmlPackage(exportDocumentToIdml(state));
+    const [base, hidden, notes] = imported.layers;
+    expect(base.name).toBe('Main artwork');
+    expect(hidden).toMatchObject({ name: 'Drafts', visible: false });
+    expect(notes).toMatchObject({ name: 'Notes & guides', order: 2, visible: true, locked: true, printable: false });
+    expect(imported.activeLayerId).toBe(notes.id);
+    expect(imported.spreads[0].elements[2]).toMatchObject({ text: 'Layer note', layerId: notes.id, locked: false });
+    expect(publicationSnapshot(imported).spreads[0].elements.map(element => (element as TextElement).text)).toEqual(['Published text']);
+    imported.spreads[0].elements.push({ ...imported.spreads[0].elements[2], type: 'image', id: 'guide-image',
+      src: 'https://example.invalid/guide.png', fitMode: 'fit', borderColor: 'transparent', borderWidthMm: 0 });
+    await expect(prepareExportAssets(imported)).resolves.toBeDefined();
+  });
   it('filters conditional paragraphs and artwork on an export snapshot, keeping source copy', () => {
     const manager = new StateManager(); manager.createBlankProject('A4', 'Editions', false);
     const hidden = manager.addCondition('Teacher copy'); manager.toggleCondition(hidden.id);

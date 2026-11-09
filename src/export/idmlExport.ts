@@ -6,7 +6,7 @@
  * Generates an Adobe InDesign Interchange (.idml) ZIP package for supported objects.
  */
 
-import { ProjectState, TextElement, ImageElement, ShapeElement } from '../types';
+import { ProjectState, TextElement, ImageElement, ShapeElement, DEFAULT_LAYERS } from '../types';
 import { createZipArchive, base64ToUint8Array, uint8ArrayToBase64 } from '../zip';
 import { assetStore } from '../engine/assetStore';
 import { contentOf } from '../engine/publicationReferences';
@@ -34,6 +34,10 @@ export function exportDocumentToIdml(state: ProjectState): Uint8Array {
   const files: Record<string, string | Uint8Array> = {};
   const swatches = new Map<string, string>();
   const gradients = new Map<string, string>();
+  const layers = (state.layers?.length ? [...state.layers] : [DEFAULT_LAYERS[0]]).sort((a, b) => a.order - b.order);
+  const layerIds = new Map(layers.map((layer, index) => [layer.id, 'Layer_u' + (index + 1)]));
+  const layerXml = layers.map(layer =>
+    `<Layer Self="${layerIds.get(layer.id)}" Name="${escapeXml(layer.name)}" Visible="${layer.visible}" Locked="${layer.locked}" Printable="${layer.printable !== false}"/>`).join('\n  ');
   const swatch = (color?: string) => {
     if (!color || color === 'transparent' || color === 'none') return 'Swatch/None';
     const cmyk = explicitCmyk(color);
@@ -202,6 +206,8 @@ ${styleDefs}
 
     for (const el of [...spread.elements].sort((a, b) => a.zIndex - b.zIndex)) {
       if (el.pasteboard || el.editorialOnly) continue;
+      const itemLayer = layerIds.get(el.layerId || 'layer-1') || layerIds.get(layers[0].id);
+      const itemFlags = `ItemLayer="${itemLayer}" Locked="${el.locked}" Nonprinting="${!!el.nonprinting}"`;
       const pageIdx = Math.max(0, spread.pages.findIndex(p => p.id === el.pageId));
       const spreadXMm = (pageIdx * state.settings.widthMm) + el.x;
       const y1Pt = Math.round(el.y * MM_TO_PT * 100) / 100;
@@ -228,7 +234,7 @@ ${styleDefs}
             </GeometryPathType>
           </PathGeometry>`;
 
-        elementXmls.push(`      <TextFrame Self="${frameRefs.get(el.id)}" ParentStory="${storyId}" PreviousTextFrame="${previous}" NextTextFrame="${next}" ItemLayer="RectoLayer" FillColor="${swatch(el.backgroundColor)}" StrokeColor="${swatch(el.borderColor)}" StrokeWeight="${el.borderWidthMm * MM_TO_PT}" ContentType="TextType" ItemTransform="1 0 0 1 0 0" GeometricBounds="${boundsStr}">
+        elementXmls.push(`      <TextFrame Self="${frameRefs.get(el.id)}" ParentStory="${storyId}" PreviousTextFrame="${previous}" NextTextFrame="${next}" ${itemFlags} FillColor="${swatch(el.backgroundColor)}" StrokeColor="${swatch(el.borderColor)}" StrokeWeight="${el.borderWidthMm * MM_TO_PT}" ContentType="TextType" ItemTransform="1 0 0 1 0 0" GeometricBounds="${boundsStr}">
         <Properties>
           <GeometricBounds>${boundsStr}</GeometricBounds>${pathGeometry}
         </Properties>
@@ -276,7 +282,7 @@ ${styleDefs}
             </GeometryPathType>
           </PathGeometry>`;
 
-        elementXmls.push(`      <Rectangle Self="Rectangle_${escapeXml(el.id)}" ItemLayer="RectoLayer" ContentType="GraphicType" ItemTransform="1 0 0 1 0 0" GeometricBounds="${boundsStr}">
+        elementXmls.push(`      <Rectangle Self="Rectangle_${escapeXml(el.id)}" ${itemFlags} ContentType="GraphicType" ItemTransform="1 0 0 1 0 0" GeometricBounds="${boundsStr}">
         <Properties>
           <GeometricBounds>${boundsStr}</GeometricBounds>${pathGeometry}
         </Properties>
@@ -297,12 +303,12 @@ ${styleDefs}
         const point = (x: number, y: number) => `${x1Pt + x * MM_TO_PT} ${y1Pt + y * MM_TO_PT}`;
         const nodes = path.nodes.map(node => `<PathPointType Anchor="${point(node.x, node.y)}" LeftDirection="${point(node.x + (node.handleIn?.x || 0), node.y + (node.handleIn?.y || 0))}" RightDirection="${point(node.x + (node.handleOut?.x || 0), node.y + (node.handleOut?.y || 0))}"/>`).join('');
         const fill = paintFill(path.closed ? path.fillColor : 'transparent', path.closed ? path.fillGradient : undefined, x1Pt, y1Pt, el.width * MM_TO_PT, el.height * MM_TO_PT);
-        elementXmls.push(`<${type} Self="${type}_${escapeXml(el.id)}" ItemLayer="RectoLayer" ${fill} StrokeColor="${swatch(path.strokeColor)}" StrokeWeight="${path.strokeWidthMm * MM_TO_PT}" ContentType="Unassigned" ItemTransform="${matrix}">
+        elementXmls.push(`<${type} Self="${type}_${escapeXml(el.id)}" ${itemFlags} ${fill} StrokeColor="${swatch(path.strokeColor)}" StrokeWeight="${path.strokeWidthMm * MM_TO_PT}" ContentType="Unassigned" ItemTransform="${matrix}">
           <Properties><PathGeometry><GeometryPathType PathOpen="${!path.closed}"><PathPointArray>${nodes}</PathPointArray></GeometryPathType></PathGeometry></Properties></${type}>`);
       } else if (el.type === 'shape') {
         const shape = el as ShapeElement;
         const fill = paintFill(shape.fillColor, shape.shapeKind !== 'line' && !shape.spotColor ? shape.fillGradient : undefined, x1Pt, y1Pt, el.width * MM_TO_PT, el.height * MM_TO_PT);
-        const paint = `ItemLayer="RectoLayer" ${fill} StrokeColor="${swatch(shape.strokeColor)}" StrokeWeight="${shape.strokeWidthMm * MM_TO_PT}"`;
+        const paint = `${itemFlags} ${fill} StrokeColor="${swatch(shape.strokeColor)}" StrokeWeight="${shape.strokeWidthMm * MM_TO_PT}"`;
         const pathGeometry = shape.shapeKind === 'ellipse' ? `<PathGeometry><GeometryPathType PathOpen="false"><PathPointArray>${shapeToPath(shape).nodes.map(node => {
           const point = (x: number, y: number) => `${x1Pt + x * MM_TO_PT} ${y1Pt + y * MM_TO_PT}`;
           return `<PathPointType Anchor="${point(node.x, node.y)}" LeftDirection="${point(node.x + node.handleIn!.x, node.y + node.handleIn!.y)}" RightDirection="${point(node.x + node.handleOut!.x, node.y + node.handleOut!.y)}"/>`;
@@ -353,7 +359,7 @@ ${elementXmls.join('\n')}
   // 6. designmap.xml
   files['designmap.xml'] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <?aid style="50" type="document" readerVersion="6.0" featureSet="257"?>
-<Document xmlns:idPkg="${IDML_NS}" DOMVersion="8.0" Self="d" StoryList="${stories.join(' ')}" ActiveLayer="RectoLayer">
+<Document xmlns:idPkg="${IDML_NS}" DOMVersion="8.0" Self="d" StoryList="${stories.join(' ')}" ActiveLayer="${layerIds.get(state.activeLayerId) || layerIds.get(layers[0].id)}">
   <Properties>
     <PageWidth>${pwPt}</PageWidth>
     <PageHeight>${phPt}</PageHeight>
@@ -363,7 +369,7 @@ ${elementXmls.join('\n')}
   <idPkg:Preferences src="Resources/Preferences.xml"/>
   <idPkg:Styles src="Resources/Styles.xml"/>
   <idPkg:Graphic src="Resources/Graphic.xml"/>
-  <Layer Self="RectoLayer" Name="Artwork" Visible="true" Locked="false" Printable="true"/>
+  ${layerXml}
 ${spreadRefs.join('\n')}
 ${storyRefs.join('\n')}
 </Document>`;

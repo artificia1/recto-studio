@@ -291,6 +291,12 @@ PDF export writes the fills as CMYK vector shadings and uses the selected ICC
 output profile for RGB stops when conversion is active. IDML and the HTML
 flipbook also carry supported fills. Check the print proof before production.
 
+Press export checks that the embedded CMYK output intent matches the selected
+profile byte for byte. It also checks nested PDF artwork and patterns for
+unmanaged RGB operators and missing font programs. Use the printer's supplied
+preflight profile to validate the delivered PDF, then use the Ghent Output Suite
+to exercise the production RIP and press workflow.
+
 ## Reusing artwork and navigating PDFs
 
 Select independent artwork, then use **Templates → Artwork library → Save

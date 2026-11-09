@@ -58,9 +58,10 @@ export async function prepareExportAssets(source: ProjectState, fetchExternal = 
   const state = structuredClone(source);
   const hiddenEditions = hiddenEditionIds(state);
   const masters = masterDependencies(state.masterSpreads, state.spreads.map(spread => spread.masterSpreadId));
+  const excludedLayers = new Set(state.layers?.filter(layer => !layer.visible || layer.printable === false).map(layer => layer.id));
   const images = [...state.spreads.flatMap(spread => spread.elements), ...state.masterSpreads.filter(master => masters.has(master.id)).flatMap(master => master.elements)]
     .filter((item): item is ImageElement => item.type === 'image' && (includeHidden ||
-      (!item.pasteboard && !item.editorialOnly && !hiddenEditions.has(item.conditionId || '') && state.layers?.find(layer => layer.id === item.layerId)?.visible !== false)));
+      (!item.pasteboard && !item.editorialOnly && !item.nonprinting && !hiddenEditions.has(item.conditionId || '') && !excludedLayers.has(item.layerId || 'layer-1'))));
   const cache = new Map<string, PublicationAsset>();
   let total = 0;
   for (const image of images) {

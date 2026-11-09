@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { decodePDFRawStream, PDFDict, PDFDocument, PDFName, PDFRawStream } from 'pdf-lib';
+import { decodePDFRawStream, PDFArray, PDFDict, PDFDocument, PDFName, PDFRawStream } from 'pdf-lib';
 import { StateManager } from '../src/state/stateManager';
 import { createProfileAsset } from '../src/engine/iccProfiles';
 import { exportDocumentToPdf } from '../src/export/pdfExport';
+import { preparePressPdf } from '../src/export/pdfPress';
 import type { ShapeElement } from '../src/types';
 
 async function publication() {
@@ -17,6 +18,28 @@ async function publication() {
 }
 
 describe('guarded PDF/X preparation', () => {
+  it('checks nested Form resources and verifies the embedded output profile', async () => {
+    const manager = await publication();
+    const state = manager.getState();
+    const exported = await exportDocumentToPdf(state, { download: false, pressStandard: 'pdfx4' });
+    const bytes = exported.output('arraybuffer');
+    for (const kind of ['rgb', 'font', 'profile'] as const) {
+      const pdf = await PDFDocument.load(bytes);
+      const { context } = pdf;
+      if (kind === 'profile') {
+        const intent = pdf.catalog.lookup(PDFName.of('OutputIntents'), PDFArray).lookup(0, PDFDict);
+        intent.set(PDFName.of('DestOutputProfile'), context.register(context.flateStream('bad profile', { N: 4 })));
+      } else {
+        const resources = kind === 'font' ? context.obj({ Font: { F1: { Type: 'Font', Subtype: 'Type1', BaseFont: 'Helvetica' } } }) : context.obj({});
+        const child = context.register(context.flateStream(kind === 'rgb' ? '0 1 0 rg' : 'BT /F1 12 Tf ET',
+          { Type: 'XObject', Subtype: 'Form', BBox: [0, 0, 40, 40], Resources: resources }));
+        const parent = context.register(context.flateStream('/Child Do', { Type: 'XObject', Subtype: 'Form', BBox: [0, 0, 40, 40], Resources: { XObject: { Child: child } } }));
+        pdf.getPages()[0].node.Resources()!.set(PDFName.of('XObject'), context.obj({ Parent: parent }));
+      }
+      await expect(preparePressPdf(await pdf.save(), state, 'pdfx4')).rejects.toThrow(
+        { rgb: 'Unmanaged RGB', font: 'requires embedded fonts', profile: 'must match the selected' }[kind]);
+    }
+  }, 60000);
   it('prepares both print targets with matching identification, profiles and PDF versions', async () => {
     const manager = await publication(); mkdirSync('test-results/export-validation', { recursive: true });
     for (const standard of ['pdfx1a-2003', 'pdfx4'] as const) {

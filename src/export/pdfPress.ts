@@ -5,9 +5,35 @@ import { inspectIccHeader, profileBytes } from '../engine/iccProfiles';
 export type PressStandard = 'pdfx1a-2003' | 'pdfx4';
 export const escapeXml = (value: string) => value.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[character]!));
 
+/** Walk nested Form XObjects and tiling patterns as well as the page's own resources. */
+function* pageResources(pdf: PDFDocument) {
+  const pending = pdf.getPages().map(page => page.node.Resources()).filter((value): value is PDFDict => !!value);
+  const resourcesSeen = new Set<PDFDict>();
+  const streamsSeen = new Set<PDFRawStream>();
+  while (pending.length) {
+    const resources = pending.pop()!;
+    if (resourcesSeen.has(resources)) continue;
+    resourcesSeen.add(resources);
+    yield resources;
+    for (const key of ['XObject', 'Pattern']) {
+      const entries = resources.lookupMaybe(PDFName.of(key), PDFDict);
+      for (const [, ref] of entries?.entries() || []) {
+        const stream = pdf.context.lookup(ref);
+        if (!(stream instanceof PDFRawStream) || streamsSeen.has(stream) ||
+          !(stream.dict.get(PDFName.of('Subtype'))?.toString() === '/Form' || stream.dict.get(PDFName.of('PatternType'))?.toString() === '1')) continue;
+        streamsSeen.add(stream);
+        yield stream;
+        const nested = stream.dict.lookupMaybe(PDFName.of('Resources'), PDFDict);
+        if (nested) pending.push(nested);
+      }
+    }
+  }
+}
+
 export function requirePdfFonts(pdf: PDFDocument, unicode = false) {
-  for (const page of pdf.getPages()) {
-    const fonts = page.node.Resources()?.lookupMaybe(PDFName.of('Font'), PDFDict);
+  for (const resources of pageResources(pdf)) {
+    if (!(resources instanceof PDFDict)) continue;
+    const fonts = resources.lookupMaybe(PDFName.of('Font'), PDFDict);
     for (const [, reference] of fonts?.entries() || []) {
       const font = pdf.context.lookup(reference, PDFDict), descendants = font.lookupMaybe(PDFName.of('DescendantFonts'), PDFArray);
       const actual = descendants?.lookup(0, PDFDict) || font;
@@ -35,17 +61,31 @@ function contentOperators(bytes: Uint8Array) {
   return output;
 }
 
+function requireProcessOperators(stream: PDFRawStream) {
+  if (/(?:^|\s)(?:rg|RG)(?=\s|$)/m.test(contentOperators(decodePDFRawStream(stream).decode()))) {
+    throw new Error('Unmanaged RGB operators remain in this PDF. Convert SVG/equation artwork to an sRGB raster image before preparing a process-colour PDF/X.');
+  }
+}
+
 /** Conservative checks for Recto-generated process/spot print PDFs; not an ISO validator. */
 export async function preparePressPdf(bytes: Uint8Array, state: ProjectState, standard: PressStandard) {
   const settings = state.settings.colorManagement;
   if (!settings?.convertPdf) throw new Error('PDF/X preparation requires a CMYK output ICC profile and enabled PDF conversion.');
-  const header = inspectIccHeader(profileBytes(settings.outputProfile));
+  const expectedProfile = profileBytes(settings.outputProfile);
+  const header = inspectIccHeader(expectedProfile);
   if (standard === 'pdfx1a-2003' && header.version !== 2) throw new Error('PDF/X-1a:2003 requires an ICC v2 output profile. Use PDF/X-4 for a v4 profile.');
   const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
   requirePdfFonts(pdf);
   if (!state.settings.title.trim()) throw new Error('Set a document title before preparing PDF/X.');
   const intents = pdf.catalog.lookupMaybe(PDFName.of('OutputIntents'), PDFArray);
-  if (intents?.size() !== 1 || !intents.lookup(0, PDFDict).has(PDFName.of('DestOutputProfile'))) throw new Error('The PDF must embed exactly one output ICC profile.');
+  if (intents?.size() !== 1) throw new Error('The PDF must embed exactly one output ICC profile.');
+  const intent = intents.lookup(0, PDFDict);
+  const profile = intent.lookup(PDFName.of('DestOutputProfile'));
+  const embedded = profile instanceof PDFRawStream && profile.dict.get(PDFName.of('N'))?.toString() === '4' && decodePDFRawStream(profile).decode();
+  if (intent.get(PDFName.of('S'))?.toString() !== '/GTS_PDFX' ||
+      !embedded || embedded.length !== expectedProfile.length || embedded.some((byte, i) => byte !== expectedProfile[i])) {
+    throw new Error('The embedded PDF/X output intent must match the selected CMYK ICC profile.');
+  }
   const boxes = (values: PDFArray) => values.asArray().map(value => (value as PDFNumber).asNumber());
   const encloses = (outer: number[], inner: number[]) => outer.every(Number.isFinite) && inner.every(Number.isFinite) && inner[2] > inner[0] && inner[3] > inner[1] && inner[0] >= outer[0] - 0.01 && inner[1] >= outer[1] - 0.01 && inner[2] <= outer[2] + 0.01 && inner[3] <= outer[3] + 0.01;
   for (const page of pdf.getPages()) {
@@ -56,8 +96,9 @@ export async function preparePressPdf(bytes: Uint8Array, state: ProjectState, st
     if (standard === 'pdfx4') page.node.set(PDFName.of('Group'), pdf.context.obj({ Type: 'Group', S: 'Transparency', CS: 'DeviceCMYK', I: true }));
     const contents = page.node.Contents();
     const streams = contents instanceof PDFArray ? contents.asArray().map(value => pdf.context.lookup(value)) : [contents];
-    for (const stream of streams) if (stream instanceof PDFRawStream && /(?:^|\s)(?:rg|RG)(?=\s|$)/m.test(contentOperators(decodePDFRawStream(stream).decode()))) throw new Error('Unmanaged RGB operators remain in this PDF. Convert SVG/equation artwork to an sRGB raster image before preparing a process-colour PDF/X.');
+    for (const stream of streams) if (stream instanceof PDFRawStream) requireProcessOperators(stream);
   }
+  for (const entry of pageResources(pdf)) if (entry instanceof PDFRawStream) requireProcessOperators(entry);
   for (const [, object] of pdf.context.enumerateIndirectObjects()) {
     const dict = object instanceof PDFRawStream ? object.dict : object instanceof PDFDict ? object : undefined;
     if (!dict) continue;

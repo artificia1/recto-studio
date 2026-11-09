@@ -38,9 +38,15 @@ font axes**. Sliders preview the face live; Apply creates a named instance used 
 layout measurements, browser rendering and PDF export. Coordinates persist in
 the project and in EPUB/flipbook font CSS. Optical size is manual when an `opsz`
 axis exists. Bold/italic flags do not choose axis coordinates automatically.
-Variable TrueType instances embed a static, unhinted subset at the chosen axes.
-CFF2 and colour-only fonts still need separate handling. Each applied instance stores a
-copy of the source font bytes; avoid creating large numbers of instances in a book.
+Variable TrueType and CFF2 instances embed static, unhinted subsets at the chosen
+axes. CFF2 retains the cubic outlines in a CID-keyed CFF program with Unicode
+mappings. Colour-only fonts still need separate handling. Each applied instance
+stores a copy of the source font bytes.
+
+For standalone static TrueType files with the OpenType no-subsetting flag and
+permission to embed, the PDF contains the entire original font program. Other
+formats that require full embedding use the outline fallback. Check the font's
+license before distributing the output.
 
 Open **Links → Document fonts & replacement** to audit font references, import a
 licensed TTF/OTF/WOFF/WOFF2 source, and replace a family throughout the document.

@@ -135,7 +135,7 @@ export function parseScribus(xml: string, filename = 'Untitled.sla'): ScribusImp
   const layerIds = new Map(sourceLayers.map((node, index) => [node.attrs.NUMMER, 'sla-layer-' + index]));
   const layers: Layer[] = sourceLayers.map(({ attrs: layer }, index) => ({
     id: 'sla-layer-' + index, name: layer.NAME || 'Layer ' + (index + 1),
-    order: number(layer.LEVEL, index), visible: layer.SICHTBAR !== '0',
+    order: number(layer.LEVEL, index), visible: layer.SICHTBAR !== '0', printable: layer.DRUCKEN !== '0',
     locked: layer.EDIT === '0', colorHex: /^#[a-f\d]{6}$/i.test(layer.LAYERC || '') ? layer.LAYERC : '#0d99ff',
   }));
   const nonprintingLayers = new Set(sourceLayers.filter(node => node.attrs.DRUCKEN === '0').map(node => node.attrs.NUMMER));
@@ -272,7 +272,7 @@ export function parseScribus(xml: string, filename = 'Untitled.sla'): ScribusImp
       y: mm(number(o.YPOS) - target.y + cx * Math.sin(angle) + cy * (Math.cos(angle) - 1)),
       width: mm(w), height: mm(Math.max(0, h)), rotation, zIndex: index, locked: !!locked || o.LOCK === '1', groupId,
       opacity: 1 - clamp(number(o.TransValue), 0, 1), layerId: layerIds.get(o.LAYER) || activeLayerId,
-      editorialOnly: nonprinting || o.PRINTABLE === '0' || nonprintingLayers.has(o.LAYER) || undefined,
+      nonprinting: nonprinting || o.PRINTABLE === '0' || undefined,
     };
     if (number(o.GRTYPS) || number(o.GRTYPM) || o.pattern) warnings.add('Some stroke gradients, patterns or masks were simplified.');
     if (number(o.TransValueS) || number(o.TransBlend) || number(o.TransBlendS)) warnings.add('Some stroke transparency or object blend settings were simplified.');

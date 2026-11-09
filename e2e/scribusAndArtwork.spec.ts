@@ -39,3 +39,13 @@ test('saves a selection to the artwork library and places it with a new identity
   expect(elements).toHaveLength(2);
   expect(elements[1]).toMatchObject({ text: elements[0].text, id: expect.stringMatching(/^artwork-/), pageId: elements[0].pageId });
 });
+
+test('keeps an excluded layer visible and editable while saving its publication setting', async ({ page }) => {
+  await page.goto('./');
+  await importProject(page);
+  await page.getByRole('button', { name: 'Layers', exact: true }).click();
+  await page.getByRole('checkbox', { name: /Include .* in publication output/ }).uncheck();
+  const state = await savedProject(page);
+  expect(state.layers.find((layer: { id: string }) => layer.id === state.activeLayerId)).toMatchObject({ printable: false, visible: true, locked: false });
+  expect(state.spreads[0].elements[0].text).toBe('Browser workflow sample');
+});

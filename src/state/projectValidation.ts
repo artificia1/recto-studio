@@ -176,7 +176,7 @@ const element: Validator = (value, path) => {
     id: identifier, pageId: identifier, x: number, y: number, width: nonnegative,
     height: nonnegative, rotation: number, opacity: nonnegative, zIndex: number, locked: boolean,
     layerId: optional(identifier), ...elementSchemas[type],
-    name: optional(text), editorialOnly: optional(boolean), conditionId: optional(identifier),
+    name: optional(text), editorialOnly: optional(boolean), nonprinting: optional(boolean), conditionId: optional(identifier),
     readingOrder: optional(positive),
     textWrap: optional(object({ mode: choice('none', 'boundingBox', 'contour'), standoffMm: nonnegative })),
     anchor: optional(object({ parentTextId: identifier })),
@@ -200,7 +200,7 @@ const page = object({ id: identifier, pageNumber: count, side: choice('left', 'r
   section: optional(object({ title: text, startNumber: count, numbering: choice('arabic', 'roman-lower', 'roman-upper'), prefix: text })) });
 const spread = object({ id: identifier, masterSpreadId: optional((value, path) => { if (value !== null) identifier(value, path); }), spreadIndex: integer, pages: array(page), elements: array(element) });
 const master = object({ id: identifier, parentMasterId: optional(identifier), name: text, prefix: text, pages: array(page), elements: array(element) });
-const layer = object({ id: identifier, name: text, colorHex: text, visible: boolean, locked: boolean, order: number });
+const layer = object({ id: identifier, name: text, colorHex: text, visible: boolean, printable: optional(boolean), locked: boolean, order: number });
 
 /** Validate a detached JSON document; only missing legacy fields receive defaults. */
 export function parseProject(json: string, defaults: ProjectState): ProjectState {

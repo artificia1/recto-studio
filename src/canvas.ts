@@ -2898,9 +2898,9 @@ export class SpreadCanvas {
     });
     const inheritedIds = new Set(masterElements.map(element => element.id));
     const visibleElements = [...masterElements, ...spread.elements].filter(el => {
-      if (proof && (el.editorialOnly || el.pasteboard || (proof.spot && el.spotColor !== proof.spot))) return false;
-      if (state.previewMode && el.pasteboard) return false;
       const elLayer = layerMap.get(el.layerId || 'layer-1');
+      if (proof && (el.editorialOnly || (proof.spot && el.spotColor !== proof.spot))) return false;
+      if ((proof || state.previewMode) && (el.pasteboard || el.nonprinting || elLayer?.printable === false)) return false;
       return !elLayer || elLayer.visible !== false;
     });
     const sortedElements = [...visibleElements].sort((a, b) => {

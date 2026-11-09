@@ -6,15 +6,15 @@ export const hiddenEditionIds = (state: ProjectState) => new Set(state.condition
 /** Apply edition visibility to a detached export snapshot before composing stories. */
 export function applyEditionVisibility(state: ProjectState) {
   const hidden = hiddenEditionIds(state);
-  if (!hidden.size) return;
+  const nonprintingLayers = new Set(state.layers?.filter(layer => layer.printable === false).map(layer => layer.id));
   const removedNotes = new Set<string>();
   const excluded = new Set<string>();
   for (const spread of [...state.spreads, ...state.masterSpreads]) {
     spread.elements = spread.elements.filter(element => {
-      if (!element.conditionId || !hidden.has(element.conditionId)) return true;
+      if (!element.nonprinting && !nonprintingLayers.has(element.layerId || 'layer-1') && (!element.conditionId || !hidden.has(element.conditionId))) return true;
       excluded.add(element.id);
       if ((element.type === 'text' || element.type === 'table') && (element.prevFrameId || element.nextFrameId)) {
-        throw new Error('A hidden edition frame is linked. Apply the condition to its paragraphs or unlink the frame before export.');
+        throw new Error('An excluded frame is linked. Include it in the publication or unlink it before export.');
       }
       if (element.type === 'text') for (const paragraph of element.storyContent?.paragraphs || []) {
         for (const run of paragraph.runs) if (run.noteId) removedNotes.add(run.noteId);

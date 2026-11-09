@@ -53,7 +53,10 @@ export function generateFlipbookHtml(state: ProjectState): string {
   for (const spread of state.spreads) {
     for (const page of spread.pages) {
       pageCount++;
-      const elements = spread.elements.filter((el) => el.pageId === page.id && !el.pasteboard);
+      const elements = spread.elements.filter(el => {
+        const layer = state.layers?.find(item => item.id === (el.layerId || 'layer-1'));
+        return el.pageId === page.id && !el.pasteboard && !el.editorialOnly && !el.nonprinting && layer?.printable !== false && layer?.visible !== false;
+      });
       elements.sort((a, b) => a.zIndex - b.zIndex);
       pages.push({
         pageNumber: page.pageNumber || pageCount,

@@ -1,4 +1,4 @@
-import type { PreflightIssue, ProjectState } from '../types';
+import type { CanvasElement, PreflightIssue, ProjectState } from '../types';
 import { contentOf, layoutFrameNotes, publicationHeadings, storyHeads, textFrames } from './publicationReferences';
 import { printReadiness } from './printReadiness';
 import { tableThread } from './tableCells';
@@ -7,6 +7,8 @@ import { publicationCaptions } from './publicationCaptions';
 
 export function publicationPreflight(state: ProjectState, target: 'editor' | 'epub' | 'print' = 'editor'): PreflightIssue[] {
   const issues: PreflightIssue[] = [];
+  const hiddenLayers = new Set(state.layers?.filter(layer => !layer.visible || layer.printable === false).map(layer => layer.id));
+  const excluded = (element: CanvasElement) => element.pasteboard || element.editorialOnly || element.nonprinting || hiddenLayers.has(element.layerId || 'layer-1');
   const frames = textFrames(state).filter(frame => !frame.pasteboard);
   const allRuns = storyHeads(state).filter(head => !head.pasteboard).flatMap(head => contentOf(head).paragraphs.flatMap(paragraph => paragraph.runs.map(run => ({ run, head }))));
   const headings = publicationHeadings(state);
@@ -40,8 +42,7 @@ export function publicationPreflight(state: ProjectState, target: 'editor' | 'ep
     }
   }
   for (const spread of state.spreads) for (const element of spread.elements) if (element.type === 'image') {
-    if (element.pasteboard) continue;
-    if (element.editorialOnly || state.layers?.find(layer => layer.id === element.layerId)?.visible === false) continue;
+    if (excluded(element)) continue;
     if (!element.src) issue('MISSING_ASSET', 'This image frame has no source. Place an image or remove the placeholder before production export.', element.id);
     else if (!element.src.startsWith('data:')) issue('EXTERNAL_ASSET', 'This image is not embedded. Relink it from a local file, or let export download it; unavailable links will block export.', element.id, 'warning');
     if (!element.decorative && !element.altText?.trim()) issue('MISSING_ALT_TEXT', 'Add an image description or mark this artwork as decorative before production EPUB export.', element.id, target === 'epub' ? 'error' : 'warning');
@@ -49,11 +50,11 @@ export function publicationPreflight(state: ProjectState, target: 'editor' | 'ep
   if (state.publicationError) issue('PUBLICATION_FLOW', state.publicationError);
   const reviewedTables = new Set<string>();
   for (const spread of state.spreads) for (const table of spread.elements) {
-    if (table.type !== 'table' || table.pasteboard || table.editorialOnly || state.layers?.find(layer => layer.id === table.layerId)?.visible === false) continue;
+    if (table.type !== 'table' || excluded(table)) continue;
     const thread = tableThread(state.spreads, table), head = thread[0];
     if (head.rowSizing !== 'content' || reviewedTables.has(head.id)) continue;
     reviewedTables.add(head.id);
-    if (thread.some(frame => frame.pasteboard || frame.editorialOnly || state.layers?.find(layer => layer.id === frame.layerId)?.visible === false)) {
+    if (thread.some(excluded)) {
       issue('TABLE_LAYOUT', 'A table continuation is hidden or excluded from publication. Show every linked frame or unlink the excluded frame before PDF export.', head.id);
     }
     const layout = layoutContentTables(thread);

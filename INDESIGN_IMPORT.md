@@ -34,6 +34,11 @@ fills travel in both directions. Gradient stops retain their process CMYK values
 Check handoffs that use compound paths, special inks, custom gradient midpoints,
 or skewed and non-uniformly scaled gradient frames in the receiving application.
 
+Document layers carry their stacking order, names, visibility, locks, and
+printing settings. Per-object nonprinting flags carry over too. Use the **Layers**
+panel to include or exclude a whole layer from publication output while keeping
+its artwork editable.
+
 ## INDD recovery is not layout import
 
 The binary INDD database is not decoded by Recto. Its optional content-recovery
