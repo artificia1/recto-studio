@@ -231,8 +231,9 @@ export async function exportDocumentToPdf(
       .map(element => instantiateMasterItem(element, page.id, text => publicationText(state, text, page.pageNumber)));
     semantic?.furniture(masterElements.map(element => element.id));
     const paintOrder = (a: CanvasElement, b: CanvasElement) => (state.layers.find(layer => layer.id === a.layerId)?.order || 0) - (state.layers.find(layer => layer.id === b.layerId)?.order || 0) || a.zIndex - b.zIndex;
+    const omitInvisible = options.transparency === 'flatten' || !!semantic;
     const pageElements = [...masterElements.sort(paintOrder), ...spread.elements.filter(element => element.pageId === page.id).sort(paintOrder)]
-      .filter(element => element.opacity > 0 && !element.pasteboard && !element.editorialOnly && state.layers?.find(layer => layer.id === element.layerId)?.visible !== false);
+      .filter(element => (!omitInvisible || element.opacity > 0) && !element.pasteboard && !element.editorialOnly && state.layers?.find(layer => layer.id === element.layerId)?.visible !== false);
     const pageArtwork: CanvasElement[] = [];
     if (options.transparency === 'flatten') flattenArtwork.push(pageArtwork);
     if (options.pressStandard && pageElements.some(element => element.shadow)) throw new Error('Render object shadows into an image before preparing PDF/X; this exporter does not reproduce live shadows.');
