@@ -266,6 +266,34 @@ references → Numbered caption**. Figures and tables number separately in each
 section, including chapters assembled into a book. Insert a live reference from
 Story Editor, and generate lists of figures or tables from the same Pages panel.
 
+## Moving a publication from Scribus
+
+Open **File → Import Scribus Document** and choose an `.sla` or `.sla.gz`
+saved with Scribus 1.6. Review the import report before opening the project,
+then save it as `.recto`. Recto brings over editable text and supported text
+threads, parent page assignments, layers, basic shapes and single-contour Bézier
+paths. Linked images come in as empty frames with their filenames so you can
+relink them from files you choose. Recto reads the document locally and leaves
+external file paths untouched.
+
+Check the report for skipped objects and simplified formatting. Facing spreads
+open as individual pages. Mixed trims, asymmetric bleed, and per-page margins
+are normalized to document settings. Check fonts, line breaks and overset after
+opening. Import supports 500 pages, 5,000 objects and 32 MiB of expanded XML.
+
+## Reusing artwork and navigating PDFs
+
+Select independent artwork, then use **Templates → Artwork library → Save
+selection**. Use **Place** to insert a new editable copy on the chosen page at
+the page margins. Copies keep their internal stacking and grouping. Download
+and import `.recto-artwork` entries to share them between devices. Use direct
+formatting and embedded PNG, JPEG or WebP artwork for portable entries.
+
+Tagged screen and accessible PDFs include a nested bookmark list generated
+from the publication headings. Each bookmark opens the page that contains its
+heading. In a tagged export of a subset of the document, the bookmark list
+contains the headings on those exported pages.
+
 ## Dependency checks
 
 The project uses jsPDF 4.2.1, DOMPurify 3.4.17, and Vite 6.4.5 or their compatible

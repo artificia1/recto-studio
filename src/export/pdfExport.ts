@@ -624,7 +624,10 @@ export async function exportDocumentToPdf(
   for (const warning of preflightWarnings) options.onWarning?.(warning);
   semantic?.validate();
 
-  let finalized = (structure || usedSpotColors.size || usedPdfFonts(doc).length) ? await (structure || await import('./pdfStructure')).finishPdf(doc, state, [...usedSpotColors.values()], semantic?.tags || (structure ? tags : undefined), options.compress !== false, semantic?.groups) : undefined;
+  let finalized = (structure || usedSpotColors.size || usedPdfFonts(doc).length) ? await (structure || await import('./pdfStructure')).finishPdf(
+    doc, state, [...usedSpotColors.values()], semantic?.tags || (structure ? tags : undefined), options.compress !== false,
+    semantic?.groups, structure ? pagesToExport.map(({ page }) => page.id) : undefined,
+  ) : undefined;
   if (options.transparency === 'flatten') {
     const { flattenPdfTransparency } = await import('./transparencyFlatten');
     const result = await flattenPdfTransparency(new Uint8Array(doc.output('arraybuffer')), state, flattenArtwork, slug + bleed, options.flattenDpi || 300);

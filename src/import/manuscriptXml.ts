@@ -8,12 +8,14 @@ export function decodeXml(text: string): string {
     return value > 0 && value <= 0x10ffff && !(value >= 0xd800 && value <= 0xdfff) ? String.fromCodePoint(value) : all;
   });
 }
-export function parseManuscriptXml(xml: string): XmlNode {
+export function parseManuscriptXml(xml: string, maxNodes = Infinity): XmlNode {
   if (/<!DOCTYPE|<!ENTITY/i.test(xml)) throw new Error('DOCX XML entity declarations are not supported.');
   const root: XmlNode = { name: '#root', attrs: {}, children: [] };
   const stack = [root];
-  const tokens = xml.match(/<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!\[CDATA\[[\s\S]*?\]\]>|<[^>]+>|[^<]+/g) || [];
-  for (const token of tokens) {
+  let nodes = 0;
+  const tokens = xml.matchAll(/<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!\[CDATA\[[\s\S]*?\]\]>|<(?:[^<>"']|"[^"]*"|'[^']*')+>|[^<]+/g);
+  for (const [token] of tokens) {
+    if (++nodes > maxNodes) throw new Error('The XML exceeds the supported node count.');
     if (token.startsWith('<!--') || token.startsWith('<?')) continue;
     if (token.startsWith('<![CDATA[')) { stack.at(-1)!.children.push(token.slice(9, -3)); continue; }
     if (token.startsWith('</')) {

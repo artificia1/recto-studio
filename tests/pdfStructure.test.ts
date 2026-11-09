@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { savePublicationFile } from '../src/desktop';
 vi.mock('../src/desktop', async importOriginal => ({ ...await importOriginal<typeof import('../src/desktop')>(), savePublicationFile: vi.fn(async () => true) }));
-import { PDFArray, PDFDict, PDFDocument, PDFName } from 'pdf-lib';
+import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName } from 'pdf-lib';
 import { StateManager } from '../src/state/stateManager';
 import { exportDocumentToPdf } from '../src/export/pdfExport';
 import type { ShapeElement, TextElement } from '../src/types';
@@ -45,5 +45,34 @@ describe('PDF object resources and accessibility structure', () => {
     expect(tree.lookup(1, PDFArray).size()).toBe(2);
     expect(pdf.catalog.get(PDFName.of('Lang'))!.toString()).toContain('en');
     expect(result.output()).toContain('/ActualText <FEFF'); expect(result.output()).not.toContain('pdfuaid:part');
+  });
+
+  it('creates nested Unicode bookmarks with destinations in the selected PDF page range', async () => {
+    const manager = new StateManager();
+    manager.createBlankProject('A4', 'Bookmark test', false);
+    const heading: TextElement = {
+      id: 'heading', type: 'text', pageId: manager.getActiveSpread().pages[0].id, x: 20, y: 20, width: 140, height: 20,
+      rotation: 0, locked: false, opacity: 1, zIndex: 1, text: 'Édition (revue)', fontFamily: 'Times', fontSizePt: 20,
+      lineHeight: 1.2, letterSpacingPt: 0, color: '#111', alignment: 'left', columns: 1, columnGutterMm: 4,
+      paddingMm: 0, backgroundColor: 'transparent', borderColor: 'transparent', borderWidthMm: 0, paragraphStyleId: 'style-h1',
+    };
+    manager.addElement(heading);
+    manager.addSpread();
+    manager.setActiveSpread(1);
+    manager.addElement({ ...heading, id: 'subheading', pageId: manager.getActiveSpread().pages[0].id,
+      text: 'Résumé', paragraphStyleId: 'style-h2' });
+    const exportTagged = async (spreadRange: 'all' | 'current') => PDFDocument.load((await exportDocumentToPdf(manager.getState(), {
+      tagged: true, download: false, spreadRange,
+    })).output('arraybuffer'));
+    const first = (pdf: PDFDocument) => pdf.catalog.lookup(PDFName.of('Outlines'), PDFDict).lookup(PDFName.of('First'), PDFDict);
+    const title = (item: PDFDict) => item.lookup(PDFName.of('Title'), PDFHexString).decodeText();
+    const all = await exportTagged('all');
+    expect(title(first(all))).toBe('Édition (revue)');
+    const sub = first(all).lookup(PDFName.of('First'), PDFDict);
+    expect(title(sub)).toBe('Résumé');
+    expect(sub.lookup(PDFName.of('Dest'), PDFArray).get(0)).toBe(all.getPages()[1].ref);
+    const current = await exportTagged('current');
+    expect(title(first(current))).toBe('Résumé');
+    expect(first(current).lookup(PDFName.of('Dest'), PDFArray).get(0)).toBe(current.getPages()[0].ref);
   });
 });

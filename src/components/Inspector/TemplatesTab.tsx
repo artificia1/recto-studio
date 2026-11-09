@@ -5,6 +5,7 @@ import { useState } from 'preact/hooks';
 import { createPublicationStarter, PUBLICATION_STARTERS, type PublicationStarter } from '../../engine/publicationStarters';
 import { SheetPlanningPanel } from './SheetPlanningPanel';
 import { OrnamentPanel } from './OrnamentPanel';
+import { ArtworkLibraryPanel } from './ArtworkLibraryPanel';
 
 interface TemplatesTabProps {
   state: ProjectState;
@@ -31,6 +32,7 @@ export function TemplatesTab({ state }: TemplatesTabProps) {
   return (
     <div className="templates-view">
       <div className="section-header">PUBLICATION STARTERS & LAYOUTS</div>
+      <ArtworkLibraryPanel state={state}/>
       <SheetPlanningPanel state={state}/>
       <OrnamentPanel state={state}/>
       <div className="publication-panel">

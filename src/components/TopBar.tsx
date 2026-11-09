@@ -16,6 +16,7 @@ import { BookletImpositionModal, CoverSpineModal } from './LazyPrintDialogs';
 
 import { lazy, Suspense } from 'preact/compat';
 const AppUpdater = lazy(() => import('./AppUpdater').then(module => ({ default: module.AppUpdater })));
+const ScribusImportDialog = lazy(() => import('./ScribusImportDialog'));
 
 interface TopBarProps {
   state: ProjectState;
@@ -58,6 +59,7 @@ export function TopBar({
 
   const [title, setTitle] = useState(state.settings.title);
   const [showDataMergeModal, setShowDataMergeModal] = useState(false);
+  const [showScribusImport, setShowScribusImport] = useState(false);
   const [showVersionModal, setShowVersionModal] = useState(false);
   const [showCollabModal, setShowCollabModal] = useState(false);
   const [commitMessage, setCommitMessage] = useState('');
@@ -864,6 +866,9 @@ export function TopBar({
                 }
               }}><span>Auto-paginate selected story</span></button>
               <div className="dropdown-menu-divider" />
+              <button className="top-dropdown-item" onClick={() => { setShowFileMenu(false); setShowScribusImport(true); }}>
+                <div className="dropdown-item-title">Import Scribus Document (.sla)…</div>
+              </button>
 
               <button
                 className="top-dropdown-item"
@@ -1309,6 +1314,7 @@ export function TopBar({
         </button>
       </div>
 
+      {showScribusImport && <Suspense fallback={null}><ScribusImportDialog onClose={() => setShowScribusImport(false)} /></Suspense>}
       {showDataMergeModal && (
         <div
           className="modal-overlay"

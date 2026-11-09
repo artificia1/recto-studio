@@ -806,6 +806,18 @@ export class StateManager {
     }
   }
 
+  public insertArtwork(elements: CanvasElement[], pageId: string) {
+    const spread = this.getActiveSpread();
+    const layer = this.state.layers.find(item => item.id === this.state.activeLayerId);
+    if (!layer?.visible || layer.locked || !spread.pages.some(page => page.id === pageId)) throw new Error('Choose a page and a visible, unlocked layer.');
+    const top = spread.elements.reduce((z, element) => Math.max(z, element.zIndex), 0);
+    const added = elements.map((element, i) => ({ ...element, pageId, layerId: layer.id, zIndex: top + i + 1 }));
+    spread.elements.push(...added);
+    this.state.selectedElementIds = added.map(element => element.id);
+    this.state.selectedElementId = added[0]?.id || null;
+    this.pushHistory(); this.notify();
+  }
+
   public addElement(element: CanvasElement) {
     if (!element.layerId) {
       element.layerId = this.state.activeLayerId || 'layer-1';
@@ -2549,9 +2561,12 @@ export class StateManager {
 
   public loadFromJson(jsonStr: string) {
     const project = parseProject(jsonStr, INITIAL_STATE);
-    this.state = project;
-    this.renumberPages();
-    this.reflowFormattedStories();
+    const previous = this.state;
+    try {
+      this.state = project;
+      this.renumberPages();
+      this.reflowFormattedStories();
+    } catch (error) { this.state = previous; throw error; }
     this.pushHistory();
     this.notify();
   }

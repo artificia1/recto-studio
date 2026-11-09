@@ -3,6 +3,7 @@ import type { jsPDF } from 'jspdf';
 import type { CanvasElement, ProjectState } from '../types';
 import { getSafeSpotName, type FreeToneSpotColor } from '../engine/spotColors';
 import { storyText } from '../engine/storyContent';
+import { publicationHeadings } from '../engine/publicationReferences';
 import { savePublicationFile } from '../desktop';
 import type { PdfStructureGroup } from './pdfSemantics';
 import { installPdfFonts } from './pdfFontResources';
@@ -19,8 +20,42 @@ export function elementPdfTag(state: ProjectState, element: CanvasElement, page:
   return undefined;
 }
 
+function attachHeadingBookmarks(pdf: PDFDocument, state: ProjectState, pageIds: string[]) {
+  const pages = new Map(pdf.getPages().map((page, i) => [pageIds[i], page.ref]));
+  const headings = publicationHeadings(state).filter(heading => pages.has(heading.pageId));
+  if (!headings.length) return;
+  const { context } = pdf;
+  const root = context.obj({ Type: 'Outlines' });
+  type Item = { level: number; dict: PDFDict; ref: PDFRef; children: Item[] };
+  const tree: Item = { level: 0, dict: root, ref: context.register(root), children: [] };
+  const branch = [tree];
+  for (const heading of headings) {
+    const destination = pages.get(heading.pageId)!;
+    while (branch.at(-1)!.level >= heading.level) branch.pop();
+    const parent = branch.at(-1)!;
+    const dict = context.obj({ Title: PDFHexString.fromText(heading.title), Parent: parent.ref, Dest: [destination, PDFName.of('Fit')] });
+    const item: Item = { level: heading.level, dict, ref: context.register(dict), children: [] };
+    parent.children.push(item);
+    branch.push(item);
+  }
+  const link = (item: Item): number => {
+    if (!item.children.length) return 0;
+    const count = item.children.reduce((total, child, index, siblings) => {
+      if (index) child.dict.set(PDFName.of('Prev'), siblings[index - 1].ref);
+      if (index + 1 < siblings.length) child.dict.set(PDFName.of('Next'), siblings[index + 1].ref);
+      return total + 1 + link(child);
+    }, 0);
+    item.dict.set(PDFName.of('First'), item.children[0].ref);
+    item.dict.set(PDFName.of('Last'), item.children.at(-1)!.ref);
+    item.dict.set(PDFName.of('Count'), PDFNumber.of(count));
+    return count;
+  };
+  link(tree);
+  pdf.catalog.set(PDFName.of('Outlines'), tree.ref);
+}
+
 /** Repair resources and attach a real structure/parent tree without claiming PDF/UA conformance. */
-export async function finishPdf(doc: jsPDF, state: ProjectState, spots: FreeToneSpotColor[], tags?: PdfContentTag[], compress = true, groups?: PdfStructureGroup[]) {
+export async function finishPdf(doc: jsPDF, state: ProjectState, spots: FreeToneSpotColor[], tags?: PdfContentTag[], compress = true, groups?: PdfStructureGroup[], pageIds?: string[]) {
   const pdf = await PDFDocument.load(doc.output('arraybuffer'), { updateMetadata: false });
   installPdfFonts(doc, pdf);
   const { context } = pdf;
@@ -78,6 +113,7 @@ export async function finishPdf(doc: jsPDF, state: ProjectState, spots: FreeTone
     pdf.catalog.set(PDFName.of('MarkInfo'), context.obj({ Marked: true }));
     pdf.catalog.set(PDFName.of('Lang'), PDFString.of(state.settings.language || 'en-US'));
     pdf.catalog.set(PDFName.of('ViewerPreferences'), context.obj({ DisplayDocTitle: true }));
+    if (pageIds) attachHeadingBookmarks(pdf, state, pageIds);
   }
   const bytes = await pdf.save({ useObjectStreams: compress, addDefaultPage: false, updateFieldAppearances: false });
   bindFinalizedPdf(doc, bytes);
