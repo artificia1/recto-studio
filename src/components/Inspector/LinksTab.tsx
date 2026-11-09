@@ -12,7 +12,7 @@ interface LinksTabProps {
 export function LinksTab({ state }: LinksTabProps) {
   const links = stateManager.getAssetLinks();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [targetElementId, setTargetElementId] = useState<string | null>(null);
+  const targetImage = useRef<ReturnType<typeof stateManager.getElementById>>();
   const [message, setMessage] = useState('');
   const [embedding, setEmbedding] = useState(false);
 
@@ -23,39 +23,24 @@ export function LinksTab({ state }: LinksTabProps) {
   };
 
   const handleRelinkClick = (elementId: string) => {
-    setTargetElementId(elementId);
+    targetImage.current = stateManager.getElementById(elementId);
     fileInputRef.current?.click();
   };
 
   const handleFileChange = async (e: Event) => {
     const input = e.target as HTMLInputElement;
     const file = input.files?.[0];
-    if (file && targetElementId) {
-      const reader = new FileReader();
-      reader.onload = (re) => {
-        if (typeof re.target?.result === 'string') {
-          const resultStr = re.target.result;
-          const format = file.type.split('/')[1]?.toUpperCase() || 'JPG';
-
-          const imgLoader = new Image();
-          imgLoader.onload = () => {
-            const changed = stateManager.relinkAsset(targetElementId, resultStr, {
-              name: file.name,
-              fileSize: file.size,
-              format,
-              width: imgLoader.naturalWidth,
-              height: imgLoader.naturalHeight,
-            });
-            setMessage(changed ? 'Image relinked. Full image bytes will be saved with the project.' : 'Image could not be replaced. Unlock it and its layer, then try again.');
-          };
-          imgLoader.onerror = () => setMessage('This image could not be decoded. Choose a valid PNG, JPEG, GIF, WebP or SVG file.');
-          imgLoader.src = resultStr;
-        }
-      };
-      reader.readAsDataURL(file);
-    }
     input.value = '';
-    setTargetElementId(null);
+    const image = targetImage.current;
+    if (!file || !image) return;
+    try {
+      const changed = stateManager.getElementById(image.id) === image && await stateManager.registerImageAsset(image.id, file);
+      if (targetImage.current === image) setMessage(changed
+        ? 'Image relinked. Full image bytes will be saved with the project.'
+        : 'The image frame changed or is locked. Select it and try again.');
+    } catch (error) {
+      if (targetImage.current === image) setMessage(error instanceof Error ? error.message : String(error));
+    }
   };
 
   return (

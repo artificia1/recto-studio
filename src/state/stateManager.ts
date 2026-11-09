@@ -69,7 +69,6 @@ import { fontManager } from '../fontManager';
 import { parseMergeData, generateMergedSpreads, substituteElementTokens } from '../dataMerge';
 import { KnuthPlassComposer, ComposerOptions } from '../engine/knuthPlass';
 import { psdEngine } from '../engine/psdParser';
-import { assetStore } from '../engine/assetStore';
 import { colorEngine, GamutAuditResult, IccProfileName } from '../engine/colorEngine';
 
 // Preserve imports used by existing exporters, UI components, and integrations.
@@ -143,6 +142,8 @@ export type StateListener = (state: ProjectState) => void;
 
 export class StateManager {
   private documentRevision = 0;
+  private openRequest = 0;
+  private readonly hasValidLocalSave: boolean;
 
   public getDocumentRevision(): number {
     return this.documentRevision;
@@ -150,8 +151,9 @@ export class StateManager {
   public readonly autosave = new Autosave(() => this.state);
 
   public async recoverAutosave(): Promise<void> {
-    const recovered = await this.autosave.recover();
-    if (recovered) {
+    const revision = this.documentRevision, request = this.openRequest;
+    const recovered = await this.autosave.recover(this.hasValidLocalSave);
+    if (recovered && revision === this.documentRevision && request === this.openRequest) {
       try {
         this.loadFromJson(JSON.stringify(recovered));
       } catch (error) {
@@ -166,32 +168,11 @@ export class StateManager {
   public onMutation?: (mutation: { type: 'add' | 'update' | 'delete'; elementId: string; element?: CanvasElement; updates?: Partial<CanvasElement> }) => void;
 
   constructor() {
-    this.state = this.loadFromStorage() || INITIAL_STATE;
+    const saved = this.loadFromStorage();
+    this.hasValidLocalSave = !!saved;
+    this.state = saved || structuredClone(INITIAL_STATE);
     this.snapshots = this.loadSnapshotsFromStorage();
     this.renumberPages();
-
-    // Auto-clamp master footers and elements to page boundaries
-    const curH = this.state.settings?.heightMm || 297;
-    const curW = this.state.settings?.widthMm || 210;
-    const btmM = this.state.settings?.margins?.bottomMm || 15;
-    const inM = this.state.settings?.margins?.insideMm || 20;
-    const outM = this.state.settings?.margins?.outsideMm || 15;
-
-    for (const master of this.state.masterSpreads || []) {
-      for (const mEl of master.elements) {
-        if (mEl.id.includes('ftr') || mEl.y >= curH - 5) {
-          mEl.y = Math.max(10, curH - btmM - (mEl.height || 8) + 2);
-          mEl.width = Math.max(40, curW - (inM + outM));
-        }
-      }
-    }
-    for (const spread of this.state.spreads || []) {
-      for (const el of spread.elements) {
-        if (el.y + (el.height || 0) > curH - 2) {
-          el.y = Math.max(10, curH - btmM - (el.height || 8) + 2);
-        }
-      }
-    }
 
     if (!Array.isArray(this.state.selectedElementIds)) {
       this.state.selectedElementIds = this.state.selectedElementId ? [this.state.selectedElementId] : [];
@@ -205,12 +186,6 @@ export class StateManager {
     }
     if (this.state.showBaselineGrid === undefined) {
       this.state.showBaselineGrid = true;
-    }
-    if (!Array.isArray(this.state.paragraphStyles) || this.state.paragraphStyles.length === 0) {
-      this.state.paragraphStyles = DEFAULT_PARAGRAPH_STYLES;
-    }
-    if (!Array.isArray(this.state.masterSpreads) || this.state.masterSpreads.length === 0) {
-      this.state.masterSpreads = DEFAULT_MASTER_SPREADS;
     }
     if (this.state.linkingFromFrameId === undefined) {
       this.state.linkingFromFrameId = null;
@@ -1090,11 +1065,13 @@ export class StateManager {
   }
 
   public async embedLinkedAssets(): Promise<number> {
+    const currentProject = this.state;
     const source = structuredClone(this.state);
     const original = new Map([...source.spreads.flatMap(spread => spread.elements), ...source.masterSpreads.flatMap(master => master.elements)]
       .filter((element): element is ImageElement => element.type === 'image').map(image => [image.id, image]));
     const { prepareExportAssets } = await import('../export/publicationAssets');
     const prepared = await prepareExportAssets(source, true, true);
+    if (this.state !== currentProject) throw new Error('The document changed while images were loading. Run Embed linked images again.');
     let changed = 0;
     for (const image of [...prepared.spreads.flatMap(spread => spread.elements), ...prepared.masterSpreads.flatMap(master => master.elements)]) {
       if (image.type !== 'image') continue;
@@ -1111,7 +1088,7 @@ export class StateManager {
   public relinkAsset(
     elementId: string,
     newSrc: string,
-    metadata?: { name?: string; fileSize?: number; format?: string; width?: number; height?: number }
+    metadata?: { name?: string; fileSize?: number; format?: string; width?: number; height?: number; proxySrc?: string }
   ): boolean {
     for (let sIdx = 0; sIdx < this.state.spreads.length; sIdx++) {
       const spread = this.state.spreads[sIdx];
@@ -1120,13 +1097,10 @@ export class StateManager {
         const target = spread.elements[elIdx];
         if (target.locked || this.state.layers.find(layer => layer.id === target.layerId)?.locked) return false;
         const updates: Partial<ImageElement> = {
-          src: newSrc, assetId: undefined, proxySrc: undefined,
-          equation: undefined,
+          src: newSrc, assetId: undefined, proxySrc: metadata?.proxySrc,
+          equation: undefined, alphaContour: undefined, isPsd: undefined, psdLayers: undefined, activePsdLayerIds: undefined,
+          fileSize: metadata?.fileSize, format: metadata?.format, originalWidth: metadata?.width, originalHeight: metadata?.height, actualDpi: undefined,
           ...(metadata?.name ? { name: metadata.name, caption: metadata.name } : {}),
-          ...(metadata?.fileSize ? { fileSize: metadata.fileSize } : {}),
-          ...(metadata?.format ? { format: metadata.format } : {}),
-          ...(metadata?.width ? { originalWidth: metadata.width } : {}),
-          ...(metadata?.height ? { originalHeight: metadata.height } : {}),
         };
 
         if (metadata?.width && metadata?.height) {
@@ -1929,24 +1903,24 @@ export class StateManager {
     return spread.elements.some((e) => e.masterSourceId === masterElementId);
   }
 
-  /**
-   * Registers an image asset and generates a 72 DPI screen proxy.
-   */
-  public async registerImageAsset(elementId: string, data: ArrayBuffer | string, name?: string): Promise<boolean> {
+  private pendingImageReplacements = new WeakMap<ImageElement, object>();
+
+  /** Decode the replacement before committing its full source and optional screen proxy. */
+  public async registerImageAsset(elementId: string, data: File | ArrayBuffer | string, name?: string): Promise<boolean> {
     const el = this.getElementById(elementId);
     if (!el || el.type !== 'image') return false;
-    const meta = await assetStore.registerAsset(data, { name });
-    const img = el as ImageElement;
-    img.assetId = meta.id;
-    if (typeof data === 'string') img.src = data;
-    img.equation = undefined;
-    img.proxySrc = meta.proxyDataUrl;
-    img.name = meta.name;
-    img.originalWidth = meta.width;
-    img.originalHeight = meta.height;
-    this.pushHistory();
-    this.notify();
-    return true;
+    const request = {};
+    this.pendingImageReplacements.set(el, request);
+    const isCurrent = () => this.getElementById(elementId) === el && this.pendingImageReplacements.get(el) === request;
+    if (typeof data !== 'string' && !(data instanceof ArrayBuffer) && /\.ps[db]$/i.test(data.name)) {
+      if (data.size > 64 * 1024 * 1024) throw new Error('Choose an image smaller than 64 MB.');
+      const buffer = await data.arrayBuffer();
+      return isCurrent() && this.loadPsdForElement(elementId, buffer, data.name);
+    }
+    const { readPlacedImage } = await import('../engine/placedImage');
+    const { src, originalWidth, originalHeight, ...metadata } = await readPlacedImage(data, name);
+    if (!isCurrent()) return false;
+    return this.relinkAsset(elementId, src, { ...metadata, width: originalWidth, height: originalHeight });
   }
 
   public evaluateTokens(text: string, pageNum: number): string {
@@ -2560,15 +2534,32 @@ export class StateManager {
   }
 
   public loadFromJson(jsonStr: string) {
-    const project = parseProject(jsonStr, INITIAL_STATE);
+    this.installProject(parseProject(jsonStr, INITIAL_STATE));
+  }
+
+  private installProject(project: ProjectState) {
     const previous = this.state;
     try {
       this.state = project;
       this.renumberPages();
       this.reflowFormattedStories();
+      this.pushHistory();
     } catch (error) { this.state = previous; throw error; }
-    this.pushHistory();
     this.notify();
+  }
+
+  private async openProject(read: () => Promise<ProjectState>, restoreFonts = false) {
+    const request = ++this.openRequest, revision = this.documentRevision;
+    const check = () => {
+      if (request !== this.openRequest || revision !== this.documentRevision) {
+        throw new Error('The document changed while this file was opening. Open the file again to replace the current document.');
+      }
+    };
+    const project = await read();
+    check();
+    if (restoreFonts) await fontManager.restoreFonts(project.embeddedFonts, check);
+    check();
+    this.installProject(project);
   }
 
   private collaborativeHistory: { undo(): void; redo(): void; stopCapturing?(): void } | null = null;
@@ -2640,49 +2631,22 @@ export class StateManager {
     return updates.length;
   }
 
-  public async loadFromIndd(inddBuffer: ArrayBuffer | Uint8Array, fileName?: string, options?: { recoverContent: boolean }) {
+  public async loadFromIndd(source: ArrayBuffer | Uint8Array | File, fileName?: string, options?: { recoverContent: boolean }) {
     if (!options?.recoverContent) throw new Error('Native INDD layout import is unavailable. Export IDML from InDesign, or explicitly choose content recovery.');
-    try {
+    return this.openProject(async () => {
       const { parseInddToProjectState } = await import('../engine/inddParser');
-      const newState = parseInddToProjectState(inddBuffer, fileName);
-      if (!Array.isArray(newState.layers) || newState.layers.length === 0) {
-        newState.layers = JSON.parse(JSON.stringify(DEFAULT_LAYERS));
-      }
-      if (!newState.activeLayerId) {
-        newState.activeLayerId = newState.layers[0]?.id || 'layer-1';
-      }
-      this.state = newState;
-      this.renumberPages();
-      this.pushHistory();
-      this.notify();
-    } catch (e) {
-      console.error('Failed to parse INDD document', e);
-      throw e;
-    }
+      return parseInddToProjectState(source instanceof Blob ? await source.arrayBuffer() : source, fileName);
+    });
   }
 
-  public async loadFromIdml(idmlBuffer: ArrayBuffer | Uint8Array, fileName?: string) {
-    const { isInddBuffer } = await import('../engine/inddParser');
-    if (isInddBuffer(idmlBuffer)) {
-      throw new Error('This is a native INDD file. Export IDML from InDesign for editable layout import.');
-    }
-    try {
+  public async loadFromIdml(source: ArrayBuffer | Uint8Array | File, fileName?: string) {
+    return this.openProject(async () => {
+      const bytes = source instanceof Blob ? await source.arrayBuffer() : source;
+      const { isInddBuffer } = await import('../engine/inddParser');
+      if (isInddBuffer(bytes)) throw new Error('This is a native INDD file. Export IDML from InDesign for editable layout import.');
       const { parseIdmlPackage } = await import('../idmlImport');
-      const newState = await parseIdmlPackage(idmlBuffer, fileName);
-      if (!Array.isArray(newState.layers) || newState.layers.length === 0) {
-        newState.layers = JSON.parse(JSON.stringify(DEFAULT_LAYERS));
-      }
-      if (!newState.activeLayerId) {
-        newState.activeLayerId = newState.layers[0]?.id || 'layer-1';
-      }
-      this.state = newState;
-      this.renumberPages();
-      this.pushHistory();
-      this.notify();
-    } catch (e) {
-      console.error('Failed to parse IDML package', e);
-      throw e;
-    }
+      return parseIdmlPackage(bytes, fileName ?? (source instanceof Blob ? source.name : undefined));
+    });
   }
 
   public placeTextContent(elementId: string, content: { formattedText: string; detectedStyleId?: string; content?: StoryContent; notes?: { id: string; kind: 'footnote' | 'endnote'; text: string }[] }) {
@@ -3304,9 +3268,7 @@ export class StateManager {
   }
 
   public async importProjectFile(file: File): Promise<void> {
-    const state = await RectoDB.importProjectFile(file, INITIAL_STATE);
-    await fontManager.restoreFonts(state.embeddedFonts);
-    this.loadFromJson(JSON.stringify(state));
+    return this.openProject(() => RectoDB.importProjectFile(file, INITIAL_STATE), true);
   }
 
   public saveImportedFonts() {
@@ -4043,10 +4005,16 @@ export class StateManager {
    */
   public loadPsdForElement(elementId: string, psdBuffer: ArrayBuffer | Uint8Array, fileName?: string): boolean {
     const el = this.getElementById(elementId);
-    if (!el || el.type !== 'image') return false;
+    if (!el || el.type !== 'image' || el.locked || this.state.layers.find(layer => layer.id === el.layerId)?.locked) return false;
     const img = el as ImageElement;
 
     const psdData = psdEngine.parse(psdBuffer);
+    this.pendingImageReplacements.delete(img);
+    delete img.assetId;
+    delete img.proxySrc;
+    delete img.alphaContour;
+    delete img.actualDpi;
+    img.fileSize = psdBuffer.byteLength;
     img.equation = undefined;
     img.isPsd = true;
     img.format = 'PSD';
@@ -4064,9 +4032,7 @@ export class StateManager {
       height: l.height,
     }));
     img.activePsdLayerIds = psdData.layers.filter((l) => l.visible).map((l) => l.id);
-    if (psdData.compositeDataUrl) {
-      img.src = psdData.compositeDataUrl;
-    }
+    img.src = psdData.compositeDataUrl || '';
 
     this.pushHistory();
     this.notify();

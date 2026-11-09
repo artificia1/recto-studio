@@ -1,11 +1,87 @@
 import { test, expect } from '@playwright/test';
 import { readFile, writeFile } from 'node:fs/promises';
-import { importProject, projectFixture, savedProject } from './fixtures';
+import { importProject, menuCommand, projectFixture, savedProject } from './fixtures';
 
 test.beforeEach(async ({ page }) => {
   await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.abort());
   await page.goto('/');
   await expect(page.locator('#spread-canvas')).toBeVisible();
+});
+
+test('places one photo on canvas and preserves transparent replacements across reload', async ({ page }) => {
+  const project = projectFixture();
+  project.spreads[0].elements = [];
+  await importProject(page, project);
+  const canvas = page.locator('#spread-canvas');
+  const payload = await page.evaluate(() => {
+    const bitmap = document.createElement('canvas');
+    bitmap.width = 1400;
+    bitmap.height = 20;
+    const ctx = bitmap.getContext('2d')!;
+    ctx.fillStyle = '#dc004e';
+    ctx.fillRect(0, 0, 700, 20);
+    return bitmap.toDataURL().split(',')[1];
+  });
+  await canvas.evaluate((element, encoded) => {
+    const transfer = new DataTransfer();
+    const bytes = Uint8Array.from(atob(encoded), char => char.charCodeAt(0));
+    transfer.items.add(new File([bytes], 'placed.png', { type: 'image/png' }));
+    const { x, y, width, height } = element.getBoundingClientRect();
+    element.dispatchEvent(new DragEvent('drop', { dataTransfer: transfer, bubbles: true, cancelable: true,
+      clientX: x + width / 2, clientY: y + height / 2 }));
+  }, payload);
+  await expect.poll(async () => (await savedProject(page)).spreads[0].elements.length).toBe(1);
+
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(page.getByRole('button', { name: 'Replace Photo', exact: true })).toBeVisible();
+  const picker = page.locator('input[accept="image/*,.psd,.psb"]');
+  await picker.setInputFiles({ name: 'transparent.png', mimeType: 'image/png', buffer: Buffer.from(payload, 'base64') });
+  await expect.poll(async () => (await savedProject(page)).spreads[0].elements[0].name).toBe('transparent.png');
+  const image = (await savedProject(page)).spreads[0].elements[0];
+  expect(image.proxySrc).toMatch(/^data:image\/png;base64,/);
+  expect(image.originalWidth).toBe(1400);
+  const alpha = await page.evaluate(async source => {
+    const preview = new Image();
+    preview.src = source;
+    await preview.decode();
+    const sample = document.createElement('canvas');
+    const ctx = sample.getContext('2d')!;
+    ctx.drawImage(preview, 1 - preview.width, 0);
+    return ctx.getImageData(0, 0, 1, 1).data[3];
+  }, image.proxySrc);
+  expect(alpha).toBe(0);
+
+  await picker.setInputFiles({ name: 'broken.png', mimeType: 'image/png', buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47]) });
+  await expect(page.getByRole('alert').filter({ hasText: 'Could not read this image' })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => {
+    const saved = JSON.parse(localStorage.getItem('recto_project_autosave') || '{}');
+    return saved.spreads?.[0]?.elements?.[0]?.name;
+  })).toBe('transparent.png');
+  await page.reload();
+  await expect(page.getByTitle('Click to rename document')).toHaveValue(project.settings.title);
+  expect((await savedProject(page)).spreads[0].elements[0]).toMatchObject({ name: 'transparent.png', src: image.src });
+});
+
+test('preserves a Data Merge draft across closing and reopening the dialog', async ({ page }) => {
+  const project = projectFixture();
+  project.spreads[0].elements[0].text = '{{Title}}';
+  await importProject(page, project);
+  const open = () => menuCommand(page, 'Batch populate records via CSV dataset');
+  const dialog = page.getByRole('dialog', { name: 'CSV / JSON Data Merge' });
+  const input = dialog.getByPlaceholder('Paste CSV data here with header row...');
+  const csv = 'Title\nFirst record\nSecond record';
+  await open();
+  await input.fill(csv);
+  await expect(dialog.getByRole('button', { name: 'Generate Merged Spreads (2)' })).toBeEnabled();
+  await input.press('Escape');
+  await expect(dialog).toBeHidden();
+  await open();
+  await expect(input).toHaveValue(csv);
+  await dialog.getByRole('button', { name: 'Generate Merged Spreads (2)' }).click();
+  await expect(dialog).toBeHidden();
+  expect((await savedProject(page)).spreads.map((spread: typeof project.spreads[number]) => spread.elements[0].text))
+    .toEqual(['{{Title}}', 'First record', 'Second record']);
 });
 
 test('drags artwork from the first spread to page 48 and undoes the transfer', async ({ page }) => {

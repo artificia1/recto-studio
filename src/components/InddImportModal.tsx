@@ -29,7 +29,7 @@ export function InddImportModal({ file, onClose }: { file: File; onClose: () => 
   const recover = () => run(async () => {
     if (!acknowledged) return;
     if (file.size > 128 * 1024 * 1024) throw new Error('Recovery supports files up to 128 MB. Export IDML for larger documents.');
-    await stateManager.loadFromIndd(await file.arrayBuffer(), file.name, { recoverContent: true });
+    await stateManager.loadFromIndd(file, file.name, { recoverContent: true });
     onClose();
   });
   return <div className="modal-overlay equation-overlay" onKeyDown={event => {
@@ -45,7 +45,7 @@ export function InddImportModal({ file, onClose }: { file: File; onClose: () => 
       <input ref={input} type="file" accept=".idml" hidden onChange={event => {
         const converted = event.currentTarget.files?.[0];
         event.currentTarget.value = '';
-        if (converted) void run(async () => { await stateManager.loadFromIdml(await converted.arrayBuffer(), converted.name); onClose(); });
+        if (converted) void run(async () => { await stateManager.loadFromIdml(converted); onClose(); });
       }}/>
       <details><summary>Recover fragments without InDesign</summary>
         <div className="equation-body">

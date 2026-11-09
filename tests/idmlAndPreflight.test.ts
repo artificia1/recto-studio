@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stateManager } from '../src/state';
+import { StateManager, stateManager } from '../src/state';
 import { exportDocumentToIdml } from '../src/export/idmlExport';
 import { parseIdmlPackage, parseIdmlTextVariables } from '../src/idmlImport';
 import { createZipArchive } from '../src/zip';
@@ -132,14 +132,14 @@ describe('IDML Package Export & Prepress Preflight Intelligence', () => {
 
   it('clips overset text strictly to frame height and exports correctly in PDF stream', async () => {
     const { exportDocumentToPdf } = await import('../src/export/pdfExport');
-    const state = stateManager.getState();
-    const activeSpread = stateManager.getActiveSpread();
+    const document = new StateManager();
+    document.createBlankProject('A4', 'Overset export', false);
+    const activeSpread = document.getActiveSpread();
 
     // Create a compact text frame with large overset story content
-    const testOversetId = `overflow-test-${Date.now()}`;
-    const oversetText = Array(100).fill('Overset paragraph content that should never spill across margins.').join('\n');
+    const oversetText = Array(20).fill('Overset paragraph content that should never spill across margins.').join('\n');
     const oversetElement: TextElement = {
-      id: testOversetId,
+      id: 'overset-frame',
       type: 'text',
       pageId: activeSpread.pages[0].id,
       x: 20,
@@ -165,20 +165,18 @@ describe('IDML Package Export & Prepress Preflight Intelligence', () => {
       paddingMm: 0,
     };
 
-    stateManager.addElement(oversetElement);
+    document.addElement(oversetElement);
 
-    const pdfDoc = await exportDocumentToPdf(stateManager.getState(), {
+    const pdfDoc = await exportDocumentToPdf(document.getState(), {
       includeCropMarks: false,
       includeRegistrationMarks: false,
       includeColorBars: false,
     });
 
-    expect(pdfDoc).toBeDefined();
+    expect(pdfDoc.getNumberOfPages()).toBe(1);
     const pdfOutput = pdfDoc.output('arraybuffer');
     expect(pdfOutput.byteLength).toBeGreaterThan(1000);
 
-    // Clean up
-    stateManager.deleteElement(testOversetId);
   });
 });
 

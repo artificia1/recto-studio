@@ -8,7 +8,7 @@
 
 import { ProjectState, TextElement, ImageElement, ShapeElement, DEFAULT_LAYERS } from '../types';
 import { createZipArchive, base64ToUint8Array, uint8ArrayToBase64 } from '../zip';
-import { assetStore } from '../engine/assetStore';
+import { fullImageSource } from './publicationAssets';
 import { contentOf } from '../engine/publicationReferences';
 import { resolveParagraphStyle, resolveRunStyle } from '../engine/storyLayout';
 import { explicitCmyk, rgbColor } from '../engine/inkColors';
@@ -242,31 +242,26 @@ ${styleDefs}
       </TextFrame>`);
       } else if (el.type === 'image') {
         const imgEl = el as ImageElement;
-        const fullResSrc: unknown = assetStore.getFullResolution(imgEl.assetId || imgEl.src) || imgEl.src;
+        const fullResSrc = fullImageSource(imgEl);
         let b64Data = '';
         let fileName = `${sIdx + 1}-${elementXmls.length + 1}-${(imgEl.name || 'image').replace(/[^a-zA-Z0-9._-]/g, '-')}`;
 
-        if (fullResSrc) {
-          if (typeof fullResSrc === 'string' && fullResSrc.startsWith('data:')) {
-            const parts = fullResSrc.split(',');
-            b64Data = parts[1] || '';
-            const mime = parts[0].split(';')[0].split(':')[1] || 'image/jpeg';
-            const ext = mime === 'image/png' ? '.png' : mime === 'image/svg+xml' ? '.svg' : mime === 'image/webp' ? '.webp' : '.jpg';
-            if (!fileName.includes('.')) fileName += ext;
-            if (b64Data) {
-              try {
-                files[`Links/${fileName}`] = base64ToUint8Array(b64Data);
-              } catch {
-                // Ignore base64 decode failure
-              }
+        const embedded = /^data:([^;,]+)([^,]*),([\s\S]+)$/.exec(fullResSrc);
+        if (embedded) {
+          const [, mime, parameters, payload] = embedded;
+          try {
+            const bytes = /;base64(?:;|$)/i.test(parameters)
+              ? base64ToUint8Array(payload)
+              : new TextEncoder().encode(decodeURIComponent(payload));
+            const imageFormat = /^image\/(png|jpeg|svg\+xml|webp|gif|bmp|avif)$/i.exec(mime)?.[1].toLowerCase();
+            if (imageFormat) {
+              const extension = imageFormat === 'jpeg' ? 'jpg' : imageFormat === 'svg+xml' ? 'svg' : imageFormat;
+              fileName = `${fileName.replace(/\.[a-z0-9]+$/i, '')}.${extension}`;
             }
-          } else if (fullResSrc instanceof ArrayBuffer) {
-            files[`Links/${fileName}`] = new Uint8Array(fullResSrc);
-            try {
-              b64Data = uint8ArrayToBase64(new Uint8Array(fullResSrc));
-            } catch {
-              // Ignore
-            }
+            b64Data = uint8ArrayToBase64(bytes);
+            files[`Links/${fileName}`] = bytes;
+          } catch {
+            // Keep the image link when the embedded payload cannot be decoded.
           }
         }
 

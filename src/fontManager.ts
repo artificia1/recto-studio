@@ -191,7 +191,8 @@ export class FontManager {
   public async registerFontBuffer(
     fileName: string,
     buffer: ArrayBuffer | Uint8Array,
-    variations?: FontVariations
+    variations?: FontVariations,
+    beforeActivate?: () => void,
   ): Promise<string> {
     const bytes = buffer instanceof Uint8Array ? new Uint8Array(buffer) : new Uint8Array(buffer.slice(0));
     if (!bytes.length || bytes.length > 32 * 1024 * 1024) {
@@ -227,6 +228,7 @@ export class FontManager {
     if (typeof document !== 'undefined' && typeof FontFace === 'undefined') {
       throw new Error('This browser does not support custom fonts. Try a current browser.');
     }
+    let face: FontFace | undefined;
     if (typeof document !== 'undefined' && typeof FontFace !== 'undefined') {
       try {
         const arrayBuffer = bytes.buffer;
@@ -236,15 +238,19 @@ export class FontManager {
           (fontFace as FontFace & { variationSettings: string }).variationSettings = variationCss(coordinates);
         }
         await fontFace.load();
-        const previous = this.activeFaces.get(familyName);
-        if (previous) document.fonts.delete(previous);
-        document.fonts.add(fontFace);
-        this.activeFaces.set(familyName, fontFace);
+        face = fontFace;
       } catch (err) {
         throw new Error(`Your browser could not activate "${familyName}". Try the TTF or OTF version of this font.`);
       }
     }
 
+    beforeActivate?.();
+    if (face) {
+      const previous = this.activeFaces.get(familyName);
+      if (previous) document.fonts.delete(previous);
+      document.fonts.add(face);
+      this.activeFaces.set(familyName, face);
+    }
     this.customFonts.set(familyName, metadata);
     this.parsedFonts.set(familyName, parsed);
     let binary = '';
@@ -279,12 +285,12 @@ export class FontManager {
     return this.registerFontBuffer(asset.fileName, bytes, variations);
   }
 
-  public async restoreFonts(assets: FontAsset[] = []) {
+  public async restoreFonts(assets: FontAsset[] = [], beforeActivate?: () => void) {
     for (const asset of assets) {
       const existing = this.fontAssets.get(asset.family);
       if (existing?.data === asset.data && variationCss(existing.variations) === variationCss(asset.variations)) continue;
       const bytes = Uint8Array.from(atob(asset.data), character => character.charCodeAt(0));
-      const restoredFamily = await this.registerFontBuffer(asset.fileName, bytes, asset.variations);
+      const restoredFamily = await this.registerFontBuffer(asset.fileName, bytes, asset.variations, beforeActivate);
       if (asset.variations && restoredFamily !== asset.family) throw new Error('The saved variable-font instance name does not match its source and coordinates.');
     }
   }

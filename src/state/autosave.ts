@@ -11,6 +11,7 @@ export class Autosave {
   private pending = false;
   private writes: Promise<void> = Promise.resolve();
   private revision = 0;
+  private lastWriteTime = 0;
   private status: SaveStatus = 'saved';
   private listeners = new Set<(status: SaveStatus) => void>();
 
@@ -42,11 +43,18 @@ export class Autosave {
     if (!this.pending) return this.writes;
     this.pending = false;
     const revision = this.revision;
-    const updatedAt = Date.now();
-    const state = JSON.parse(JSON.stringify(this.getState())) as ProjectState;
+    const updatedAt = this.lastWriteTime = Math.max(Date.now(), this.lastWriteTime + 1);
+    let json: string;
+    try { json = JSON.stringify(this.getState()); }
+    catch {
+      this.pending = true;
+      this.setStatus('error');
+      return this.writes;
+    }
+    const state = JSON.parse(json) as ProjectState;
     let localSaved = false;
     try {
-      localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(state));
+      localStorage.setItem(AUTOSAVE_KEY, json);
       localStorage.setItem(TIMESTAMP_KEY, String(updatedAt));
       localSaved = true;
     } catch { /* IndexedDB can still save documents exceeding localStorage quota. */ }
@@ -60,18 +68,20 @@ export class Autosave {
         } catch { /* Report failure only when neither storage backend succeeded. */ }
       }
       if (revision === this.revision) {
-        this.setStatus(localSaved || databaseSaved ? 'saved' : 'error');
+        const saved = localSaved || databaseSaved;
+        this.pending = !saved;
+        this.setStatus(saved ? 'saved' : 'error');
       }
     });
     return this.writes;
   }
 
-  async recover(): Promise<ProjectState | null> {
+  async recover(hasValidLocalSave = true): Promise<ProjectState | null> {
     const record = await RectoDB.loadProjectRecord();
     if (!record) return null;
     let localTimestamp = 0;
     try {
-      if (localStorage.getItem(AUTOSAVE_KEY)) {
+      if (hasValidLocalSave && localStorage.getItem(AUTOSAVE_KEY)) {
         localTimestamp = Number(localStorage.getItem(TIMESTAMP_KEY)) || 0;
       }
     } catch {}

@@ -28,7 +28,7 @@ const SpatialWorkspace = lazy(() => import('./SpatialWorkspace'));
 export function App() {
   const [showWorkspace, setShowWorkspace] = useState(false);
   const state = useProjectState();
-  const [pendingManuscript, setPendingManuscript] = useState<{ story: IngestedStory; fileName: string; frame: TextElement; createFrame?: boolean } | null>(null);
+  const [pendingManuscript, setPendingManuscript] = useState<{ story: IngestedStory; fileName: string; frame: TextElement; revision: number; createFrame?: boolean } | null>(null);
   const [showFindChange, setShowFindChange] = useState(false);
   const findChangeMounted = useRef(false);
   if (showFindChange) findChangeMounted.current = true;
@@ -210,12 +210,19 @@ export function App() {
 
     const file = files[0];
     const name = file.name.toLowerCase();
+    const spread = stateManager.getActiveSpread();
+    const revision = stateManager.getDocumentRevision();
+    const checkTarget = () => {
+      if (stateManager.getDocumentRevision() !== revision || stateManager.getActiveSpread() !== spread) {
+        throw new Error('The document or spread changed. Drop the file again on its intended page.');
+      }
+    };
 
     if (name.endsWith('.idml') || name.endsWith('.indd')) {
       if (name.endsWith('.indd')) {
         setPendingIndd(file);
       } else {
-        await stateManager.loadFromIdml(await file.arrayBuffer(), file.name);
+        await stateManager.loadFromIdml(file);
       }
       return;
     }
@@ -233,6 +240,7 @@ export function App() {
       const buffer = await file.arrayBuffer();
       const { ingestManuscript } = await import('../contentImport');
       const ingested = await ingestManuscript(file.name, buffer);
+      checkTarget();
       if (!ingested.formattedText.trim()) throw new Error('This manuscript has no readable text.');
 
       const activeSpread = stateManager.getActiveSpread();
@@ -240,15 +248,15 @@ export function App() {
       const selectedEl = activeSpread.elements.find((el) => el.id === selectedElId);
 
       if (selectedEl && selectedEl.type === 'text') {
-        setPendingManuscript({ story: ingested, fileName: file.name, frame: selectedEl });
+        setPendingManuscript({ story: ingested, fileName: file.name, frame: selectedEl, revision });
       } else {
         const textEl = activeSpread.elements.find((el) => el.type === 'text');
         if (textEl) {
-          setPendingManuscript({ story: ingested, fileName: file.name, frame: textEl });
+          setPendingManuscript({ story: ingested, fileName: file.name, frame: textEl, revision });
         } else {
           const page = activeSpread.pages[0];
           const margin = state.settings.margins;
-          setPendingManuscript({ story: ingested, fileName: file.name, createFrame: true, frame: {
+          setPendingManuscript({ story: ingested, fileName: file.name, revision, createFrame: true, frame: {
             id: `text-placed-${Date.now()}`,
             type: 'text',
             pageId: page.id,
@@ -281,59 +289,31 @@ export function App() {
     }
 
     if (file.type.startsWith('image/')) {
-      const reader = new FileReader();
-      reader.onload = (re) => {
-        if (typeof re.target?.result === 'string') {
-          const resultStr = re.target.result;
-          const format = file.type.split('/')[1]?.toUpperCase() || 'JPG';
-
-          const imgLoader = new Image();
-          imgLoader.onload = () => {
-            stateManager.registerImageDimensions(
-              resultStr,
-              imgLoader.naturalWidth,
-              imgLoader.naturalHeight,
-              file.size,
-              format,
-              file.name
-            );
-          };
-          imgLoader.src = resultStr;
-
-          const activeSpread = stateManager.getActiveSpread();
-          const selectedEl = activeSpread.elements.find((el) => el.id === state.selectedElementId);
-          if (selectedEl && selectedEl.type === 'image') {
-            stateManager.relinkAsset(selectedEl.id, resultStr, {
-              name: file.name,
-              fileSize: file.size,
-              format,
-            });
-          } else {
-            const page = activeSpread.pages[0];
-            stateManager.addElement({
-              id: `img-dropped-${Date.now()}`,
-              type: 'image',
-              pageId: page.id,
-              x: 30,
-              y: 30,
-              width: 80,
-              height: 80,
-              rotation: 0,
-              opacity: 1,
-              zIndex: 10,
-              locked: false,
-              src: resultStr,
-              fitMode: 'fill',
-              borderColor: '#000',
-              borderWidthMm: 0,
-              name: file.name,
-              fileSize: file.size,
-              format,
-            });
-          }
-        }
-      };
-      reader.readAsDataURL(file);
+      const selected = spread.elements.find(el => el.id === state.selectedElementId);
+      if (selected?.type === 'image') {
+        if (!await stateManager.registerImageAsset(selected.id, file)) throw new Error('The image frame changed or is locked.');
+        return;
+      }
+      const { readPlacedImage } = await import('../engine/placedImage');
+      const image = await readPlacedImage(file);
+      checkTarget();
+      stateManager.addElement({
+        ...image,
+        id: crypto.randomUUID(),
+        type: 'image',
+        pageId: spread.pages[0].id,
+        x: 30,
+        y: 30,
+        width: 80,
+        height: 80,
+        rotation: 0,
+        opacity: 1,
+        zIndex: 10,
+        locked: false,
+        fitMode: 'fill',
+        borderColor: '#000',
+        borderWidthMm: 0,
+      });
     }
   };
 
@@ -342,11 +322,14 @@ export function App() {
       {pendingManuscript && <Suspense fallback={null}><ManuscriptImportModal manuscript={pendingManuscript.story}
         fileName={pendingManuscript.fileName} frame={pendingManuscript.frame} state={state}
         onClose={() => setPendingManuscript(null)} onPlace={content => {
+          if (stateManager.getDocumentRevision() !== pendingManuscript.revision) {
+            throw new Error('The document changed. Close this preview and place the manuscript again.');
+          }
           stateManager.placeManuscript(pendingManuscript.createFrame ? pendingManuscript.frame : pendingManuscript.frame.id, content, pendingManuscript.story.notes);
           setPendingManuscript(null);
         }} /></Suspense>}
       <TopBar
-        onImportManuscript={(story, fileName, frame) => setPendingManuscript({ story, fileName, frame })}
+        onImportManuscript={(story, fileName, frame) => setPendingManuscript({ story, fileName, frame, revision: stateManager.getDocumentRevision() })}
         state={state}
         onOpenFindChange={() => setShowFindChange(true)}
         onOpenQuickApply={() => setShowQuickApply(true)}

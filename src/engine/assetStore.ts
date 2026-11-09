@@ -50,9 +50,6 @@ export class AssetStore {
       byteSize = source.byteLength;
     }
 
-    // Retain full-resolution buffer in the asset store
-    this.fullResStore.set(id, source);
-
     // Compute dimensions and generate screen proxy
     const proxyResult = await this.generateScreenProxy(source, 72, 1200);
     const originalWidth = proxyResult.originalWidth || meta.width || 1200;
@@ -69,6 +66,7 @@ export class AssetStore {
       proxyDataUrl: proxyResult.proxyDataUrl,
     };
 
+    this.fullResStore.set(id, source);
     this.metadataMap.set(id, assetMeta);
     this.proxyCache.set(id, proxyResult.proxyDataUrl);
     return assetMeta;
@@ -82,56 +80,41 @@ export class AssetStore {
     targetDpi: number = 72,
     maxDimension: number = 1200
   ): Promise<{ proxyDataUrl: string; originalWidth: number; originalHeight: number }> {
-    let srcUrl = '';
-    if (typeof source === 'string') {
-      srcUrl = source;
-    } else if (typeof Blob !== 'undefined') {
-      srcUrl = URL.createObjectURL(new Blob([source]));
-    }
-
-    // In browser environment with Canvas
     if (typeof document !== 'undefined' && typeof Image !== 'undefined') {
-      return new Promise((resolve) => {
+      const srcUrl = typeof source === 'string' ? source : URL.createObjectURL(new Blob([source]));
+      const releaseUrl = () => { if (typeof source !== 'string') URL.revokeObjectURL(srcUrl); };
+      return new Promise((resolve, reject) => {
         const img = new Image();
         img.crossOrigin = 'anonymous';
         img.onload = () => {
-          const origW = img.naturalWidth || 800;
-          const origH = img.naturalHeight || 600;
-
-          let proxyW = origW;
-          let proxyH = origH;
-          if (proxyW > maxDimension || proxyH > maxDimension) {
-            if (proxyW > proxyH) {
-              proxyH = Math.round((proxyH * maxDimension) / proxyW);
-              proxyW = maxDimension;
-            } else {
-              proxyW = Math.round((proxyW * maxDimension) / proxyH);
-              proxyH = maxDimension;
+          try {
+            const originalWidth = img.naturalWidth;
+            const originalHeight = img.naturalHeight;
+            if (!originalWidth || !originalHeight) throw new Error('This image has no readable dimensions.');
+            const scale = Math.min(1, maxDimension / Math.max(originalWidth, originalHeight));
+            if (scale === 1 && typeof source === 'string') {
+              resolve({ proxyDataUrl: source, originalWidth, originalHeight });
+              return;
             }
-          }
-
-          const canvas = document.createElement('canvas');
-          canvas.width = proxyW;
-          canvas.height = proxyH;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.max(1, Math.round(originalWidth * scale));
+            canvas.height = Math.max(1, Math.round(originalHeight * scale));
+            const ctx = canvas.getContext('2d');
+            if (!ctx) throw new Error('Could not create an image preview.');
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = 'medium';
-            ctx.drawImage(img, 0, 0, proxyW, proxyH);
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            const mime = /^data:image\/jpe?g[;,]/i.test(srcUrl) ? 'image/jpeg' : 'image/png';
+            resolve({ proxyDataUrl: canvas.toDataURL(mime, 0.82), originalWidth, originalHeight });
+          } catch (error) {
+            reject(error);
+          } finally {
+            releaseUrl();
           }
-
-          const proxyDataUrl = canvas.toDataURL('image/jpeg', 0.82);
-          if (srcUrl.startsWith('blob:')) URL.revokeObjectURL(srcUrl);
-          resolve({ proxyDataUrl, originalWidth: origW, originalHeight: origH });
         };
-
         img.onerror = () => {
-          if (srcUrl.startsWith('blob:')) URL.revokeObjectURL(srcUrl);
-          resolve({
-            proxyDataUrl: typeof source === 'string' ? source : '',
-            originalWidth: 800,
-            originalHeight: 600,
-          });
+          releaseUrl();
+          reject(new Error('Could not read this image. Choose a valid image file.'));
         };
 
         img.src = srcUrl;

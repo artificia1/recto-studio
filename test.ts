@@ -2675,13 +2675,14 @@ console.log('✓ Headless Publishing CLI Engine (recto build) verified.');
 
 // --- Suite 43: Asset Memory Pipeline (72 DPI Screen Proxies vs 300 DPI Export) ---
 console.log('\n--- Suite 43: Asset Memory Pipeline (72 DPI Screen Proxies vs 300 DPI Export) ---');
-const dummyRaster = 'data:image/jpeg;base64,' + Buffer.from('mock-high-res-300dpi-raster-data').toString('base64');
+const dummyRaster = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 const registeredAsset = await assetStore.registerAsset(dummyRaster, {
-  name: 'catalog-cover-300dpi.jpg',
+  name: 'catalog-cover-300dpi.png',
+  mimeType: 'image/png',
   width: 3600,
   height: 2400,
 });
-assert.strictEqual(registeredAsset.name, 'catalog-cover-300dpi.jpg', 'Asset name must match');
+assert.strictEqual(registeredAsset.name, 'catalog-cover-300dpi.png', 'Asset name must match');
 assert.strictEqual(registeredAsset.originalDpi, 300, 'Master asset must be recorded at 300 DPI');
 assert(registeredAsset.proxyDataUrl.length > 0, 'AssetStore must generate lightweight screen proxy');
 
@@ -2704,16 +2705,15 @@ const assetTestImg: ImageElement = {
   borderWidthMm: 0,
 };
 stateManager.addElement(assetTestImg);
-const registeredOnElement = await stateManager.registerImageAsset(assetTestImg.id, dummyRaster, 'catalog-cover-300dpi.jpg');
+const registeredOnElement = await stateManager.registerImageAsset(assetTestImg.id, dummyRaster, 'catalog-cover-300dpi.png');
 assert(registeredOnElement, 'registerImageAsset must succeed');
 const imgElemAfter = stateManager.getElementById(assetTestImg.id) as ImageElement;
-assert(imgElemAfter.assetId, 'Element must retain assetId');
-assert(imgElemAfter.proxySrc, 'Element must retain screen proxy data URL');
+assert.strictEqual(imgElemAfter.src, dummyRaster, 'Element must persist full-resolution bytes in the project');
 
 // Verify on-demand full resolution retrieval and page flush
-const streamResolved = assetStore.getFullResolution(imgElemAfter.assetId!);
-assert(streamResolved, 'Full-resolution master buffer must be retrievable on-demand for export');
-assetStore.flushPageExportBuffer(imgElemAfter.assetId!);
+const streamResolved = assetStore.getFullResolution(registeredAsset.id);
+assert.strictEqual(streamResolved, dummyRaster, 'Registered cache entries still resolve to their full image bytes');
+assetStore.flushPageExportBuffer(registeredAsset.id);
 stateManager.deleteElement(assetTestImg.id);
 console.log('✓ Asset Memory Pipeline (72 DPI Screen Proxies vs 300 DPI Export) verified.');
 

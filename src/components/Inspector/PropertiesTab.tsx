@@ -506,29 +506,23 @@ export function PropertiesTab({ state }: PropertiesTabProps) {
 
 function ImageInspector({ element }: { element: ImageElement }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const replacement = useRef<object>();
+  const [imageError, setImageError] = useState('');
 
-  const handleFileChange = (e: Event) => {
+  const handleFileChange = async (e: Event) => {
     const target = e.target as HTMLInputElement;
     const file = target.files?.[0];
-    if (file) {
-      const isPsd = file.name.toLowerCase().endsWith('.psd') || file.name.toLowerCase().endsWith('.psb');
-      if (isPsd) {
-        const reader = new FileReader();
-        reader.onload = (re) => {
-          if (re.target?.result instanceof ArrayBuffer) {
-            stateManager.loadPsdForElement(element.id, re.target.result, file.name);
-          }
-        };
-        reader.readAsArrayBuffer(file);
-      } else {
-        const reader = new FileReader();
-        reader.onload = async (re) => {
-          if (typeof re.target?.result === 'string') {
-            await stateManager.registerImageAsset(element.id, re.target.result, file.name);
-          }
-        };
-        reader.readAsDataURL(file);
+    target.value = '';
+    if (!file) return;
+    const request = {};
+    replacement.current = request;
+    setImageError('');
+    try {
+      if (!await stateManager.registerImageAsset(element.id, file)) {
+        throw new Error('The image frame changed or is locked. Select it and try again.');
       }
+    } catch (error) {
+      if (replacement.current === request) setImageError(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -567,6 +561,7 @@ function ImageInspector({ element }: { element: ImageElement }) {
         style={{ display: 'none' }}
         onChange={handleFileChange}
       />
+      {imageError && <p role="alert">{imageError}</p>}
 
       {element.isPsd && element.psdLayers && element.psdLayers.length > 0 && (
         <div

@@ -7,7 +7,6 @@
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { stateManager } from '../state';
 import { PAGE_PRESETS, PagePreset, ProjectState, VersionSnapshot, PeerPresence } from '../types';
-import { parseMergeData } from '../dataMerge';
 import { collabSession } from '../collab';
 import { isDesktop, openDesktopDocument, savePublicationFile } from '../desktop';
 import type { IngestedStory } from '../contentImport';
@@ -17,6 +16,7 @@ import { BookletImpositionModal, CoverSpineModal } from './LazyPrintDialogs';
 import { lazy, Suspense } from 'preact/compat';
 const AppUpdater = lazy(() => import('./AppUpdater').then(module => ({ default: module.AppUpdater })));
 const ScribusImportDialog = lazy(() => import('./ScribusImportDialog'));
+const DataMergeDialog = lazy(() => import('./DataMergeDialog'));
 const VersionHistoryDialog = lazy(() => import('./VersionHistoryDialog'));
 
 interface TopBarProps {
@@ -77,7 +77,6 @@ export function TopBar({
   const [copiedLink, setCopiedLink] = useState(false);
 
   const [csvText, setCsvText] = useState('');
-  const [mergeError, setMergeError] = useState('');
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [showFileMenu, setShowFileMenu] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -122,7 +121,6 @@ export function TopBar({
   const idmlInputRef = useRef<HTMLInputElement>(null);
   const inddInputRef = useRef<HTMLInputElement>(null);
   const placeInputRef = useRef<HTMLInputElement>(null);
-  const csvInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const handleOutsideClick = (e: MouseEvent) => {
@@ -240,7 +238,7 @@ export function TopBar({
           if (lower.endsWith('.indd')) {
             onOpenIndd?.(file);
           } else {
-            await stateManager.loadFromIdml(await file.arrayBuffer(), file.name);
+            await stateManager.loadFromIdml(file);
           }
           return;
         }
@@ -262,7 +260,7 @@ export function TopBar({
         if (file.name.toLowerCase().endsWith('.indd')) {
           onOpenIndd?.(file);
         } else {
-          await stateManager.loadFromIdml(await file.arrayBuffer(), file.name);
+          await stateManager.loadFromIdml(file);
         }
       } catch (err) {
         console.error('Failed to import InDesign document:', err);
@@ -306,6 +304,7 @@ export function TopBar({
         const buffer = await file.arrayBuffer();
         const { ingestManuscript } = await import('../contentImport');
         const ingested = await ingestManuscript(file.name, buffer);
+        if (stateManager.getElementById(textEl.id) !== textEl) throw new Error('The text frame changed. Select it and place the manuscript again.');
         if (!ingested.formattedText.trim()) throw new Error('This manuscript has no readable text.');
         onImportManuscript(ingested, file.name, textEl as TextElement);
       } catch (err) {
@@ -400,24 +399,6 @@ export function TopBar({
       await savePublicationFile(`${safeTitle}-idml-check.zip`, createIdmlValidationKit(`${safeTitle}.idml`, idmlBytes), 'application/zip');
     } else await savePublicationFile(`${safeTitle}.idml`, idmlBytes, 'application/vnd.adobe.indesign-idml-package');
   });
-
-  const handleCsvUpload = async (e: Event) => {
-    const file = (e.target as HTMLInputElement).files?.[0];
-    if (file) {
-      if (file.size > 4 * 1024 * 1024) { setMergeError('Choose a data file smaller than 4 MB.'); return; }
-      const text = await file.text();
-      setCsvText(text);
-    }
-  };
-
-  const handleRunMerge = () => {
-    if (!csvText.trim()) return;
-    try { stateManager.executeDataMerge(csvText, 'generateSpreads'); setShowDataMergeModal(false); setMergeError(''); }
-    catch (reason) { setMergeError(reason instanceof Error ? reason.message : String(reason)); }
-  };
-
-  let previewError = '';
-  const parsedPreview = (() => { try { return csvText.trim() ? parseMergeData(csvText) : null; } catch (reason) { previewError = reason instanceof Error ? reason.message : String(reason); return null; } })();
 
   const openVersionModal = () => {
     const list = stateManager.getSnapshots();
@@ -1320,138 +1301,8 @@ export function TopBar({
       </div>
 
       {showScribusImport && <Suspense fallback={null}><ScribusImportDialog onClose={() => setShowScribusImport(false)} /></Suspense>}
-      {showDataMergeModal && (
-        <div
-          className="modal-overlay"
-          onClick={() => setShowDataMergeModal(false)}
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(0, 0, 0, 0.65)',
-            zIndex: 1000,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <div
-            className="modal-card"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: '#202020',
-              border: '1px solid #444',
-              borderRadius: '8px',
-              width: '540px',
-              maxWidth: '90vw',
-              padding: '20px',
-              color: '#fff',
-              boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
-            }}
-          >
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: '14px',
-              }}
-            >
-              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>CSV / JSON Data Merge</h3>
-              {(previewError || mergeError) && <p role="alert">{previewError || mergeError}</p>}
-              <button className="icon-btn" onClick={() => setShowDataMergeModal(false)}>
-                ✕
-              </button>
-            </div>
-
-            <p style={{ fontSize: '12px', color: '#aaa', marginTop: 0, marginBottom: '12px' }}>
-              Use placeholders like <code>{'{{Title}}'}</code>, <code>{'{{Price}}'}</code>, <code>{'{{Author}}'}</code> in
-              your text frames or table cells. Import or paste CSV data below to generate publication spreads.
-            </p>
-
-            <div style={{ marginBottom: '12px' }}>
-              <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-                <button
-                  className="sm-btn"
-                  onClick={() => csvInputRef.current?.click()}
-                >
-                  Upload CSV / JSON
-                </button>
-                <button
-                  className="sm-btn"
-                  onClick={() => {
-                    setCsvText(
-                      `Title,Price,Author\n"The Master and Margarita","$18.99","Mikhail Bulgakov"\n"Invisible Cities","$15.50","Italo Calvino"\n"Ficciones","$14.00","Jorge Luis Borges"`
-                    );
-                  }}
-                >
-                  Load Sample CSV
-                </button>
-                <input
-                  type="file"
-                  ref={csvInputRef}
-                  accept=".csv,.json,text/csv,application/json"
-                  style={{ display: 'none' }}
-                  onChange={handleCsvUpload}
-                />
-              </div>
-              <textarea
-                rows={6}
-                value={csvText}
-                placeholder="Paste CSV data here with header row..."
-                style={{
-                  width: '100%',
-                  background: '#151515',
-                  color: '#e0e0e0',
-                  border: '1px solid #333',
-                  borderRadius: '4px',
-                  fontFamily: 'monospace',
-                  fontSize: '11px',
-                  padding: '8px',
-                  boxSizing: 'border-box',
-                  resize: 'vertical',
-                }}
-                onInput={(e) => setCsvText((e.target as HTMLTextAreaElement).value)}
-              />
-            </div>
-
-            {parsedPreview && (
-              <div
-                style={{
-                  background: '#181818',
-                  border: '1px solid #333',
-                  borderRadius: '4px',
-                  padding: '8px 12px',
-                  marginBottom: '14px',
-                  fontSize: '11px',
-                }}
-              >
-                <div style={{ color: '#10b981', fontWeight: 600, marginBottom: '4px' }}>
-                  Detected {parsedPreview.records.length} records, {parsedPreview.headers.length} columns:
-                </div>
-                <div style={{ color: '#93c5fd', fontFamily: 'monospace' }}>
-                  {parsedPreview.headers.map((h) => `{{${h}}}`).join('  ')}
-                </div>
-              </div>
-            )}
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-              <button className="action-btn" onClick={() => setShowDataMergeModal(false)}>
-                Cancel
-              </button>
-              <button
-                className="action-btn-primary"
-                disabled={!parsedPreview || parsedPreview.records.length === 0}
-                onClick={handleRunMerge}
-              >
-                Generate Merged Spreads ({parsedPreview?.records.length || 0})
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {showDataMergeModal && <Suspense fallback={null}><DataMergeDialog
+        csvText={csvText} setCsvText={setCsvText} onClose={() => setShowDataMergeModal(false)} /></Suspense>}
 
       {showVersionModal && <Suspense fallback={null}><VersionHistoryDialog snapshots={snapshots}
         selectedSnapshotId={selectedSnapshotId} diffResult={diffResult} commitMessage={commitMessage}

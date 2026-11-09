@@ -1928,15 +1928,8 @@ export class SpreadCanvas {
       input.type = 'file';
       input.accept = 'image/*';
       input.onchange = () => {
-        if (input.files && input.files[0]) {
-          const reader = new FileReader();
-          reader.onload = (re) => {
-            if (typeof re.target?.result === 'string') {
-              stateManager.updateElement(el.id, { src: re.target.result });
-            }
-          };
-          reader.readAsDataURL(input.files[0]);
-        }
+        const file = input.files?.[0];
+        if (file && stateManager.getElementById(el.id) === el) void this.replaceCanvasImage(el.id, file);
       };
       input.click();
     } else if (el.type === 'table') {
@@ -1946,7 +1939,7 @@ export class SpreadCanvas {
     }
   }
 
-  private handleFileDrop(e: DragEvent) {
+  private async handleFileDrop(e: DragEvent) {
     e.preventDefault();
     const state = stateManager.getState();
     if (!e.dataTransfer || !e.dataTransfer.files.length) return;
@@ -1960,37 +1953,51 @@ export class SpreadCanvas {
     const { x: mmX, y: mmY } = this.screenToSpreadMm(screenX, screenY, state);
 
     const hit = this.hitTestElements(mmX, mmY, state);
-    const reader = new FileReader();
-    reader.onload = (re) => {
-      if (typeof re.target?.result !== 'string') return;
-      const dataUrl = re.target.result;
-
-      if (hit && hit.type === 'image') {
-        stateManager.updateElement(hit.id, { src: dataUrl });
-      } else {
-        const pageHit = this.findPageAtMm(mmX, mmY, state);
-        if (pageHit) {
-          stateManager.addElement({
-            id: `elem-drop-${Date.now()}`,
-            type: 'image',
-            pageId: pageHit.page.id,
-            x: Math.round(pageHit.localX - 40),
-            y: Math.round(pageHit.localY - 30),
-            width: 80,
-            height: 60,
-            rotation: 0,
-            opacity: 1,
-            zIndex: 10,
-            locked: false,
-            src: dataUrl,
-            fitMode: 'fill',
-            borderColor: '#111111',
-            borderWidthMm: 0.3,
-          });
-        }
+    if (hit?.type === 'image') {
+      e.stopPropagation();
+      void this.replaceCanvasImage(hit.id, file);
+      return;
+    }
+    const spread = stateManager.getActiveSpread();
+    const pageHit = this.findPageAtMm(mmX, mmY, state);
+    if (!pageHit) return;
+    e.stopPropagation();
+    try {
+      const { readPlacedImage } = await import('./engine/placedImage');
+      const image = await readPlacedImage(file);
+      if (stateManager.getState() !== state || stateManager.getActiveSpread() !== spread) {
+        throw new Error('The document or spread changed. Drop the image again on its intended page.');
       }
-    };
-    reader.readAsDataURL(file);
+      stateManager.addElement({
+        ...image,
+        id: crypto.randomUUID(),
+        type: 'image',
+        pageId: pageHit.page.id,
+        x: Math.round(pageHit.localX - 40),
+        y: Math.round(pageHit.localY - 30),
+        width: 80,
+        height: 60,
+        rotation: 0,
+        opacity: 1,
+        zIndex: 10,
+        locked: false,
+        fitMode: 'fill',
+        borderColor: '#111111',
+        borderWidthMm: 0.3,
+      });
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Could not place the dropped image.');
+    }
+  }
+
+  private async replaceCanvasImage(elementId: string, file: File) {
+    try {
+      if (!await stateManager.registerImageAsset(elementId, file)) {
+        alert('The image frame changed or is locked. Select it and try again.');
+      }
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Could not replace the image.');
+    }
   }
 
   private hitTestElements(spreadMmX: number, spreadMmY: number, state: ProjectState): CanvasElement | null {
