@@ -1,7 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { importProject, menuCommand, savedProject, projectFixture } from './fixtures';
-import { createZipArchive } from '../src/zip';
+import { createZipArchive, readZip } from '../src/zip';
+import { fontCollectionFixture } from '../tests/fixtures/fontCollection';
 const runtimeErrors = new WeakMap<Page, string[]>();
 
 test.beforeEach(async ({ page }) => {
@@ -210,7 +211,7 @@ test('reopens Find/Change ready for typing and replaces document text', async ({
 
 test('imports a real custom font, keeps it in the saved project and activates it after reload', async ({ page }) => {
   await importProject(page);
-  await page.locator('input[accept=".woff2,.ttf,.otf,.woff"]').setInputFiles('tests/fixtures/fonts/SourceSansPro-Regular.woff2');
+  await page.getByLabel('Import font file').setInputFiles('tests/fixtures/fonts/SourceSansPro-Regular.woff2');
   await expect.poll(() => page.evaluate(() => Array.from(document.fonts).some(font => font.family.includes('Source Sans Pro') && font.status === 'loaded'))).toBe(true);
   await expect(page.locator('.status-left [role="status"]')).toHaveText('Saved locally');
   const saved = await savedProject(page);
@@ -223,10 +224,38 @@ test('imports a real custom font, keeps it in the saved project and activates it
 
 test('reports a corrupt font without changing the selected font', async ({ page }) => {
   await importProject(page);
-  await page.locator('input[accept=".woff2,.ttf,.otf,.woff"]').setInputFiles({ name: 'bad.ttf', mimeType: 'font/ttf', buffer: Buffer.from('not a font') });
+  await page.getByLabel('Import font file').setInputFiles({ name: 'bad.ttf', mimeType: 'font/ttf', buffer: Buffer.from('not a font') });
   await expect(page.getByRole('alert')).toContainText('could not be read');
   const saved = await savedProject(page);
   expect(saved.spreads[0].elements[0].fontFamily).toBe('Georgia, serif');
+});
+
+test('imports only the chosen face from a font collection', async ({ page }) => {
+  await importProject(page);
+  await page.getByLabel('Import font file').setInputFiles({ name: 'Publication.ttc', mimeType: 'font/collection', buffer: fontCollectionFixture() });
+  const face = page.getByLabel('Collection face');
+  await expect(face.locator('option')).toHaveCount(2);
+  await face.selectOption('1');
+  await page.getByRole('button', { name: 'Import selected face' }).click();
+  await expect(face).toHaveCount(0);
+  const saved = await savedProject(page);
+  expect(saved.spreads[0].elements[0].fontFamily).toContain('Source Sans Pro');
+  expect(saved.embeddedFonts).toHaveLength(1);
+  expect(saved.embeddedFonts[0].fileName).toMatch(/\.otf$/);
+});
+
+test('downloads the IDML and native validator together from the export menu', async ({ page }) => {
+  await importProject(page);
+  await page.getByTitle('Export Clean PDF, Print PDF, EPUB 3, Web Flipbook, or Package').click();
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: /InDesign Validation Kit/ }).click();
+  const path = await (await download).path();
+  const kit = await readZip(await readFile(path!));
+  expect(kit.has('Recto-Validate-IDML.jsx')).toBe(true);
+  const packagedIdml = [...kit.entries()].find(([name]) => name.endsWith('.idml'));
+  expect(packagedIdml).toBeDefined();
+  const document = await readZip(packagedIdml![1]);
+  expect(document.has('designmap.xml')).toBe(true);
 });
 
 test('runs a restricted script and rejects network access without changing the document', async ({ page }) => {
@@ -402,7 +431,7 @@ test('persists horizontal CJK style controls without enabling dictionary hyphena
 
 test('applies real variable font axes and restores them after reload', async ({ page }) => {
   await importProject(page);
-  await page.locator('input[accept=".woff2,.ttf,.otf,.woff"]').setInputFiles('tests/fixtures/fonts/Roboto-Variable.ttf');
+  await page.getByLabel('Import font file').setInputFiles('tests/fixtures/fonts/Roboto-Variable.ttf');
   await page.getByText('Variable font axes', { exact: true }).click();
   await page.getByRole('slider', { name: 'Font axis wght', exact: true }).press('End');
   await page.getByRole('slider', { name: 'Font axis wdth', exact: true }).press('Home');

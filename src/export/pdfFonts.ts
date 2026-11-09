@@ -3,10 +3,12 @@ import type { Font, Glyph, GlyphRun } from 'fontkit';
 import type { ProjectState } from '../types';
 import { fontManager } from '../fontManager';
 import { bindFontDrawing } from './pdfFontDrawing';
+import { readFullCff, type FullCff } from './fullCff';
 
 export interface PdfGlyphCode { code: number; cid: number; glyphId: number; unicode: string; width: number }
 type FontProgram = { type: 'cff' | 'truetype' | 'variable-truetype'; subset: ReturnType<Font['createSubset']> }
   | { type: 'cff2'; cids: Map<number, number> }
+  | { type: 'full-cff'; cff: FullCff }
   | { type: 'full-truetype'; bytes: Uint8Array };
 
 export interface PdfFontSubset {
@@ -20,6 +22,9 @@ export interface PdfFontSubset {
 const embedded = new WeakMap<jsPDF, Map<Font, PdfFontSubset>>();
 export const usedPdfFonts = (doc: jsPDF) => [...(embedded.get(doc)?.values() || [])].filter(entry => entry.glyphs.size);
 export const pdfCode = (code: number) => code.toString(16).padStart(4, '0');
+export const simpleCode = (code: number) => (1 + (code - 1) % 255).toString(16).padStart(2, '0');
+export const simpleBank = (code: number) => Math.floor((code - 1) / 255);
+export const simpleResource = (resource: string, bank: number) => bank ? `${resource}_${bank + 1}` : resource;
 
 export function pdfFontName(doc: jsPDF, family: string) {
   const font = fontManager.getFont(family);
@@ -39,7 +44,10 @@ export function registerPdfFonts(doc: jsPDF, assets: ProjectState['embeddedFonts
     let program: FontProgram | undefined;
     if (!rights?.noEmbedding && !rights?.bitmapOnly) {
       if (rights?.noSubsetting) {
-        if (tables.glyf && !tables.fvar) {
+        if (tables['CFF ']) {
+          const cff = readFullCff(font);
+          if (cff) program = { type: 'full-cff', cff };
+        } else if (tables.glyf && !tables.fvar) {
           const source = atob(asset.data);
           // Only a standalone sfnt can be embedded byte-for-byte in FontFile2.
           if (source.startsWith('\x00\x01\x00\x00')) program = { type: 'full-truetype', bytes: Uint8Array.from(source, char => char.charCodeAt(0)) };
@@ -68,6 +76,8 @@ function encode(entry: PdfFontSubset, glyph: Glyph, unicode: string): PdfGlyphCo
       cid = program.cids.get(glyph.id) || program.cids.size + 1;
       if (cid >= 65535) throw new Error('A CFF2 font subset exceeds the PDF glyph limit.');
       program.cids.set(glyph.id, cid);
+    } else if (program.type === 'full-cff') {
+      if (program.cff.kind === 'cid') cid = program.cff.glyphCid(glyph.id)!;
     } else if (program.type !== 'full-truetype') {
       // Fontkit's declaration says boolean, but the API returns the subset glyph ID.
       cid = Number(program.subset.includeGlyph(entry.font.getGlyph(glyph.id)));
@@ -87,6 +97,8 @@ function drawEmbeddedText(doc: jsPDF, font: Font, run: GlyphRun, text: string, x
   if (!invisible && (logical.some(value => !value) || logical.join('') !== text)) return false;
   const values = invisible ? Array.from(text) : logical;
   if (glyphs.length !== values.length || !glyphs.length || glyphs.some(glyph => !glyph.id)) return false;
+  const full = entry.program.type === 'full-cff' ? entry.program.cff : undefined;
+  if (full && glyphs.some(glyph => full.kind === 'name' ? !full.glyphName(glyph.id) : !full.glyphCid(glyph.id))) return false;
   const codes = glyphs.map((glyph, index) => encode(entry, glyph, values[index]));
   const internal = doc.internal as typeof doc.internal & {
     write(value: string): void;
@@ -96,12 +108,17 @@ function drawEmbeddedText(doc: jsPDF, font: Font, run: GlyphRun, text: string, x
   entry.pages.add(doc.getNumberOfPages());
   const scale = size / internal.scaleFactor / font.unitsPerEm;
   let advance = 0;
-  const operators = [`BT /${entry.resource} ${size} Tf 0 Tc 0 Tw ${invisible ? 3 : 0} Tr`];
+  const simple = full?.kind === 'name';
+  let resource = '';
+  const operators = [`BT 0 Tc 0 Tw ${invisible ? 3 : 0} Tr`];
   for (let index = 0; index < glyphs.length; index++) {
     const position = invisible ? { xOffset: 0, yOffset: 0, xAdvance: glyphs[index].advanceWidth } : run.positions[index];
     const px = internal.getCoordinateString(x + (advance + position.xOffset) * scale);
     const py = internal.getVerticalCoordinateString(y - position.yOffset * scale);
-    operators.push(`1 0 0 1 ${px} ${py} Tm <${pdfCode(codes[index].code)}> Tj`);
+    const { code } = codes[index];
+    const next = simple ? simpleResource(entry.resource, simpleBank(code)) : entry.resource;
+    if (resource !== next) { operators.push(`/${next} ${size} Tf`); resource = next; }
+    operators.push(`1 0 0 1 ${px} ${py} Tm <${simple ? simpleCode(code) : pdfCode(code)}> Tj`);
     advance += position.xAdvance;
   }
   operators.push('ET');

@@ -391,11 +391,14 @@ export function TopBar({
     if (isDesktop()) await savePublicationFile(result.filename, result.buffer, 'application/zip');
   });
 
-  const handleExportIdml = () => runExport(async () => {
+  const handleExportIdml = (validationKit = false) => runExport(async () => {
     const { exportDocumentToIdml } = await import('../export/idmlExport');
     const idmlBytes = exportDocumentToIdml(state);
     const safeTitle = (state.settings.title || 'publication').toLowerCase().replace(/[^a-z0-9_-]/g, '-');
-    await savePublicationFile(`${safeTitle}.idml`, idmlBytes, 'application/vnd.adobe.indesign-idml-package');
+    if (validationKit) {
+      const { createIdmlValidationKit } = await import('../export/idmlValidationKit');
+      await savePublicationFile(`${safeTitle}-idml-check.zip`, createIdmlValidationKit(`${safeTitle}.idml`, idmlBytes), 'application/zip');
+    } else await savePublicationFile(`${safeTitle}.idml`, idmlBytes, 'application/vnd.adobe.indesign-idml-package');
   });
 
   const handleCsvUpload = async (e: Event) => {
@@ -1267,6 +1270,12 @@ export function TopBar({
                 <div>
                   <div className="dropdown-item-title">Adobe InDesign Package (.idml)</div>
                   <div className="dropdown-item-sub">Two-way exchange package for agency handoff</div>
+                </div>
+              </button>
+              <button className="top-dropdown-item" onClick={() => { setShowExportMenu(false); handleExportIdml(true); }}>
+                <div>
+                  <div className="dropdown-item-title">InDesign Validation Kit (.zip)</div>
+                  <div className="dropdown-item-sub">IDML and a native round-trip check script</div>
                 </div>
               </button>
               <div className="dropdown-divider" />

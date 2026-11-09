@@ -28,10 +28,9 @@ Google Fonts load over the network and are refreshed after loading. System and
 Google font names alone do not provide font bytes for offline sharing or faithful
 PDF export: import the corresponding font file for that purpose.
 
-No font contains every Unicode character. Missing glyphs, bitmap-only/color emoji
-fonts, font collections (TTC/OTC/DFONT), legacy Type 1/EOT fonts, and unusual font
-formats are not universally supported. Export an individual TTF/OTF face when
-necessary.
+Check glyph coverage for each language in the publication. Bitmap-only or
+colour emoji fonts, Mac DFONT suitcases, and legacy Type 1 and EOT files have
+limited support. Use an individual TTF or OTF face when a file fails to load.
 
 Imported variable fonts expose their advertised axes under **Properties → Variable
 font axes**. Sliders preview the face live; Apply creates a named instance used by
@@ -43,10 +42,18 @@ axes. CFF2 retains the cubic outlines in a CID-keyed CFF program with Unicode
 mappings. Colour-only fonts still need separate handling. Each applied instance
 stores a copy of the source font bytes.
 
-For standalone static TrueType files with the OpenType no-subsetting flag and
-permission to embed, the PDF contains the entire original font program. Other
-formats that require full embedding use the outline fallback. Check the font's
-license before distributing the output.
+For static TrueType and CFF OpenType faces that permit embedding and prohibit
+subsetting, supported PDF exports keep the complete font program. Standalone
+TrueType uses the original sfnt bytes. CFF uses the untouched CFF table from
+OTF, WOFF, or WOFF2, including its original glyphs, hints and subroutines. Name-keyed CFF uses searchable
+single-byte encodings that share the same program. CID-keyed CFF uses its
+original CID mapping. CFF2 and variable TrueType require a static instance when
+subsetting is permitted.
+
+For TTC and OTC collections, choose a face in the font picker. Recto stores the
+selected face as a standalone font in the project, including its original
+glyphs, variation tables, and embedding flags. Each input collection can be up
+to 32 MiB.
 
 Open **Links → Document fonts & replacement** to audit font references, import a
 licensed TTF/OTF/WOFF/WOFF2 source, and replace a family throughout the document.

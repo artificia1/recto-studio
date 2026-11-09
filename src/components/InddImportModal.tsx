@@ -4,6 +4,7 @@ import { stateManager } from '../state';
 import { createZipArchive } from '../zip';
 import { savePublicationFile } from '../desktop';
 import conversionScript from '../../public/conversion/Recto-Export-IDML.jsx?raw';
+import validationScript from '../../public/conversion/Recto-Validate-IDML.jsx?raw';
 import './equations.css';
 
 const instructions = `INDD to Recto Studio\n\n1. Open the original INDD document in a compatible, licensed Adobe InDesign installation.\n2. Open Window > Utilities > Scripts. Right-click the User folder and choose Reveal in Explorer/Finder.\n3. Copy Recto-Export-IDML.jsx from this ZIP into that Scripts Panel folder.\n4. Double-click the script in InDesign's Scripts panel and choose a new IDML file location.\n5. Return to Recto and import that IDML file.\n\nYou can also use InDesign's File > Export > InDesign Markup (IDML) without this script.\n\nThe script exports the active document. It never saves or closes the original document.\nRecto's IDML importer supports editable text, styles and geometry, with format limitations.\nKeep original linked images/fonts available for relinking and check the imported result.\n\nWithout InDesign, ask the document creator to provide IDML.\nRaw binary recovery in Recto only extracts possible fragments and previews; it cannot recreate the original layout.\n`;
@@ -21,7 +22,8 @@ export function InddImportModal({ file, onClose }: { file: File; onClose: () => 
     finally { setBusy(false); }
   };
   const kit = () => run(async () => {
-    const archive = createZipArchive({ 'Recto-Export-IDML.jsx': conversionScript, 'README.txt': instructions });
+    const archive = createZipArchive({ 'Recto-Export-IDML.jsx': conversionScript, 'Recto-Validate-IDML.jsx': validationScript,
+      'README.txt': instructions + '\nFor a Recto export, run Recto-Validate-IDML.jsx from the same Scripts panel. Choose the IDML file and a destination. Compare the generated native IDML and round-trip report.\n' });
     await savePublicationFile('Recto-IDML-Conversion.zip', archive, 'application/zip');
   });
   const recover = () => run(async () => {

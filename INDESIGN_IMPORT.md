@@ -39,6 +39,24 @@ printing settings. Per-object nonprinting flags carry over too. Use the **Layers
 panel to include or exclude a whole layer from publication output while keeping
 its artwork editable.
 
+## Check a Recto export in InDesign
+
+1. Choose **Export → InDesign Validation Kit** in Recto and extract the ZIP.
+   The kit includes the IDML export and validation script. Gather any linked
+   images and fonts for the handoff.
+2. Copy [Recto-Validate-IDML.jsx](public/conversion/Recto-Validate-IDML.jsx) to
+   InDesign's user Scripts Panel folder. The conversion kit also includes it.
+3. Run the script in InDesign. Choose the Recto IDML file and a location for the
+   results. InDesign opens the package, exports its own IDML, then reopens it.
+4. Read `roundtrip-report.txt` and open `indesign-roundtrip.idml` in Recto for a
+   return check. Compare the rendered pages before approving the handoff.
+
+The report compares page geometry, parent pages, layers, stories and thread
+counts, artwork bounds, styles, and swatches. It flags missing fonts and links.
+Both temporary documents are closed without saving changes, and the output goes
+into a new folder. These checks cover native serialization. Visual fidelity
+requires comparing the pages against the source publication.
+
 ## INDD recovery is not layout import
 
 The binary INDD database is not decoded by Recto. Its optional content-recovery

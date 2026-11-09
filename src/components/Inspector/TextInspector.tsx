@@ -5,6 +5,7 @@ import { getAllFreeToneColors } from '../../engine/spotColors';
 import type { ProjectState, TextElement, ParagraphStyle } from '../../types';
 import { MathInput } from '../common/MathInput';
 import { lazy, Suspense } from 'preact/compat';
+import { FONT_FILES, useFontFileImport } from '../common/useFontFileImport';
 const VariableFontPanel = lazy(() => import('./VariableFontPanel'));
 
 export default function TextInspector({
@@ -20,17 +21,7 @@ export default function TextInspector({
   const [fontSearch, setFontSearch] = useState('');
   const [fontCategory, setFontCategory] = useState<'all' | 'serif' | 'sans-serif' | 'display' | 'monospace' | 'handwriting'>('all');
   const [isFontHover, setIsFontHover] = useState(false);
-  const [fontError, setFontError] = useState('');
-  const importFont = async (file: File) => {
-    setFontError('');
-    try {
-      const name = await fontManager.registerFontBuffer(file.name, await file.arrayBuffer());
-      stateManager.saveImportedFonts();
-      stateManager.updateElement(element.id, { fontFamily: name });
-    } catch (error) {
-      setFontError(error instanceof Error ? error.message : 'Unable to read this font.');
-    }
-  };
+  const { importFile: importFont, choice, error: fontError } = useFontFileImport(family => stateManager.applyImportedFont(element.id, family));
   const fontFileRef = useRef<HTMLInputElement>(null);
   const [, setFontVer] = useState(0);
 
@@ -76,11 +67,13 @@ export default function TextInspector({
 
       {/* Extended Font Picker & Custom Dropzone */}
       {fontError && <p role="alert" style={{ color: '#ff7878', fontSize: '12px' }}>{fontError}</p>}
+      {choice}
       <div className="font-picker-container" style={{ marginTop: '8px' }}>
         <input
           type="file"
+          aria-label="Import font file"
           ref={fontFileRef}
-          accept=".woff2,.ttf,.otf,.woff"
+          accept={FONT_FILES}
           style={{ display: 'none' }}
           onChange={async (e) => {
             const file = (e.target as HTMLInputElement).files?.[0];
