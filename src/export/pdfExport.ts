@@ -2,7 +2,7 @@ import { instantiateMasterItem, resolveMaster } from '../engine/masterInheritanc
 import { layoutFrameNotes, notesForFrame, publicationSnapshot, publicationText } from '../engine/publicationReferences';
 import { publicationPreflight } from '../engine/publicationPreflight';
 import { embeddedAsset, prepareExportAssets } from './publicationAssets';
-import { registerPdfFonts } from './pdfFonts';
+import { registerPdfFonts, usedPdfFonts } from './pdfFonts';
 /**
  * Recto Studio — High-Precision Desktop Publishing Engine
  * Copyright (c) 2022-2026 Abhinav. All rights reserved.
@@ -624,7 +624,7 @@ export async function exportDocumentToPdf(
   for (const warning of preflightWarnings) options.onWarning?.(warning);
   semantic?.validate();
 
-  let finalized = (structure || usedSpotColors.size) ? await (structure || await import('./pdfStructure')).finishPdf(doc, state, [...usedSpotColors.values()], semantic?.tags || (structure ? tags : undefined), options.compress !== false, semantic?.groups) : undefined;
+  let finalized = (structure || usedSpotColors.size || usedPdfFonts(doc).length) ? await (structure || await import('./pdfStructure')).finishPdf(doc, state, [...usedSpotColors.values()], semantic?.tags || (structure ? tags : undefined), options.compress !== false, semantic?.groups) : undefined;
   if (options.transparency === 'flatten') {
     const { flattenPdfTransparency } = await import('./transparencyFlatten');
     const result = await flattenPdfTransparency(new Uint8Array(doc.output('arraybuffer')), state, flattenArtwork, slug + bleed, options.flattenDpi || 300);
@@ -634,7 +634,7 @@ export async function exportDocumentToPdf(
   if (options.accessibility) {
     finalized = await (await import('./pdfUa')).identifyPdfUa1(new Uint8Array(doc.output('arraybuffer')), state);
     (await import('./pdfStructure')).bindFinalizedPdf(doc, finalized);
-    (doc as any).accessibilityReport = { standard: 'PDF/UA-1', humanReviewRequired: true, limits: ['No interactive annotation tagging', 'Embedded static TTF fonts required', 'Content-sized tables required'] };
+    (doc as any).accessibilityReport = { standard: 'PDF/UA-1', humanReviewRequired: true, limits: ['No interactive annotation tagging', 'Embeddable fonts with Unicode mappings required', 'Content-sized tables required'] };
     options.onWarning?.('Accessible PDF/UA-1 prepared. Validate the final publication and review image descriptions and reading order with assistive technology.');
   }
   if (options.pressStandard) {

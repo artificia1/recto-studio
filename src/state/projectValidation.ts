@@ -88,7 +88,7 @@ const textFormatting = {
 };
 const storyContent: Validator = (value, path) => {
   object({ version: (v, p) => { if (v !== 1) fail(p, 'unsupported story version'); },
-    paragraphs: array(object({ id: optional(identifier), styleId: optional(identifier), sourceStyle: optional(text),
+    paragraphs: array(object({ id: optional(identifier), styleId: optional(identifier), sourceStyle: optional(text), conditionId: optional(identifier),
       formatting: optional(object({ ...textFormatting, alignment: optional(alignment), lineHeight: optional(positive), letterSpacingPt: optional(number),
         language: optional(choice('en-US', 'de', 'fr', 'ja', 'zh', 'ko')), cjkLineBreak: optional(boolean), hyphenate: optional(boolean),
         widowLines: optional(count), orphanLines: optional(count), keepTogether: optional(boolean), keepWithNext: optional(boolean) })),
@@ -169,7 +169,7 @@ const element: Validator = (value, path) => {
     id: identifier, pageId: identifier, x: number, y: number, width: nonnegative,
     height: nonnegative, rotation: number, opacity: nonnegative, zIndex: number, locked: boolean,
     layerId: optional(identifier), ...elementSchemas[type],
-    name: optional(text), editorialOnly: optional(boolean),
+    name: optional(text), editorialOnly: optional(boolean), conditionId: optional(identifier),
     readingOrder: optional(positive),
     textWrap: optional(object({ mode: choice('none', 'boundingBox', 'contour'), standoffMm: nonnegative })),
     anchor: optional(object({ parentTextId: identifier })),

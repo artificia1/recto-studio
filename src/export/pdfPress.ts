@@ -14,7 +14,7 @@ export function requirePdfFonts(pdf: PDFDocument, unicode = false) {
       if (!unicode && actual.get(PDFName.of('Subtype'))?.toString() === '/Type3') continue;
       const descriptor = actual.lookupMaybe(PDFName.of('FontDescriptor'), PDFDict);
       if (!descriptor || !['FontFile', 'FontFile2', 'FontFile3'].some(key => descriptor.has(PDFName.of(key))) || (unicode && !font.has(PDFName.of('ToUnicode')))) {
-        throw new Error(`${unicode ? 'Accessible' : 'Press'} PDF requires embedded fonts${unicode ? ' with Unicode mappings' : ''}. Import static, embeddable TTF fonts for all text, including running headers, notes and print slugs.`);
+        throw new Error(`${unicode ? 'Accessible' : 'Press'} PDF requires embedded fonts${unicode ? ' with Unicode mappings' : ''}. Import embeddable TrueType or OpenType fonts for all text, including running headers, notes and print slugs.`);
       }
     }
   }

@@ -3,6 +3,7 @@ import { assetStore } from '../engine/assetStore';
 import { base64ToUint8Array, uint8ArrayToBase64 } from '../zip';
 import { parseManuscriptXml, children, nodeText, type XmlNode } from '../import/manuscriptXml';
 import { masterDependencies } from '../engine/masterInheritance';
+import { hiddenEditionIds } from '../engine/publicationEditions';
 
 export interface PublicationAsset { bytes: Uint8Array; mediaType: string; extension: string; dataUrl: string }
 const LIMIT = 64 * 1024 * 1024;
@@ -55,9 +56,11 @@ export function fullImageSource(image: ImageElement): string {
 /** Snapshot and freeze external image bytes before export; no proxy or browser-local URL escapes. */
 export async function prepareExportAssets(source: ProjectState, fetchExternal = false, includeHidden = false): Promise<ProjectState> {
   const state = structuredClone(source);
+  const hiddenEditions = hiddenEditionIds(state);
   const masters = masterDependencies(state.masterSpreads, state.spreads.map(spread => spread.masterSpreadId));
   const images = [...state.spreads.flatMap(spread => spread.elements), ...state.masterSpreads.filter(master => masters.has(master.id)).flatMap(master => master.elements)]
-    .filter((item): item is ImageElement => item.type === 'image' && (includeHidden || (!item.pasteboard && !item.editorialOnly && state.layers?.find(layer => layer.id === item.layerId)?.visible !== false)));
+    .filter((item): item is ImageElement => item.type === 'image' && (includeHidden ||
+      (!item.pasteboard && !item.editorialOnly && !hiddenEditions.has(item.conditionId || '') && state.layers?.find(layer => layer.id === item.layerId)?.visible !== false)));
   const cache = new Map<string, PublicationAsset>();
   let total = 0;
   for (const image of images) {

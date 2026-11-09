@@ -6,6 +6,7 @@ import {
   ImageElement,
   ShapeElement,
   ParagraphStyle,
+  MasterSpread,
   DocumentSettings,
   CanvasElement,
   DEFAULT_LAYERS,
@@ -25,9 +26,9 @@ const decodeStoryXml = (text: string) => text.replace(/&(#x[0-9a-f]+|#\d+|amp|lt
 const PT_TO_MM = 25.4 / 72; // 1 point = 0.352778 mm
 
 export function extractXmlAttr(xml: string, attr: string): string | null {
-  const re = new RegExp(`${attr}\\s*=\\s*["']([^"']*)["']`, 'i');
+  const re = new RegExp(`(?:^|\\s)${attr}\\s*=\\s*(["'])(.*?)\\1`, 'is');
   const m = xml.match(re);
-  return m ? m[1] : null;
+  return m ? m[2] : null;
 }
 
 export function extractXmlTags(xml: string, tagName: string): string[] {
@@ -537,13 +538,14 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
 
   // 2. Parse Paragraph Styles from Resources/Styles.xml
   const parsedStyles: ParagraphStyle[] = [...DEFAULT_PARAGRAPH_STYLES];
+  const styleRefs = new Map<string, ParagraphStyle>();
   const stylesFile = files.get('Resources/Styles.xml');
   if (stylesFile) {
     const xml = textDecoder.decode(stylesFile);
     const pStyleTags = extractXmlTags(xml, 'ParagraphStyle');
 
     for (const tag of pStyleTags) {
-      const name = extractXmlAttr(tag, 'Name');
+      const name = decodeStoryXml(extractXmlAttr(tag, 'Name') || '');
       if (!name || name.startsWith('$ID') || name === 'NormalParagraphStyle') continue;
 
       const ptSize = parseFloat(extractXmlAttr(tag, 'PointSize') || '10');
@@ -560,16 +562,19 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
         parsedStyles.push({
           id: styleId,
           name,
-          fontFamily: extractXmlAttr(tag, 'AppliedFont') || 'serif',
+          fontFamily: decodeStoryXml(extractXmlAttr(tag, 'AppliedFont') || tag.match(/<AppliedFont\b[^>]*>([^<]+)<\/AppliedFont>/i)?.[1] || 'serif'),
           fontSizePt: !isNaN(ptSize) ? ptSize : 10,
           lineHeight: !isNaN(leadingPt) && !isNaN(ptSize) && ptSize > 0 ? Math.round((leadingPt / ptSize) * 100) / 100 : 1.3,
           letterSpacingPt: 0,
-          color: '#1a1a1a',
+          color: extractXmlAttr(tag, 'FillColor') ? resolveIdmlColor(extractXmlAttr(tag, 'FillColor'), undefined, colorsMap) : '#1a1a1a',
           alignment,
           snapToBaseline: true,
           dropCapLines: parseInt(extractXmlAttr(tag, 'DropCapLines') || '0') || 0,
         });
       }
+      const reference = extractXmlAttr(tag, 'Self');
+      const style = parsedStyles.find(item => item.id === styleId);
+      if (reference && style) styleRefs.set(reference, style);
     }
   }
 
@@ -610,11 +615,11 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
       let detectedColor: string | undefined;
       const storyGrepRules: { pattern: string; color: string; bold?: boolean; italic?: boolean }[] = [];
 
-      for (const pr of pRanges) {
+      for (const [rangeIndex, pr] of pRanges.entries()) {
         const applied = extractXmlAttr(pr, 'AppliedParagraphStyle');
         if (applied) {
           const cleanName = applied.replace('ParagraphStyle/', '');
-          const match = parsedStyles.find((s) => s.name.toLowerCase() === cleanName.toLowerCase());
+          const match = styleRefs.get(applied) || parsedStyles.find((s) => s.name.toLowerCase() === cleanName.toLowerCase());
           if (match && !detectedStyleId) detectedStyleId = match.id;
         }
 
@@ -702,8 +707,13 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
           }
         }
 
-        const paraStr = paraTokens.join('');
-        const paragraphStyle = applied ? parsedStyles.find(style => style.name.toLowerCase() === applied.replace('ParagraphStyle/', '').toLowerCase()) : undefined;
+        let paraStr = paraTokens.join('');
+        if (rangeIndex < pRanges.length - 1 && paraStr.endsWith('\n')) {
+          paraStr = paraStr.slice(0, -1);
+          const last = richRuns.findLast(run => run.text.length);
+          if (last?.text.endsWith('\n')) last.text = last.text.slice(0, -1);
+        }
+        const paragraphStyle = applied ? styleRefs.get(applied) || parsedStyles.find(style => style.name.toLowerCase() === applied.replace('ParagraphStyle/', '').toLowerCase()) : undefined;
         // Preserve hard breaks as structured paragraph boundaries with the same run formatting.
         let currentRuns: StoryRun[] = [];
         for (const run of richRuns) run.text.split('\n').forEach((text, index) => {
@@ -772,19 +782,26 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
 
   // 5. Parse Spreads and Elements
   const spreads: Spread[] = [];
+  const masterSpreads: MasterSpread[] = [];
+  const masterFiles = [...files.keys()].filter(name => /^MasterSpreads\/MasterSpread_.*\.xml$/i.test(name));
+  const orderedFiles = [...spreadFileOrder, ...masterFiles];
   let globalPageCounter = 1;
 
-  for (let sIdx = 0; sIdx < spreadFileOrder.length; sIdx++) {
-    const sFile = spreadFileOrder[sIdx];
+  for (let sIdx = 0; sIdx < orderedFiles.length; sIdx++) {
+    const sFile = orderedFiles[sIdx];
     const sContent = files.get(sFile);
     if (!sContent) continue;
 
     const xml = textDecoder.decode(sContent);
-    const parsedPages = parseSpreadPages(xml, globalPageCounter, facingPages, pageWidthMm, pageHeightMm);
-    globalPageCounter += parsedPages.length;
+    const master = sFile.startsWith('MasterSpreads/');
+    const parsedPages = parseSpreadPages(xml, master ? 1 : globalPageCounter, facingPages, pageWidthMm, pageHeightMm);
+    if (!master) globalPageCounter += parsedPages.length;
+    const spreadTag = xml.match(master ? /<MasterSpread\b[^>]*>/i : /<Spread\b[^>]*>/i)?.[0] || '';
+    const pageTag = xml.match(/<Page\b[^>]*>/i)?.[0] || '';
+    const appliedMaster = [extractXmlAttr(spreadTag, 'AppliedMaster'), extractXmlAttr(pageTag, 'AppliedMaster')].find(id => id && id !== 'n' && id !== 'kInvalidRef');
 
     // Adopt document width/height from the first parsed page if appropriate
-    if (sIdx === 0 && parsedPages[0]) {
+    if (!master && sIdx === 0 && parsedPages[0]) {
       pageWidthMm = parsedPages[0].widthMm;
       pageHeightMm = parsedPages[0].heightMm;
     }
@@ -915,8 +932,8 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
 
       const nextFrame = extractXmlAttr(tfXml, 'NextTextFrame');
       const prevFrame = extractXmlAttr(tfXml, 'PreviousTextFrame');
-      if (nextFrame && nextFrame !== 'kInvalidRef') textEl.nextFrameId = `idml-${nextFrame}`;
-      if (prevFrame && prevFrame !== 'kInvalidRef') textEl.prevFrameId = `idml-${prevFrame}`;
+      if (nextFrame && nextFrame !== 'kInvalidRef' && nextFrame !== 'n') textEl.nextFrameId = `idml-${nextFrame}`;
+      if (prevFrame && prevFrame !== 'kInvalidRef' && prevFrame !== 'n') textEl.prevFrameId = `idml-${prevFrame}`;
 
       spreadElements.push(textEl);
     }
@@ -1020,9 +1037,9 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
           zIndex: 4 + rIdx,
           locked: false,
           shapeKind: 'rectangle',
-          fillColor: rFillColor === 'transparent' ? '#f0f0f0' : rFillColor,
-          strokeColor: rStrokeColor === 'transparent' ? '#111111' : rStrokeColor,
-          strokeWidthMm: rStrokeWidthMm || 0.3,
+          fillColor: rFillColor,
+          strokeColor: rStrokeColor,
+          strokeWidthMm: rStrokeWidthMm,
           strokeDash: 'solid',
         };
         spreadElements.push(shapeEl);
@@ -1068,19 +1085,25 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
         zIndex: 4 + oIdx,
         locked: false,
         shapeKind: 'ellipse',
-        fillColor: oFillColor === 'transparent' ? '#f0f0f0' : oFillColor,
-        strokeColor: oStrokeColor === 'transparent' ? '#111111' : oStrokeColor,
-        strokeWidthMm: oStrokeWidthMm || 0.3,
+        fillColor: oFillColor,
+        strokeColor: oStrokeColor,
+        strokeWidthMm: oStrokeWidthMm,
         strokeDash: 'solid',
       };
       spreadElements.push(ovalEl);
     }
 
-    spreads.push({
+    if (master) {
+      const id = extractXmlAttr(spreadTag, 'Self');
+      if (id) masterSpreads.push({ id, pages, elements: spreadElements, parentMasterId: appliedMaster || undefined,
+        name: decodeStoryXml(extractXmlAttr(spreadTag, 'BaseName') || extractXmlAttr(spreadTag, 'Name') || 'Parent'),
+        prefix: decodeStoryXml(extractXmlAttr(spreadTag, 'NamePrefix') || 'A') });
+    } else spreads.push({
       id: `idml-spread-${sIdx}`,
       spreadIndex: sIdx,
       pages,
       elements: spreadElements,
+      masterSpreadId: appliedMaster || null,
     });
   }
 
@@ -1190,11 +1213,21 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
     snapToGuides: true,
     displayQuality: 'typical',
     paragraphStyles: parsedStyles,
-    masterSpreads: DEFAULT_MASTER_SPREADS,
+    masterSpreads: masterSpreads.length ? masterSpreads : DEFAULT_MASTER_SPREADS,
     linkingFromFrameId: null,
     layers: DEFAULT_LAYERS,
     activeLayerId: 'layer-1',
   };
+  const knownMasters = new Set(masterSpreads.map(master => master.id));
+  for (const spread of spreads) if (spread.masterSpreadId && !knownMasters.has(spread.masterSpreadId)) spread.masterSpreadId = null;
+  for (const master of masterSpreads) {
+    if (master.parentMasterId && !knownMasters.has(master.parentMasterId)) delete master.parentMasterId;
+    for (const element of master.elements) if (element.type === 'text') {
+      const id = (element as TextElement & { parentStoryId?: string }).parentStoryId;
+      const content = id && storiesMap.get(id)?.content;
+      if (content) { element.storyContent = structuredClone(content); element.text = storyText(content); }
+    }
+  }
   for (const frame of allTextElements) {
     const content = frame.parentStoryId && storiesMap.get(frame.parentStoryId)?.content;
     if (!frame.prevFrameId && content) { frame.storyContent = structuredClone(content); frame.rawStoryText = storyText(content); reflowStoryState(project, frame.id); }

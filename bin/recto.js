@@ -42,6 +42,7 @@ Recto Studio Headless Publishing Engine (CLI)
 =============================================
 Usage:
   recto build <file.recto|file.json> [options]
+  recto render <template.recto> --data <file|-> --output <new-directory>
   recto book <action> <manifest.rectobook> [options]
   recto preflight <file.recto|file.json>
   recto --version
@@ -49,6 +50,8 @@ Usage:
 
 Commands:
   build <input>         Compile document headlessly into production print PDF, EPUB 3, or Flipbook
+  render <template>     Write a separate PDF per JSON or CSV record; --data - reads stdin
+                       Options: --preset <preset>, --edition <name>, --importer <trusted-local-module>
   book <action> <file>  Multi-document book management: sync, toc, or build stitched PDF
   preflight <input>     Execute automated prepress preflight audit (overset text, DPI, bleed)
 
@@ -114,6 +117,12 @@ Examples:
   }
 
   async function runCli() {
+    if (process.argv[2] === 'render' && !process.argv.includes('--help')) {
+      const { renderBatch } = await import('./render.js');
+      await renderBatch(process.argv.slice(3));
+      return 0;
+    }
+    if (process.argv[2] === 'render') { printHelp(); return 0; }
     const parsed = parseArgs(process.argv.slice(2));
 
     if (parsed.command === '--version' || parsed.command === '-v') {

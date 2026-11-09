@@ -20,6 +20,15 @@ not a promise of pixel-identical rendering: fonts, linked image files, effects,
 unsupported typography and other advanced features may need relinking or
 manual review. Preserve the source and compare important pages and exports.
 
+## Export back to IDML
+
+The IDML export writes linked text frames as one story across spreads. Supported
+paragraph styles, inline formatting, parent pages and parent inheritance, and
+process-colour artwork round trip through Recto's importer. Install the intended
+font faces in the receiving application. Verify the handoff in InDesign before
+replacing a production document. Advanced effects, unsupported objects, arbitrary
+spot swatch definitions, and exact InDesign composition still require review.
+
 ## INDD recovery is not layout import
 
 The binary INDD database is not decoded by Recto. Its optional content-recovery

@@ -18,6 +18,10 @@ export default function ProductionPanel({ state }: { state: ProjectState }) {
   const [preset, setPreset] = useState<PdfPreset>('screen');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [editionName, setEditionName] = useState('');
+  const selected = state.spreads[state.activeSpreadIndex]?.elements.find(element => element.id === state.selectedElementId);
+  const canTag = selected && !selected.locked && !state.layers.find(layer => layer.id === selected.layerId)?.locked &&
+    !((selected.type === 'text' || selected.type === 'table') && (selected.prevFrameId || selected.nextFrameId));
   const [trapping, setTrapping] = useState(false), [trapWidth, setTrapWidth] = useState(0.144);
   const request = useRef(0);
   const run = async (action: () => Promise<void>) => { setBusy(true); setMessage(''); try { await action(); } catch (reason) { setMessage(reason instanceof Error ? reason.message : String(reason)); } finally { setBusy(false); } };
@@ -26,6 +30,19 @@ export default function ProductionPanel({ state }: { state: ProjectState }) {
   const safeName = (title || 'publication').replace(/[^\p{L}\p{N} _-]/gu, '').trim().slice(0, 100) || 'publication';
   return <details className="publication-panel">
     <summary>Production & books</summary>
+    <details><summary>Publication editions</summary>
+      <p>Choose which editions to include when exporting the current document. Assign an edition to a selected object here or to a paragraph in Story Editor.</p>
+      {(state.conditions || []).map(condition => <label className="publication-check" key={condition.id}>
+        <input type="checkbox" checked={condition.visible} onChange={() => stateManager.toggleCondition(condition.id)}/>{condition.name}
+      </label>)}
+      <label>New edition name<input maxLength={80} value={editionName} onInput={event => setEditionName(event.currentTarget.value)}/></label>
+      <button className="sm-btn" disabled={!editionName.trim() || state.conditions?.some(condition => condition.name.toLowerCase() === editionName.trim().toLowerCase())}
+        onClick={() => { stateManager.addCondition(editionName.trim()); setEditionName(''); }}>Add edition</button>
+      {canTag && selected && <label>Selected object edition<select aria-label="Selected object edition" value={selected.conditionId || ''}
+        onChange={event => stateManager.updateElement(selected.id, { conditionId: event.currentTarget.value || undefined })}>
+        <option value="">All editions</option>{(state.conditions || []).map(condition => <option key={condition.id} value={condition.id}>{condition.name}</option>)}
+      </select></label>}
+    </details>
     <label>PDF preset<select value={preset} onChange={event => setPreset(event.currentTarget.value as PdfPreset)}>{Object.entries(PDF_PRESETS).map(([id, item]) => <option key={id} value={id}>{item.label}</option>)}</select></label>
     <p>{PDF_PRESETS[preset].description} PDF presets do not certify PDF/X, PDF/A or PDF/UA conformance.</p>
     <details><summary>Process-colour trapping</summary>

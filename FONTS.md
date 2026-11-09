@@ -10,12 +10,12 @@ Only share or redistribute embedded fonts when their license permits it.
 Each imported file is limited to 32 MB. Invalid files and fonts the browser cannot
 activate show an error and are not added as installed fonts.
 
-The normal PDF exporter uses the font's shaped vector outlines for imported fonts
-in text frames, master text, footnotes, and tables. This preserves appearance for
-TrueType and CFF outlines, including compressed web-font inputs. Outlined text is
-supplemented with searchable Unicode text for supported static TTF faces whose
-embedding permissions allow it. CFF, WOFF and WOFF2 retain outline-only output.
-Neither path is a substitute for a tagged accessible PDF.
+The normal PDF exporter subsets supported TrueType and CFF OpenType faces in text
+frames, master text, footnotes and tables. Embedded CID fonts include Unicode
+mappings for search and copying. Shaped runs that need different visual and logical
+ordering use outlines with a searchable Unicode layer where the font covers the
+characters. Embedding and subsetting permissions still apply. Use the accessible
+preset when the PDF also needs a semantic structure tree.
 Custom outline paragraphs currently use left, center, or right placement; full
 justification and tracking need further work.
 Specialized cover and imposition exporters retain their existing text handling.
@@ -35,11 +35,11 @@ necessary.
 
 Imported variable fonts expose their advertised axes under **Properties → Variable
 font axes**. Sliders preview the face live; Apply creates a named instance used by
-layout measurements, browser rendering and PDF outlines. Coordinates persist in
+layout measurements, browser rendering and PDF export. Coordinates persist in
 the project and in EPUB/flipbook font CSS. Optical size is manual when an `opsz`
 axis exists. Bold/italic flags do not choose axis coordinates automatically.
-PDF variable instances remain outlined, with no claim of searchable variable-font
-embedding. Reader support still varies. Each applied instance currently stores a
+Variable TrueType instances embed a static, unhinted subset at the chosen axes.
+CFF2 and colour-only fonts still need separate handling. Each applied instance stores a
 copy of the source font bytes; avoid creating large numbers of instances in a book.
 
 Open **Links → Document fonts & replacement** to audit font references, import a

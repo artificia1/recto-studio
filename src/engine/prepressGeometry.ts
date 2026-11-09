@@ -3,7 +3,8 @@ import type { CanvasElement } from '../types';
 
 export interface InkPoint { X: number; Y: number }
 export type InkPaths = InkPoint[][];
-const SCALE = 10000;
+export const INK_UNITS_PER_MM = 10000;
+const SCALE = INK_UNITS_PER_MM;
 export function polygonBoolean(subject: InkPaths, clip: InkPaths, operation: 'intersection' | 'difference'): InkPaths {
   const engine = new Clipper.Clipper();
   engine.AddPaths(subject, Clipper.PolyType.ptSubject, true); engine.AddPaths(clip, Clipper.PolyType.ptClip, true);

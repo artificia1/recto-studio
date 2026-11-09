@@ -5,6 +5,7 @@ import { getSafeSpotName, type FreeToneSpotColor } from '../engine/spotColors';
 import { storyText } from '../engine/storyContent';
 import { savePublicationFile } from '../desktop';
 import type { PdfStructureGroup } from './pdfSemantics';
+import { installPdfFonts } from './pdfFontResources';
 
 export interface PdfContentTag { page: number; mcid: number; role: string; text?: string; alt?: string; order: number; parentId?: string }
 export function elementPdfTag(state: ProjectState, element: CanvasElement, page: number, mcid: number): PdfContentTag | undefined {
@@ -21,6 +22,7 @@ export function elementPdfTag(state: ProjectState, element: CanvasElement, page:
 /** Repair resources and attach a real structure/parent tree without claiming PDF/UA conformance. */
 export async function finishPdf(doc: jsPDF, state: ProjectState, spots: FreeToneSpotColor[], tags?: PdfContentTag[], compress = true, groups?: PdfStructureGroup[]) {
   const pdf = await PDFDocument.load(doc.output('arraybuffer'), { updateMetadata: false });
+  installPdfFonts(doc, pdf);
   const { context } = pdf;
   for (const page of pdf.getPages()) {
     const resources = page.node.Resources() || context.obj({});

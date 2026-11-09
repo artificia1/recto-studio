@@ -40,6 +40,7 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
   const [styleName, setStyleName] = useState('');
   const [error, setError] = useState('');
   const content = stateManager.getStoryContent(activeEl?.id || '');
+  const activeParagraph = storyText(content).slice(0, selection.start).split('\n').length - 1;
   const selectedContent = sliceStory(content, selection.start, selection.end);
   const selectedRun = selectedContent.paragraphs[0]?.runs[0];
   const named = state.characterStyles?.find(style => style.id === selectedRun?.characterStyleId);
@@ -224,6 +225,11 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
           })}>Save style</button>
         </div>
         {error && <p role="alert" style={{ padding: '8px 20px' }}>{error}</p>}
+        {activeEl && !activeEl.generated && !!state.conditions?.length && <label>Edition of paragraph at cursor <select aria-label="Paragraph edition"
+          value={content.paragraphs[activeParagraph]?.conditionId || ''} onChange={event => {
+            const conditionId = event.currentTarget.value || undefined;
+            apply(() => stateManager.setStoryContent(activeEl.id, { ...content, paragraphs: content.paragraphs.map((paragraph, index) => index === activeParagraph ? { ...paragraph, conditionId } : paragraph) }));
+          }}><option value="">All editions</option>{state.conditions.map(condition => <option key={condition.id} value={condition.id}>{condition.name}</option>)}</select></label>}
         {activeEl && !activeEl.generated && <StoryReferenceTools frameId={activeEl.id} start={selection.start} end={selection.end} apply={apply}/>}
         {activeEl && !activeEl.generated && <StoryRevisionsPanel key={activeEl.id} frameId={activeEl.id} state={state} start={selection.start} end={selection.end}/>}
         {activeEl?.generated && <p style={{ padding: '8px 20px' }}>This list updates automatically. Use Pages to make it static before editing its manuscript.</p>}

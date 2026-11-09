@@ -3,19 +3,23 @@
  * Copyright (c) 2022-2026 Abhinav. All rights reserved.
  * Licensed under the MIT License.
  *
- * Generates an Adobe InDesign Interchange (.idml) ZIP package conforming to
- * the IDML Packaging Specification (DOMVersion 8.0 / CS6 - 2026 InDesign round-trip).
+ * Generates an Adobe InDesign Interchange (.idml) ZIP package for supported objects.
  */
 
 import { ProjectState, TextElement, ImageElement, ShapeElement } from '../types';
 import { createZipArchive, base64ToUint8Array, uint8ArrayToBase64 } from '../zip';
 import { assetStore } from '../engine/assetStore';
+import { contentOf } from '../engine/publicationReferences';
+import { resolveParagraphStyle, resolveRunStyle } from '../engine/storyLayout';
+import { explicitCmyk, rgbColor } from '../engine/inkColors';
 
 const MM_TO_PT = 72 / 25.4; // 1 mm = 2.83464567 pt
+const IDML_NS = 'http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging';
+const normalStyle = 'ParagraphStyle/$ID/NormalParagraphStyle';
 
 function escapeXml(str: string): string {
   if (!str) return '';
-  return str
+  return str.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]/g, '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -25,6 +29,59 @@ function escapeXml(str: string): string {
 
 export function exportDocumentToIdml(state: ProjectState): Uint8Array {
   const files: Record<string, string | Uint8Array> = {};
+  const swatches = new Map<string, string>();
+  const swatch = (color?: string) => {
+    if (!color || color === 'transparent' || color === 'none') return 'Swatch/None';
+    const cmyk = explicitCmyk(color);
+    const channels = cmyk || rgbColor(color);
+    if (!channels) return 'Color/Black';
+    const space = cmyk ? 'CMYK' : 'RGB';
+    const key = `${space} ${channels.join(' ')}`;
+    const name = `Recto ${key}`;
+    const id = `Color/${name}`;
+    if (!swatches.has(id)) swatches.set(id, `<Color Self="${id}" Name="${name}" Model="Process" Space="${space}" ColorValue="${channels.join(' ')}"/>`);
+    return id;
+  };
+  const styleIds = new Map(state.paragraphStyles.map((style, index) => [style.id, `ParagraphStyle/RectoStyle${index + 1}`]));
+  const parents = new Map(state.masterSpreads.map((master, index) => [master.id, `MasterSpread_m${index + 1}`]));
+  const sections = [...state.masterSpreads.map(master => ({ ...master, kind: 'MasterSpread' as const })),
+    ...state.spreads.map(spread => ({ ...spread, kind: 'Spread' as const }))];
+  const frames = new Map<string, TextElement>();
+  const frameRefs = new Map<string, string>();
+  for (const section of sections) for (const element of section.elements) {
+    if (element.type !== 'text' || element.pasteboard || element.editorialOnly) continue;
+    frames.set(element.id, element);
+    frameRefs.set(element.id, `TextFrame_u${frameRefs.size + 1}`);
+  }
+  const storyIds = new Map<string, string>();
+  for (const frame of frames.values()) {
+    if (storyIds.has(frame.id)) continue;
+    let head = frame;
+    const visited = new Set<string>();
+    while (head.prevFrameId && frames.has(head.prevFrameId)) {
+      if (visited.has(head.id)) throw new Error('Repair the circular text thread before exporting IDML.');
+      visited.add(head.id);
+      head = frames.get(head.prevFrameId)!;
+    }
+    if (!storyIds.has(head.id)) {
+      const id = `Story_u${frameRefs.get(head.id)!.slice('TextFrame_u'.length)}`;
+      const content = contentOf(head);
+      const paragraphs = content.paragraphs.map((paragraph, paragraphIndex) => {
+        const style = resolveParagraphStyle(paragraph, state.paragraphStyles);
+        const runs = paragraph.runs.map((run, runIndex) => {
+          const format = resolveRunStyle(head, style, run, state.characterStyles || []);
+          const fontStyle = format.bold ? format.italic ? 'Bold Italic' : 'Bold' : format.italic ? 'Italic' : 'Regular';
+          const separator = runIndex === paragraph.runs.length - 1 && paragraphIndex < content.paragraphs.length - 1 ? '<Br/>' : '';
+          const copy = run.text.split('\n').map(text => `<Content>${escapeXml(text)}</Content>`).join('<Br/>') + separator;
+          return `<CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]" PointSize="${format.fontSizePt}" FontStyle="${fontStyle}" Underline="${!!format.underline}" FillColor="${swatch(format.color)}"><Properties><AppliedFont type="string">${escapeXml(format.fontFamily.split(',')[0].trim())}</AppliedFont></Properties>${copy}</CharacterStyleRange>`;
+        });
+        return `<ParagraphStyleRange AppliedParagraphStyle="${styleIds.get(paragraph.styleId || '') || normalStyle}">${runs.join('')}</ParagraphStyleRange>`;
+      });
+      files[`Stories/${id}.xml`] = `<?xml version="1.0" encoding="UTF-8"?>\n<idPkg:Story xmlns:idPkg="${IDML_NS}" DOMVersion="8.0"><Story Self="${id}">${paragraphs.join('\n')}</Story></idPkg:Story>`;
+      storyIds.set(head.id, id);
+    }
+    storyIds.set(frame.id, storyIds.get(head.id)!);
+  }
 
   const pwPt = Math.round(state.settings.widthMm * MM_TO_PT * 100) / 100;
   const phPt = Math.round(state.settings.heightMm * MM_TO_PT * 100) / 100;
@@ -48,7 +105,7 @@ export function exportDocumentToIdml(state: ProjectState): Uint8Array {
 
   // 3. Resources/Preferences.xml
   files['Resources/Preferences.xml'] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<idPkg:Preferences xmlns:idPkg="http://schemas.adobe.com/idml/1.0/packaging" DOMVersion="8.0">
+<idPkg:Preferences xmlns:idPkg="${IDML_NS}" DOMVersion="8.0">
   <DocumentPreference
     PageWidth="${pwPt}"
     PageHeight="${phPt}"
@@ -80,32 +137,35 @@ export function exportDocumentToIdml(state: ProjectState): Uint8Array {
     const ptSize = style.fontSizePt || 10;
     const leading = Math.round(ptSize * (style.lineHeight || 1.3) * 10) / 10;
 
-    return `    <ParagraphStyle Self="ParagraphStyle/${escapeXml(style.name)}"
+    return `    <ParagraphStyle Self="${styleIds.get(style.id)}"
       Name="${escapeXml(style.name)}"
       PointSize="${ptSize}"
       Leading="${leading}"
       Justification="${just}"
-      AppliedFont="${escapeXml(fontName)}"
+      FillColor="${swatch(style.color)}"
       DropCapLines="${style.dropCapLines || 0}"
-    />`;
+    ><Properties><AppliedFont type="string">${escapeXml(fontName)}</AppliedFont></Properties></ParagraphStyle>`;
   }).join('\n');
 
   files['Resources/Styles.xml'] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<idPkg:Styles xmlns:idPkg="http://schemas.adobe.com/idml/1.0/packaging" DOMVersion="8.0">
+<idPkg:Styles xmlns:idPkg="${IDML_NS}" DOMVersion="8.0">
   <RootParagraphStyleGroup Self="RootParagraphStyleGroup">
     <ParagraphStyle Self="ParagraphStyle/$ID/NormalParagraphStyle" Name="$ID/NormalParagraphStyle" PointSize="10" />
 ${styleDefs}
   </RootParagraphStyleGroup>
+  <RootCharacterStyleGroup Self="RootCharacterStyleGroup"><CharacterStyle Self="CharacterStyle/$ID/[No character style]" Name="$ID/[No character style]"/></RootCharacterStyleGroup>
 </idPkg:Styles>`;
 
   // 5. Generate Stories & Spreads
   const spreadRefs: string[] = [];
-  const storyRefs: string[] = [];
-  let storyIndex = 1;
+  const stories = [...new Set(storyIds.values())];
+  const storyRefs = stories.map(id => `  <idPkg:Story src="Stories/${id}.xml"/>`);
 
-  state.spreads.forEach((spread, sIdx) => {
-    const spreadId = `Spread_s${sIdx + 1}`;
-    spreadRefs.push(`  <idPkg:Spread src="Spreads/${spreadId}.xml"/>`);
+  sections.forEach((spread, sIdx) => {
+    const spreadId = spread.kind === 'MasterSpread' ? parents.get(spread.id)! : `Spread_s${sIdx + 1}`;
+    const folder = spread.kind === 'MasterSpread' ? 'MasterSpreads' : 'Spreads';
+    const appliedMaster = parents.get((spread.kind === 'MasterSpread' ? spread.parentMasterId : spread.masterSpreadId) || '') || 'n';
+    spreadRefs.push(`  <idPkg:${spread.kind} src="${folder}/${spreadId}.xml"/>`);
 
     const pageXmls: string[] = spread.pages.map((page, pIdx) => {
       const pageId = `Page_s${sIdx + 1}_p${pIdx + 1}`;
@@ -115,18 +175,15 @@ ${styleDefs}
       const pageXOffsetPt = Math.round((pIdx * state.settings.widthMm) * MM_TO_PT * 100) / 100;
       const pageBoundsStr = `0 ${pageXOffsetPt} ${phPt} ${Math.round((pageXOffsetPt + pwPt) * 100) / 100}`;
 
-      return `      <Page Self="${pageId}" Name="${page.pageNumber}" AppliedTrapPreset="TrapPreset/$ID/kDefaultTrapPreset">
-        <Properties>
-          <PageColor>PageColor/$ID/White</PageColor>
-          <GeometricBounds>${pageBoundsStr}</GeometricBounds>
-          <MarginPreference Top="${topPt}" Bottom="${btmPt}" Left="${mLeft}" Right="${mRight}" ColumnCount="${state.settings.columnCount || 1}" />
-        </Properties>
+      return `      <Page Self="${pageId}" Name="${page.pageNumber}" AppliedMaster="${appliedMaster}" GeometricBounds="${pageBoundsStr}" ItemTransform="1 0 0 1 0 0">
+        <MarginPreference Top="${topPt}" Bottom="${btmPt}" Left="${mLeft}" Right="${mRight}" ColumnCount="${state.settings.columnCount || 1}" />
       </Page>`;
     });
 
     const elementXmls: string[] = [];
 
     for (const el of spread.elements) {
+      if (el.pasteboard || el.editorialOnly) continue;
       const pageIdx = Math.max(0, spread.pages.findIndex(p => p.id === el.pageId));
       const spreadXMm = (pageIdx * state.settings.widthMm) + el.x;
       const y1Pt = Math.round(el.y * MM_TO_PT * 100) / 100;
@@ -137,26 +194,9 @@ ${styleDefs}
 
       if (el.type === 'text') {
         const textEl = el as TextElement;
-        const storyId = `Story_u${storyIndex++}`;
-        storyRefs.push(`  <idPkg:Story src="Stories/${storyId}.xml"/>`);
-
-        // Create Story XML
-        const appliedStyle = state.paragraphStyles?.find(s => s.id === textEl.paragraphStyleId);
-        const styleName = appliedStyle ? appliedStyle.name : '$ID/NormalParagraphStyle';
-        const cleanContent = escapeXml(textEl.text || '');
-
-        files[`Stories/${storyId}.xml`] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<idPkg:Story xmlns:idPkg="http://schemas.adobe.com/idml/1.0/packaging" DOMVersion="8.0">
-  <Story Self="${storyId}" AppliedTOCStyle="n" TrackChanges="false" StoryTitle="${escapeXml(textEl.id)}">
-    <ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/${escapeXml(styleName)}">
-      <CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]"
-        PointSize="${textEl.fontSizePt || 10}"
-        AppliedFont="${escapeXml((textEl.fontFamily || 'Inter').split(',')[0].trim().replace(/['"]/g, ''))}">
-        <Content>${cleanContent}</Content>
-      </CharacterStyleRange>
-    </ParagraphStyleRange>
-  </Story>
-</idPkg:Story>`;
+        const storyId = storyIds.get(el.id);
+        const previous = frameRefs.get(textEl.prevFrameId || '') || 'n';
+        const next = frameRefs.get(textEl.nextFrameId || '') || 'n';
 
         const pathGeometry = `
           <PathGeometry>
@@ -170,7 +210,7 @@ ${styleDefs}
             </GeometryPathType>
           </PathGeometry>`;
 
-        elementXmls.push(`      <TextFrame Self="TextFrame_${el.id}" ParentStory="${storyId}" ContentType="TextType" ItemTransform="1 0 0 1 0 0" GeometricBounds="${boundsStr}">
+        elementXmls.push(`      <TextFrame Self="${frameRefs.get(el.id)}" ParentStory="${storyId}" PreviousTextFrame="${previous}" NextTextFrame="${next}" ItemLayer="RectoLayer" FillColor="${swatch(el.backgroundColor)}" StrokeColor="${swatch(el.borderColor)}" StrokeWeight="${el.borderWidthMm * MM_TO_PT}" ContentType="TextType" ItemTransform="1 0 0 1 0 0" GeometricBounds="${boundsStr}">
         <Properties>
           <GeometricBounds>${boundsStr}</GeometricBounds>${pathGeometry}
         </Properties>
@@ -180,7 +220,7 @@ ${styleDefs}
         const imgEl = el as ImageElement;
         const fullResSrc: unknown = assetStore.getFullResolution(imgEl.assetId || imgEl.src) || imgEl.src;
         let b64Data = '';
-        let fileName = imgEl.name || `image_${el.id}.jpg`;
+        let fileName = `${sIdx + 1}-${elementXmls.length + 1}-${(imgEl.name || 'image').replace(/[^a-zA-Z0-9._-]/g, '-')}`;
 
         if (fullResSrc) {
           if (typeof fullResSrc === 'string' && fullResSrc.startsWith('data:')) {
@@ -218,19 +258,20 @@ ${styleDefs}
             </GeometryPathType>
           </PathGeometry>`;
 
-        elementXmls.push(`      <Rectangle Self="Rectangle_${el.id}" ContentType="GraphicType" ItemTransform="1 0 0 1 0 0" GeometricBounds="${boundsStr}">
+        elementXmls.push(`      <Rectangle Self="Rectangle_${escapeXml(el.id)}" ItemLayer="RectoLayer" ContentType="GraphicType" ItemTransform="1 0 0 1 0 0" GeometricBounds="${boundsStr}">
         <Properties>
           <GeometricBounds>${boundsStr}</GeometricBounds>${pathGeometry}
         </Properties>
-        <Image Self="Image_${el.id}">
+        <Image Self="Image_${escapeXml(el.id)}">
           <Properties>
             <Profile>Embedded</Profile>${b64Data ? `\n            <Contents>${b64Data}</Contents>` : ''}
           </Properties>
-          <Link Self="Link_${el.id}" AssetURL="${escapeXml(fileName)}" StoredState="${b64Data ? 'Embedded' : 'Normal'}" />
+          <Link Self="Link_${escapeXml(el.id)}" AssetURL="${escapeXml(fileName)}" StoredState="${b64Data ? 'Embedded' : 'Normal'}" />
         </Image>
       </Rectangle>`);
       } else if (el.type === 'shape') {
         const shape = el as ShapeElement;
+        const paint = `ItemLayer="RectoLayer" FillColor="${swatch(shape.fillColor)}" StrokeColor="${swatch(shape.strokeColor)}" StrokeWeight="${shape.strokeWidthMm * MM_TO_PT}"`;
         const pathGeometry = `
           <PathGeometry>
             <GeometryPathType PathOpen="false">
@@ -244,13 +285,13 @@ ${styleDefs}
           </PathGeometry>`;
 
         if (shape.shapeKind === 'ellipse') {
-          elementXmls.push(`      <Oval Self="Oval_${el.id}" ContentType="Unassigned" ItemTransform="1 0 0 1 0 0" GeometricBounds="${boundsStr}">
+          elementXmls.push(`      <Oval Self="Oval_${escapeXml(el.id)}" ${paint} ContentType="Unassigned" ItemTransform="1 0 0 1 0 0" GeometricBounds="${boundsStr}">
         <Properties>
           <GeometricBounds>${boundsStr}</GeometricBounds>${pathGeometry}
         </Properties>
       </Oval>`);
         } else {
-          elementXmls.push(`      <Rectangle Self="Rectangle_${el.id}" ContentType="Unassigned" ItemTransform="1 0 0 1 0 0" GeometricBounds="${boundsStr}">
+          elementXmls.push(`      <Rectangle Self="Rectangle_${escapeXml(el.id)}" ${paint} ContentType="Unassigned" ItemTransform="1 0 0 1 0 0" GeometricBounds="${boundsStr}">
         <Properties>
           <GeometricBounds>${boundsStr}</GeometricBounds>${pathGeometry}
         </Properties>
@@ -259,18 +300,21 @@ ${styleDefs}
       }
     }
 
-    files[`Spreads/${spreadId}.xml`] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<idPkg:Spread xmlns:idPkg="http://schemas.adobe.com/idml/1.0/packaging" DOMVersion="8.0">
-  <Spread Self="${spreadId}" PageCount="${spread.pages.length}">
+    const masterName = spread.kind === 'MasterSpread' ? ` Name="${escapeXml(`${spread.prefix}-${spread.name}`)}" NamePrefix="${escapeXml(spread.prefix)}" BaseName="${escapeXml(spread.name)}"` : '';
+    files[`${folder}/${spreadId}.xml`] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<idPkg:${spread.kind} xmlns:idPkg="${IDML_NS}" DOMVersion="8.0">
+  <${spread.kind} Self="${spreadId}" AppliedMaster="${appliedMaster}" PageCount="${spread.pages.length}"${masterName}>
 ${pageXmls.join('\n')}
 ${elementXmls.join('\n')}
-  </Spread>
-</idPkg:Spread>`;
+  </${spread.kind}>
+</idPkg:${spread.kind}>`;
   });
+  files['Resources/Graphic.xml'] = `<?xml version="1.0" encoding="UTF-8"?>\n<idPkg:Graphic xmlns:idPkg="${IDML_NS}" DOMVersion="8.0">${[...swatches.values()].join('\n')}</idPkg:Graphic>`;
 
   // 6. designmap.xml
   files['designmap.xml'] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Document xmlns:idPkg="http://schemas.adobe.com/idml/1.0/packaging" DOMVersion="8.0" Self="d" StoryList="${storyRefs.map((_, i) => `Story_u${i + 1}`).join(' ')}">
+<?aid style="50" type="document" readerVersion="6.0" featureSet="257"?>
+<Document xmlns:idPkg="${IDML_NS}" DOMVersion="8.0" Self="d" StoryList="${stories.join(' ')}" ActiveLayer="RectoLayer">
   <Properties>
     <PageWidth>${pwPt}</PageWidth>
     <PageHeight>${phPt}</PageHeight>
@@ -279,6 +323,8 @@ ${elementXmls.join('\n')}
   </Properties>
   <idPkg:Preferences src="Resources/Preferences.xml"/>
   <idPkg:Styles src="Resources/Styles.xml"/>
+  <idPkg:Graphic src="Resources/Graphic.xml"/>
+  <Layer Self="RectoLayer" Name="Artwork" Visible="true" Locked="false" Printable="true"/>
 ${spreadRefs.join('\n')}
 ${storyRefs.join('\n')}
 </Document>`;

@@ -77,7 +77,9 @@ describe('Real custom font files', () => {
     state.masterSpreads = [];
     state.activeSpreadIndex = 0;
     const pdf = await exportDocumentToPdf(state, { compress: false });
-    expect(pdf.output()).toMatch(/\sc\s/);
+    expect(pdf.output()).toContain('/CIDFontType0C');
+    expect(pdf.output()).toContain('/ToUnicode');
+    expect(pdf.output()).toContain('> Tj');
     const epub = generateEpubPackage(state);
     expect(epub['OEBPS/fonts/font-0.otf']).toBeInstanceOf(Uint8Array);
     expect(epub['OEBPS/package.opf']).toContain('font/otf');

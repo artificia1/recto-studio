@@ -263,6 +263,7 @@ export const DEFAULT_LAYERS: Layer[] = [
 ];
 
 export interface BaseElement {
+  conditionId?: string;
   groupId?: string;
   pasteboard?: boolean;
   blendMode?: 'normal' | 'multiply' | 'screen' | 'overlay';
@@ -319,6 +320,7 @@ export interface StoryRun extends TextFormatting {
 }
 
 export interface StoryParagraph {
+  conditionId?: string;
   id?: string;
   styleId?: string;
   sourceStyle?: string;

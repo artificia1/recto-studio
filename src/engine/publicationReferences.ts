@@ -4,6 +4,7 @@ import { pageLabel } from './pageLabels';
 import { layoutStory, measureStoryText } from './storyLayout';
 import { publicationWrapObjects } from './publicationWrap';
 import { hierarchicalIndex } from './indexLayout';
+import { applyEditionVisibility } from './publicationEditions';
 
 export const noteMarker = (number: number) => String(number).replace(/\d/g, digit => '⁰¹²³⁴⁵⁶⁷⁸⁹'[Number(digit)]);
 export const textFrames = (state: ProjectState) => state.spreads.flatMap(spread => spread.elements).filter((item): item is TextElement => item.type === 'text');
@@ -120,6 +121,7 @@ export function reflowStoryState(state: ProjectState, frameId: string) {
 export function publicationSnapshot(source: ProjectState): ProjectState {
   const state = structuredClone(source);
   migrateLegacyNotes(state);
+  applyEditionVisibility(state);
   for (let pass = 0; pass < 8; pass++) {
     const before = JSON.stringify(textFrames(state).map(frame => [frame.id, frame.storyStart, frame.storyEnd, frame.text]));
     const changed = refreshPublication(state);

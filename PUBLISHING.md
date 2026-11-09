@@ -19,9 +19,9 @@ source. This is not a conformance validator or a guarantee of glyph coverage.
   and a 14 mm slug for marks and calibration bars.
 - Every exported page has MediaBox, TrimBox, and BleedBox coordinates. Print
   geometry is checked independently in portrait and landscape fixtures.
-- Custom fonts retain their shaped vector appearance. Supported static TTF files
-  also supply embedded Unicode text for searching and selection; CFF and web-font
-  inputs remain outline-only. The accessible preset requires embedded static TTFs.
+- Supported CFF OpenType, TrueType and selected-axis variable TrueType fonts embed
+  as searchable subsets. The accessible preset requires an embeddable face with
+  Unicode coverage for the publication. See [fonts](FONTS.md) for format limits.
   Other fonts may fall back to the standard PDF families. See [fonts](FONTS.md).
 - Import a CMYK printer output ICC profile under Setup → ICC colour management
   and enable PDF conversion to transform supported sRGB raster assets and vector
@@ -150,7 +150,7 @@ outside those regions using non-overlapping clipping bands. It does not rasteriz
 every page. Curves remain cubic vectors outside flattened regions. Export guards
 bound memory and job size; supported resolution is 150–600 dpi through the API.
 
-Use embedded static TTF fonts so the renderer does not substitute fonts. Raster
+Use embeddable fonts so the renderer does not substitute fonts. Raster
 regions composite onto white paper. Shadows that the exporter cannot reproduce,
 annotations, and spot inks intersecting transparency regions stop the export.
 PDF.js rendering and the ICC conversion do not establish exact RIP equivalence;
@@ -191,13 +191,13 @@ Shaped outlines are accompanied by embedded Unicode text and ActualText.
 
 Apply paragraph styles with the intended PDF tag, starting headings at H1 without
 skipping levels. For lists, use the List item tag and type the bullet or number
-as part of the paragraph. Import static, embeddable TTF fonts covering every used
+as part of the paragraph. Import embeddable TrueType or OpenType fonts covering every used
 character. Set title/language, describe meaningful images and choose content-sized
 table rows. The whole publication is exported; interactive links/forms are blocked
 until annotation tagging is supported. PDF/UA-2 needs a separate PDF 2.0 pipeline
 and is not offered.
 
-CI validates one-page and linked-table fixtures with **veraPDF 1.30.3 / PDF/UA-1**.
+CI validates one-page, linked-table, CFF and variable TrueType fixtures with **veraPDF 1.30.3 / PDF/UA-1**.
 This checks machine-verifiable requirements, not whether a description is useful,
 the reading order makes sense, or assistive technology delivers a good experience.
 Review each publication with a screen reader and an accessibility checklist.
@@ -212,6 +212,33 @@ VERAPDF_HOME="$PWD/test-results/validators/verapdf" python scripts/validate-acce
 
 The installer is downloaded from the official site and checked against a pinned
 SHA-256. It stays in ignored test output and is not shipped with the app.
+
+## Editions and headless batches
+
+Open **Pages → Production & books → Publication editions** to create editions
+and select the ones to include in PDF or EPUB output. Assign an edition to a
+selected object there, or use **Paragraph edition** in Story Editor for the
+paragraph at the cursor. Use paragraph editions inside a linked story. The export
+recomposes the selected copy without changing the source document.
+
+`recto render` writes one PDF per record from the whole template. The data source
+can be a local JSON array, CSV, or standard input. Use `--preset pdfx4` to prepare
+PDF/X-4 candidates, and repeat `--edition` to include more than one edition.
+
+```sh
+node bin/recto.js render catalog.recto --data records.json --output catalogs
+psql --no-psqlrc --csv -c 'SELECT name, product FROM catalog' | node bin/recto.js render catalog.recto --data - --output catalogs
+```
+
+Use a read-only PostgreSQL role for the query. Database connections stay with
+`psql`. Render accepts up to 10,000 records and 4 MiB of input data, and requires
+a new output directory. It publishes the completed batch and manifest together.
+
+For custom data formats, `--importer ./adapter.mts` selects a trusted local
+TypeScript or JavaScript module. Export a default object implementing
+`DatasetImporterV1` from `bin/plugin-api.d.ts`. Its `parseRecords` method receives
+the input bytes and filename and returns records of scalar fields. These modules
+run with the CLI's permissions. Use modules you trust.
 
 ## Dependency checks
 

@@ -1,8 +1,8 @@
 import type { Font } from 'fontkit';
 import type { jsPDF } from 'jspdf';
-import { searchableFontText } from './pdfFonts';
+import { drawEmbeddedText } from './pdfFonts';
 
-/** Use the actual font's shaping and outlines for formats jsPDF cannot embed. */
+/** Measure custom text with the same shaped advances used for PDF drawing. */
 export function fontTextWidth(font: Font, text: string, sizePt: number): number {
   return font.layout(text).advanceWidth * sizePt * 25.4 / 72 / font.unitsPerEm;
 }
@@ -34,6 +34,7 @@ export function wrapFontText(font: Font, text: string, sizePt: number, width: nu
 export function drawFontText(doc: jsPDF, font: Font, text: string, x: number, y: number, sizePt: number) {
   const scale = sizePt * 25.4 / 72 / font.unitsPerEm;
   const run = font.layout(text);
+  if (drawEmbeddedText(doc, font, run, text, x, y, sizePt)) return;
   let advance = 0;
   run.glyphs.forEach((glyph, index) => {
     const position = run.positions[index];
@@ -60,5 +61,5 @@ export function drawFontText(doc: jsPDF, font: Font, text: string, x: number, y:
     if (operations.length) doc.path(operations).fill();
     advance += position.xAdvance;
   });
-  searchableFontText(doc, font, text, x, y, sizePt);
+  drawEmbeddedText(doc, font, run, text, x, y, sizePt, true);
 }

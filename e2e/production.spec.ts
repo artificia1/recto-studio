@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { importProject, projectFixture, savedProject } from './fixtures';
+import { decodePDFRawStream, PDFDocument, PDFName, PDFRawStream } from 'pdf-lib';
 
 test.beforeEach(async ({ page }) => {
   await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.abort());
@@ -46,6 +47,27 @@ test('imports spreadsheet cells and merges a row without losing its text', async
   expect(saved.spreads[0].elements[0].cells[0][0]).toMatchObject({ text: 'Product Price', colSpan: 2 });
   await page.getByRole('button', { name: 'Split merged cell' }).click();
   expect((await savedProject(page)).spreads[0].elements[0].cells[0][0].colSpan).toBeUndefined();
+});
+
+test('exports the selected publication edition without deleting the excluded frame', async ({ page }) => {
+  await importProject(page);
+  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  await page.getByText('Production & books', { exact: true }).click();
+  await page.getByText('Publication editions', { exact: true }).click();
+  await page.getByLabel('Selected object edition', { exact: true }).selectOption('cond-teacher');
+  await page.getByRole('combobox', { name: /PDF preset/ }).selectOption('print');
+  const exportedText = async () => {
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Export document PDF', exact: true }).click();
+    const pdf = await PDFDocument.load(await readFile((await (await download).path())!));
+    const content = pdf.getPages()[0].node.lookup(PDFName.of('Contents'));
+    if (!(content instanceof PDFRawStream)) throw new Error('Expected a single PDF page content stream.');
+    return new TextDecoder().decode(decodePDFRawStream(content).decode());
+  };
+  expect(await exportedText()).not.toContain('Browser workflow sample');
+  await page.getByLabel('Teacher Edition', { exact: true }).check();
+  expect(await exportedText()).toContain('Browser workflow sample');
+  expect((await savedProject(page)).spreads[0].elements[0]).toMatchObject({ text: 'Browser workflow sample', conditionId: 'cond-teacher' });
 });
 
 test('retains manuscript formatting during filtered Find/Change and undo', async ({ page }) => {

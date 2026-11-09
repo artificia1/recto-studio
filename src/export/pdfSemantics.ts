@@ -40,7 +40,7 @@ export class PdfSemantics {
   assertFont(family: string, text: string) {
     if (!text.trim()) return;
     const font = fontManager.getFont(family);
-    if (!font || !pdfFontName(this.doc, family)) throw new Error(`Accessible PDF requires an embedded static TTF for “${family}”. Import an embeddable font and apply it to this content.`);
+    if (!font || !pdfFontName(this.doc, family)) throw new Error(`Accessible PDF requires an embedded font for “${family}”. Import an embeddable TrueType or OpenType face and apply it to this content.`);
     if (font.layout(text.replace(/[\r\n\t]/g, ' ')).glyphs.some(glyph => glyph.id === 0)) throw new Error(`The font “${family}” is missing a glyph used by this publication. Choose a font covering all characters.`);
   }
   private mark(role: string, text: string | undefined, parentId?: string, alt?: string, order = 0) {
