@@ -20,8 +20,10 @@ async function execute<T>(command: ColorCommand): Promise<T> {
   if (pending.size >= 8) throw new Error('Colour processing is busy. Wait for the current operation to finish.');
   if (!worker) {
     worker = new Worker(new URL('./colorWorker.ts', import.meta.url), { type: 'module' });
-    worker.onerror = () => stop(new Error('The colour engine could not run. Reopen the panel and try again.'));
+    const active = worker;
+    worker.onerror = () => { if (worker === active) stop(new Error('The colour engine could not run. Reopen the panel and try again.')); };
     worker.onmessage = event => {
+      if (worker !== active) return;
       const job = pending.get(event.data.id);
       if (!job) return;
       pending.delete(event.data.id); clearTimeout(job.timer);
@@ -32,7 +34,11 @@ async function execute<T>(command: ColorCommand): Promise<T> {
     const id = ++nextId;
     const timer = setTimeout(() => stop(new Error('ICC processing exceeded 45 seconds. Try a smaller profile or image tile.')), 45000);
     pending.set(id, { resolve: value => resolve(value as T), reject, timer });
-    worker!.postMessage({ id, command });
+    try { worker!.postMessage({ id, command }); }
+    catch (reason) {
+      pending.delete(id); clearTimeout(timer);
+      reject(reason instanceof Error ? reason : new Error(String(reason)));
+    }
   });
 }
 

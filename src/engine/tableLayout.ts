@@ -2,9 +2,10 @@ import type { TableCell, TableElement } from '../types';
 import { measureStoryText } from './storyLayout';
 import { graphemes } from './globalTypography';
 import { tableCellSpan } from './tableCells';
+import { layoutAdvancedTables } from './tablePagination';
 
-export interface TableLayoutCell { cell: TableCell; x: number; width: number; lines: string[] }
-export interface TableLayoutRow { index: number; kind: 'header' | 'body' | 'footer'; y: number; height: number; cells: TableLayoutCell[]; horizontalOverflow: boolean }
+export interface TableLayoutCell { cell: TableCell; x: number; width: number; lines: string[]; height?: number; column?: number }
+export interface TableLayoutRow { index: number; kind: 'header' | 'body' | 'footer'; y: number; height: number; cells: TableLayoutCell[]; horizontalOverflow: boolean; continuedFromPrevious?: boolean; continuesOnNext?: boolean }
 export interface TableFrameLayout { frameId: string; rows: TableLayoutRow[]; usedHeight: number; horizontalOverflow: boolean }
 export type TableMeasure = (text: string, frame: TableElement) => number;
 const measure: TableMeasure = (text, frame) => measureStoryText(text, { fontFamily: frame.fontFamily, fontSizePt: frame.fontSizePt, color: '#000', letterSpacingPt: 0 });
@@ -27,10 +28,11 @@ export function wrapTableText(text: string, width: number, frame: TableElement, 
   return { lines, overflow };
 }
 
-/** Content mode never divides a row or silently advances past one that does not fit. */
+/** Content mode keeps rows whole by default and reports any rows still waiting for space. */
 export function layoutContentTables(thread: TableElement[], widthOf: TableMeasure = measure) {
   const source = thread[0];
   if (!source) return { frames: [] as TableFrameLayout[], pendingRows: [] as number[] };
+  if (source.allowRowSplit || source.cells.some(row => row.some(cell => (cell.rowSpan || 1) > 1))) return layoutAdvancedTables(thread, widthOf);
   const count = source.cells.length;
   const headers = Math.min(source.headerRowCount || 0, count);
   const footers = Math.min(source.footerRowCount || 0, count - headers);
@@ -54,7 +56,7 @@ export function layoutContentTables(thread: TableElement[], widthOf: TableMeasur
         const wrapped = wrapTableText(cell.text, width - 2 * padding, frame, widthOf);
         overflow ||= wrapped.overflow;
         height = Math.max(height, wrapped.lines.length * lineHeight + padding * 2);
-        cells.push({ cell, x, width, lines: wrapped.lines }); x += width; c += span;
+        cells.push({ cell, column: c, x, width, lines: wrapped.lines }); x += width; c += span;
       }
       return { index, kind, y: 0, height: Math.max(height, source.rowHeightsMm?.[index] || 0), cells, horizontalOverflow: overflow };
     };

@@ -2,7 +2,7 @@ import { useState } from 'preact/hooks';
 import { stateManager } from '../../state';
 import type { TableElement, TableCell } from '../../types';
 import { parseTableData } from '../../engine/delimitedText';
-import { mergeTableCellRight, tableCellSpan, tableThread } from '../../engine/tableCells';
+import { mergeTableCellRight, mergeTableCellDown, unmergeTableCell, tableGrid, tableCellSpan, tableThread } from '../../engine/tableCells';
 import { layoutContentTables } from '../../engine/tableLayout';
 
 export default function TableInspector({ element: frame }: { element: TableElement }) {
@@ -12,6 +12,8 @@ export default function TableInspector({ element: frame }: { element: TableEleme
   const [linkTarget, setLinkTarget] = useState('');
   const thread = tableThread(stateManager.getState().spreads, frame);
   const element = thread[0];
+  const advanced = element.allowRowSplit || element.cells.some(row => row.some(cell => (cell.rowSpan || 1) > 1));
+  const grid = advanced ? tableGrid(element.cells, element.headerRowCount, element.footerRowCount || 0) : undefined;
   const locked = thread.some(item => item.locked || stateManager.getState().layers.find(layer => layer.id === item.layerId)?.locked);
   const layout = element.rowSizing === 'content' ? layoutContentTables(thread) : null;
   const act = (action: () => void) => { try { action(); setTableError(''); } catch (reason) { setTableError(reason instanceof Error ? reason.message : String(reason)); } };
@@ -60,11 +62,12 @@ export default function TableInspector({ element: frame }: { element: TableEleme
     <div className="inspector-section">
       <div className="section-header">TABLE STRUCTURE</div>
       <details className="publication-panel"><summary>Table continuation</summary>
-        <p>Content-sized rows wrap text and continue as whole rows into the next frame. Equal rows preserves the existing layout. Cell and style edits apply across the table.</p>
+        <p>Content-sized rows wrap text into linked frames. Enable row splitting to continue long cells across pages. Vertically merged groups stay together.</p>
         <label>Row sizing<select aria-label="Table row sizing" value={element.rowSizing || 'equal'} disabled={locked} onChange={event => act(() => stateManager.setTableRowSizing(frame.id, event.currentTarget.value as 'equal' | 'content'))}>
           <option value="equal">Equal rows (legacy)</option><option value="content">Fit rows to content</option>
         </select></label>
-        {layout && <p role="status">{layout.pendingRows.length ? `${layout.pendingRows.length} rows need more space. Add a continuation page or enlarge the frame; a row must fit in one frame.` : 'All body rows fit.'}{layout.frames.some(item => item.horizontalOverflow) ? ' Text or repeated headers/footers exceed a frame.' : ''}</p>}
+        <label className="publication-check"><input type="checkbox" aria-label="Split table rows across frames" disabled={locked} checked={!!element.allowRowSplit} onChange={event => update(element.id, { rowSizing: 'content', allowRowSplit: event.currentTarget.checked })}/>Split rows across frames</label>
+        {layout && <p role="status">{layout.pendingRows.length ? `${layout.pendingRows.length} rows need more space. Add a continuation page or enlarge the frame. Vertically merged groups must fit together.` : 'All body rows fit.'}{layout.frames.some(item => item.horizontalOverflow) ? ' Text or repeated headers/footers exceed a frame.' : ''}</p>}
         <button className="sm-btn" disabled={locked || !!frame.pasteboard} onClick={() => act(() => { stateManager.addTableContinuationPage(frame.id); })}>Add continuation page</button>
         <label>Next table frame<select value={linkTarget} onChange={event => setLinkTarget(event.currentTarget.value)}><option value="">Choose a table</option>{stateManager.getState().spreads.flatMap(spread => spread.elements.filter((item): item is TableElement => item.type === 'table' && !thread.some(frame => frame.id === item.id)).map(item => <option key={item.id} value={item.id}>{item.id} · page {spread.pages.find(page => page.id === item.pageId)?.pageNumber}</option>))}</select></label>
         <button className="sm-btn" disabled={!linkTarget || !!frame.nextFrameId || locked} onClick={() => setTableError(stateManager.linkTableFrames(frame.id, linkTarget) ? 'Table continuation linked.' : 'Unlock both tables and choose an unlinked target outside this chain.')}>Link next frame</button>
@@ -223,7 +226,10 @@ export default function TableInspector({ element: frame }: { element: TableEleme
         >
           {element.cells.map((rowArr, r) =>
             rowArr.map((cell, c) => {
-              const span = tableCellSpan(rowArr, c); if (!span) return null;
+              const owner = grid?.[r][c];
+              if (owner && (owner.row !== r || owner.column !== c)) return null;
+              const span = owner?.colSpan ?? tableCellSpan(rowArr, c);
+              if (!span) return null;
               const isSelected = selectedCell?.row === r && selectedCell?.col === c;
               const isHdr = r < element.headerRowCount;
               return (
@@ -231,7 +237,7 @@ export default function TableInspector({ element: frame }: { element: TableEleme
                   key={`${r}-${c}`}
                   onClick={() => setSelectedCell({ row: r, col: c })}
                   style={{
-                    gridColumn: `span ${span}`,
+                    gridColumn: `${c + 1} / span ${span}`, gridRow: `${r + 1} / span ${owner?.rowSpan ?? 1}`,
                     padding: '4px 6px',
                     fontSize: '10px',
                     background: isSelected
@@ -265,15 +271,18 @@ export default function TableInspector({ element: frame }: { element: TableEleme
             <button className="sm-btn" disabled={locked || selectedCell.col + (activeCell.colSpan || 1) >= element.cols} onClick={() => {
               try { update(element.id, { cells: mergeTableCellRight(element.cells, selectedCell.row, selectedCell.col) }); setTableError('Cells merged. Their text is retained in the first cell.'); } catch (reason) { setTableError(String(reason)); }
             }}>Merge cell right</button>
-            <button className="sm-btn" disabled={locked || !activeCell.colSpan || activeCell.colSpan === 1} onClick={() => {
-              const cells = structuredClone(element.cells); delete cells[selectedCell.row][selectedCell.col].colSpan; update(element.id, { cells });
+            <button className="sm-btn" disabled={locked || selectedCell.row + (activeCell.rowSpan || 1) >= element.rows} onClick={() => act(() => {
+              stateManager.updateTableSource(element.id, { rowSizing: 'content', cells: mergeTableCellDown(element.cells, selectedCell.row, selectedCell.col) });
+            })}>Merge cell down</button>
+            <button className="sm-btn" disabled={locked || ((activeCell.colSpan || 1) === 1 && (activeCell.rowSpan || 1) === 1)} onClick={() => {
+              update(element.id, { cells: unmergeTableCell(element.cells, selectedCell.row, selectedCell.col) });
             }}>Split merged cell</button>
           </div>
           <div style={{ fontSize: '11px', color: '#93c5fd', marginBottom: '4px', fontWeight: 600 }}>
             Editing Cell [R{selectedCell.row + 1}, C{selectedCell.col + 1}]:
           </div>
-          <input
-            type="text"
+          <textarea
+            rows={activeCell.text.includes('\n') ? 3 : 1}
             value={activeCell.text}
             aria-label="Selected table cell text"
             disabled={locked}

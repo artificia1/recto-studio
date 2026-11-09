@@ -1,6 +1,6 @@
 # Publishing and export limitations
 
-Recto exports ordinary PDFs, reflowable EPUB packages, HTML flipbooks, and ZIP
+Recto exports ordinary and tagged PDFs, PDF/UA-1 editions, PDF/X candidates, reflowable EPUB packages, HTML flipbooks, and ZIP
 handoff packages. Review the output in its destination reader or printer workflow.
 
 ## PDF
@@ -21,17 +21,16 @@ source. This is not a conformance validator or a guarantee of glyph coverage.
   geometry is checked independently in portrait and landscape fixtures.
 - Custom fonts retain their shaped vector appearance. Supported static TTF files
   also supply embedded Unicode text for searching and selection; CFF and web-font
-  inputs remain outline-only. This does not provide a tagged accessible PDF.
+  inputs remain outline-only. The accessible preset requires embedded static TTFs.
   Other fonts may fall back to the standard PDF families. See [fonts](FONTS.md).
-- Color helpers produce process-color values and spot-color resources. Selecting
-  a profile name does not embed an ICC profile or perform ICC color conversion.
-  Images can retain RGB colors. Review separations, overprint, and transparency
-  with the printer's preflight tools.
-- Output is **not certified PDF/X, PDF/A, or PDF/UA**. Incomplete structure-tree
-  declarations and unsupported conformance metadata are no longer emitted. Reading
-  order overlays and accessibility preflight checks help editing but do not make
-  the exported PDF accessible. Full tagging, font mapping, and conformance testing
-  remain necessary.
+- Import a CMYK printer output ICC profile under Setup → ICC colour management
+  and enable PDF conversion to transform supported sRGB raster assets and vector
+  colours with LittleCMS WASM. The profile bytes are embedded as an OutputIntent.
+  A profile name alone still performs no conversion. Explicit CMYK values retain
+  their ink values; unknown-source CMYK JPEGs are rejected during conversion.
+- Output is **not externally certified PDF/X, PDF/A, or PDF/UA**. The PDF/X
+  candidates and PDF/UA-1 edition have distinct checks and limitations below.
+  The ordinary tagged screen preset does not declare PDF/UA conformance.
 - Export is page based; unsupported spread output is rejected. Booklet and
   wrap-cover exports have separate implementations and need
   their own printer acceptance checks.
@@ -112,31 +111,107 @@ zero, applies to PDF fills and strokes. Parent-master artwork uses the same
 object renderer as page artwork. Pasteboard objects do not appear in publication
 output.
 
-These are per-object modes. Isolated layer/group compositing, transparency
-flattening, blend-to-overprint conversion and certified PDF/X-4 output are not
-implemented. Reflowable EPUB does not reproduce canvas blending. CMYK operators
+These are per-object modes. Isolated layer/group compositing and automatic
+blend-to-overprint conversion are not implemented. Reflowable EPUB does not reproduce canvas blending. CMYK operators
 and a PDF version number alone do not establish press readiness: review final
 appearance and separations with the intended printer/RIP and colour workflow.
 
 ## PDF presets and publication reports
 
-Pages → Production & books provides Screen, Desktop printing and Printer review
-presets. Printer review includes bleed, crop marks and strict publication checks;
+Pages → Production & books provides tagged screen, accessible PDF/UA-1, desktop
+printing, printer review, flattened CMYK and two PDF/X candidate presets.
+Printer review includes bleed, crop marks and strict publication checks;
 it does not certify PDF/X. A downloadable JSON report lists publication issues,
-font use and headings. PDF/A, PDF/UA certification, output-intent color management
-and a dedicated separations preview remain separate work.
+font use and headings. Setup → Separations preview samples current artwork,
+allows plate toggling and highlights total ink coverage over the chosen threshold.
+This display proof is not a RIP separation proof. PDF/A is not implemented.
 
 Content-sized tables share their wrapped line and row layout between canvas and
 PDF. PDF export stops if body rows cannot fit, repeated headers/footers exceed
 a frame, or a linked continuation is excluded from publication. Add a
 continuation page, resize the frame, or revise the row text before retrying.
-Rows remain whole; no rows are automatically split across pages. As with other
+Rows remain whole by default. Enable **Split rows across frames** in Table
+continuation to split ordinary rows at complete text lines. Source text is
+retained when continuation widths differ. Vertical merges are available with
+**Merge cell down**; merged groups stay together and must fit a frame. A merge
+cannot cross header/body/footer boundaries. As with other
 text, install or embed the intended fonts before final output to avoid fallback
 metrics. These safeguards apply to ordinary PDF as well as strict presets.
 
 Pending manuscript revisions appear as preflight warnings. They do not change
 the exported text until accepted. Review proposals and notes remain in saved
 project files and book archives, not the publication artwork.
+
+## Print flattening and PDF/X candidates
+
+The flattened preset renders transparency regions with PDF.js at 300 dpi, converts
+the opaque pixels to the selected CMYK output profile and retains original vectors
+outside those regions using non-overlapping clipping bands. It does not rasterize
+every page. Curves remain cubic vectors outside flattened regions. Export guards
+bound memory and job size; supported resolution is 150–600 dpi through the API.
+
+Use embedded static TTF fonts so the renderer does not substitute fonts. Raster
+regions composite onto white paper. Shadows that the exporter cannot reproduce,
+annotations, and spot inks intersecting transparency regions stop the export.
+PDF.js rendering and the ICC conversion do not establish exact RIP equivalence;
+compare overprints, blends and colour appearance in the intended printer workflow.
+Fluorescent, metallic, white-ink and substrate-specific printing need a separate proof.
+
+**PDF/X-1a:2003 candidate** uses this flattener, an ICC v2 output profile and
+PDF 1.4 with classic cross-reference tables. **PDF/X-4 candidate** uses PDF 1.6,
+preserves live transparency and supplies a CMYK page blending space. Both embed
+PDF/X identification metadata and require embedded fonts, nested page boxes,
+converted process colours, no interactive annotations and a CMYK output profile.
+SVG/equation artwork must be supplied as an sRGB raster for these conservative
+process-colour presets; ordinary PDF retains supported SVG vectors.
+
+These gates are not a complete ISO validator. The export result exposes
+`pressReport` with `certified: false` and `independentValidationRequired: true`.
+Have the final file checked with a dedicated PDF/X preflight tool and approved by
+the printer. veraPDF does not validate PDF/X. Passing a synthetic fixture or
+writing identification metadata does not establish GWG certification; see the
+[GWG conformance process](https://gwg.org/resources/ghent-pdf-output-suite/conformance-certification/).
+
+**Process-colour trapping** spreads lighter opaque fills into adjacent darker
+fills using polygon offsets and intersections in physical millimetres. It applies
+only to closed, unstroked process-colour fills. Intervening artwork is excluded,
+and traps exceeding the TAC limit are omitted with a warning. This is not a full
+RIP trapping engine for text, photographs, spot inks or transparent artwork.
+Confirm width and ink behaviour with the printer. The PDF remains `/Trapped /False`
+because this partial operation does not establish that the entire file is trapped.
+
+## Accessible PDF/UA-1 editions
+
+The accessible preset writes a structure tree with semantic H1–H6 headings,
+paragraphs, lists (`L`, `LI`, `Lbl`, `LBody`), notes, image descriptions and table
+rows/cells (`Table`, `TR`, `TH`, `TD`, scope and merge spans). Split rows retain
+one logical cell; repeated headers are artifacts after their first occurrence.
+Page backgrounds, running furniture and decorative graphics are artifacts.
+Shaped outlines are accompanied by embedded Unicode text and ActualText.
+
+Apply paragraph styles with the intended PDF tag, starting headings at H1 without
+skipping levels. For lists, use the List item tag and type the bullet or number
+as part of the paragraph. Import static, embeddable TTF fonts covering every used
+character. Set title/language, describe meaningful images and choose content-sized
+table rows. The whole publication is exported; interactive links/forms are blocked
+until annotation tagging is supported. PDF/UA-2 needs a separate PDF 2.0 pipeline
+and is not offered.
+
+CI validates one-page and linked-table fixtures with **veraPDF 1.30.3 / PDF/UA-1**.
+This checks machine-verifiable requirements, not whether a description is useful,
+the reading order makes sense, or assistive technology delivers a good experience.
+Review each publication with a screen reader and an accessibility checklist.
+Do not treat the export as a legal compliance certificate.
+
+To repeat the independent checks after `npm test`, install Java 17 or newer:
+
+```sh
+python scripts/install-verapdf.py
+VERAPDF_HOME="$PWD/test-results/validators/verapdf" python scripts/validate-accessible-pdf.py
+```
+
+The installer is downloaded from the official site and checked against a pinned
+SHA-256. It stays in ignored test output and is not shipped with the app.
 
 ## Dependency checks
 

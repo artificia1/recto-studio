@@ -5,6 +5,9 @@ import { fontManager } from '../fontManager';
 import { base64ToUint8Array } from '../zip';
 
 const embedded = new WeakMap<jsPDF, Map<Font, string>>();
+export function pdfFontName(doc: jsPDF, family: string): string | undefined {
+  const font = fontManager.getFont(family); return font ? embedded.get(doc)?.get(font) : undefined;
+}
 
 /** Preserve shaped outlines; add searchable Unicode text using the real embedded TTF. */
 export function registerPdfFonts(doc: jsPDF, assets: ProjectState['embeddedFonts'] = []): string[] {

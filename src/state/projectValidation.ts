@@ -3,6 +3,7 @@ import { resolveMaster } from '../engine/masterInheritance';
 import { cascadeStyles } from '../engine/styleInheritance';
 import { revisedStory } from '../engine/storyRevisions';
 import { profileBytes } from '../engine/iccProfiles';
+import { tableGrid } from '../engine/tableCells';
 
 type Validator = (value: unknown, path: string) => void;
 type Schema = Record<string, Validator>;
@@ -125,8 +126,8 @@ const elementSchemas: Record<string, Schema> = {
     strokeCap: choice('butt', 'round', 'square'), strokeJoin: choice('miter', 'round', 'bevel'),
   },
   table: {
-    rowSizing: optional(choice('equal', 'content')),
-    rows: count, cols: (value, path) => { count(value, path); if ((value as number) > 200) fail(path, 'tables support at most 200 columns'); }, cells: array(array(object({ text, colSpan: optional(count), align: optional(choice('left', 'center', 'right')), verticalAlign: optional(choice('top', 'middle', 'bottom')), fillColor: optional(text), textColor: optional(text) }))),
+    rowSizing: optional(choice('equal', 'content')), allowRowSplit: optional(boolean),
+    rows: count, cols: (value, path) => { count(value, path); if ((value as number) > 200) fail(path, 'tables support at most 200 columns'); }, cells: array(array(object({ text, colSpan: optional(count), rowSpan: optional(count), align: optional(choice('left', 'center', 'right')), verticalAlign: optional(choice('top', 'middle', 'bottom')), fillColor: optional(text), textColor: optional(text) }))),
     headerRowCount: integer, headerFillColor: text, headerTextColor: text,
     footerRowCount: optional(integer), repeatHeaderOnOverflow: optional(boolean), repeatFooterOnOverflow: optional(boolean),
     borderColor: text, borderWidthMm: nonnegative, cellPaddingMm: nonnegative, ...typography,
@@ -179,6 +180,11 @@ const element: Validator = (value, path) => {
     const cells = data.cells as unknown[][];
     if (cells.length !== data.rows || cells.some(row => row.length !== data.cols)) {
       fail(`${path}.cells`, 'cell dimensions must match rows and cols');
+    }
+    if (data.allowRowSplit || cells.some(row => row.some(cell => Number((cell as { rowSpan?: number }).rowSpan) > 1))) {
+      if (data.rowSizing !== 'content') fail(path, 'split rows and vertical merges require content row sizing');
+      try { tableGrid(cells as import('../types').TableCell[][], Number(data.headerRowCount || 0), Number(data.footerRowCount || 0)); }
+      catch (error) { fail(path, error instanceof Error ? error.message : String(error)); }
     }
   }
 };

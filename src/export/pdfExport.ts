@@ -15,7 +15,7 @@ import { colorToCmyk, applyCmykTextColor, applyCmykFillColor, applyCmykDrawColor
 export { colorToCmyk, applyCmykTextColor, applyCmykFillColor, applyCmykDrawColor, applySpotColor } from './pdfColors';
 import { fontManager } from '../fontManager';
 import { isDesktop, savePublicationFile } from '../desktop';
-import { layoutStory } from '../engine/storyLayout';
+import { layoutStory, measureStoryText } from '../engine/storyLayout';
 import { drawFontText, fontTextWidth, wrapFontText } from './fontOutlines';
 import { ProjectState, Page, Spread, TextElement, ImageElement, ShapeElement, VectorPathElement, TableElement, CanvasElement } from '../types/index';
 import { stateManager, numberToSuperscript } from '../state';
@@ -26,10 +26,18 @@ import { tableThread } from '../engine/tableCells';
 import { prepareManagedPdf } from './iccPdf';
 import { publicationWrapObjects, wrappedPlainContent } from '../engine/publicationWrap';
 import { formatOpenTypeText } from '../engine/legacyTypography';
+import { drawVectorPathPdf } from './vectorPathPdf';
+import { documentColor } from './pdfColors';
 import type { PdfContentTag } from './pdfStructure';
-import { getFreeToneColor, getSafeSpotName, generatePdfSeparationDict, FreeToneSpotColor } from '../engine/spotColors';
+import type { PressStandard } from './pdfPress';
+import { getFreeToneColor, FreeToneSpotColor } from '../engine/spotColors';
 
 export interface ExportOptions {
+  pressStandard?: PressStandard;
+  accessibility?: 'pdfua1';
+  transparency?: 'live' | 'flatten';
+  flattenDpi?: number;
+  trapping?: { widthPt: number; tacLimit?: number };
   tagged?: boolean;
   strict?: boolean;
   fetchExternalAssets?: boolean;
@@ -45,56 +53,26 @@ export interface ExportOptions {
   onWarning?: (warning: string) => void;
 }
 
-function drawBezierSegmentInPdf(
-  doc: any,
-  originX: number,
-  originY: number,
-  p0: { x: number; y: number },
-  p1: { x: number; y: number },
-  p2: { x: number; y: number },
-  p3: { x: number; y: number }
-): void {
-  const isStraight =
-    Math.abs(p1.x - p0.x) < 0.001 &&
-    Math.abs(p1.y - p0.y) < 0.001 &&
-    Math.abs(p2.x - p3.x) < 0.001 &&
-    Math.abs(p2.y - p3.y) < 0.001;
-
-  if (isStraight) {
-    doc.line(originX + p0.x, originY + p0.y, originX + p3.x, originY + p3.y);
-    return;
-  }
-
-  const STEPS = 16;
-  let lastX = originX + p0.x;
-  let lastY = originY + p0.y;
-  for (let s = 1; s <= STEPS; s++) {
-    const t = s / STEPS;
-    const u = 1 - t;
-    const tt = t * t;
-    const uu = u * u;
-    const uuu = uu * u;
-    const ttt = tt * t;
-
-    const curX = originX + (uuu * p0.x + 3 * uu * t * p1.x + 3 * u * tt * p2.x + ttt * p3.x);
-    const curY = originY + (uuu * p0.y + 3 * uu * t * p1.y + 3 * u * tt * p2.y + ttt * p3.y);
-    doc.line(lastX, lastY, curX, curY);
-    lastX = curX;
-    lastY = curY;
-  }
-}
-
 export async function exportDocumentToPdf(
   source: ProjectState,
   options: ExportOptions = {}
 ): Promise<jsPDF> {
+  if (options.pressStandard) {
+    if (!['pdfx1a-2003', 'pdfx4'].includes(options.pressStandard)) throw new Error('Unsupported PDF/X target.');
+    if (options.tagged || options.accessibility) throw new Error('Export separate accessible screen and PDF/X print editions.');
+    if (options.pressStandard === 'pdfx4' && options.transparency === 'flatten') throw new Error('Use the PDF/X-1a target for flattened output or PDF/X-4 for live transparency.');
+    options = { ...options, strict: true, transparency: options.pressStandard === 'pdfx1a-2003' ? 'flatten' : 'live' };
+  }
   if (options.exportFormat === 'spreads') throw new Error('Spread PDF output is not implemented. Export individual pages or use booklet imposition.');
+  if (options.accessibility && options.accessibility !== 'pdfua1') throw new Error('Only PDF/UA-1 (PDF 1.7) output is supported. PDF/UA-2 requires a separate PDF 2.0 pipeline.');
+  if (options.accessibility && options.spreadRange && options.spreadRange !== 'all') throw new Error('Accessible PDF currently exports the whole publication so linked tables and story structure remain complete.');
+  if (options.transparency === 'flatten' && (options.tagged || options.accessibility)) throw new Error('Use separate tagged screen and flattened print exports; a flattened print PDF is not an accessible screen edition.');
   await fontManager.restoreFonts(source.embeddedFonts);
   const state = publicationSnapshot(await prepareExportAssets(source, options.fetchExternalAssets ?? typeof window !== 'undefined'));
   const publicationIssues = publicationPreflight(state, options.strict ? 'print' : 'editor');
   const tableErrors = publicationIssues.filter(issue => issue.code === 'TABLE_LAYOUT' && issue.severity === 'error');
   if (tableErrors.length) throw new Error(tableErrors.map(issue => `Page ${issue.pageNumber}: ${issue.message}`).join('\n'));
-  if (options.strict) {
+  if (options.strict || options.accessibility) {
     const errors = publicationIssues.filter(issue => issue.severity === 'error');
     if (errors.length) throw new Error(errors.map(issue => `Page ${issue.pageNumber}: ${issue.message}`).join('\n'));
     if (state.settings.footnotes?.some(note => note.kind === 'endnote') && !state.spreads.some(spread => spread.elements.some(element => element.type === 'text' && element.generated?.kind === 'endnotes'))) {
@@ -125,6 +103,7 @@ export async function exportDocumentToPdf(
     unit: 'mm',
     format: [pdfPageWidth, pdfPageHeight],
     compress: options.compress !== undefined ? options.compress : true,
+    putOnlyUsedFonts: options.transparency === 'flatten' || !!options.accessibility || !!options.pressStandard,
   });
   const managedPdf = await prepareManagedPdf(doc, state);
 
@@ -165,6 +144,8 @@ export async function exportDocumentToPdf(
 
   // Register FreeTone Spot Colors in PDF ColorSpace Resource Dictionary
   const usedSpotColors = new Map<string, FreeToneSpotColor>();
+  const trapEngine = options.trapping ? await import('../engine/processTrapping') : undefined;
+  const trapGeometry = options.trapping ? await import('../engine/prepressGeometry') : undefined;
   for (const spread of targetSpreads) {
     for (const el of spread.elements) {
       if (el.spotColor) {
@@ -176,10 +157,12 @@ export async function exportDocumentToPdf(
 
   // Colour spaces belong inside Resources, never as floating serialization tokens.
   // The final object pass installs spot resources after jsPDF has finished writing.
-  const structure = options.tagged ? await import('./pdfStructure') : undefined;
+  const structure = options.tagged || options.accessibility ? await import('./pdfStructure') : undefined;
+  const semantic = options.accessibility ? new (await import('./pdfSemantics')).PdfSemantics(doc, state) : undefined;
   const tags: PdfContentTag[] = [];
 
   const pagesToExport: { page: Page; spread: Spread }[] = [];
+  const flattenArtwork: CanvasElement[][] = [];
   for (const spread of targetSpreads) {
     for (const page of spread.pages) {
       pagesToExport.push({ page, spread });
@@ -246,13 +229,25 @@ export async function exportDocumentToPdf(
       !spread.detachedMasterElementIds?.includes(element.id) &&
       !spread.elements.some(candidate => candidate.masterSourceId === element.id && candidate.pageId === page.id))
       .map(element => instantiateMasterItem(element, page.id, text => publicationText(state, text, page.pageNumber)));
+    semantic?.furniture(masterElements.map(element => element.id));
     const paintOrder = (a: CanvasElement, b: CanvasElement) => (state.layers.find(layer => layer.id === a.layerId)?.order || 0) - (state.layers.find(layer => layer.id === b.layerId)?.order || 0) || a.zIndex - b.zIndex;
     const pageElements = [...masterElements.sort(paintOrder), ...spread.elements.filter(element => element.pageId === page.id).sort(paintOrder)]
-      .filter(element => !element.pasteboard && !element.editorialOnly && state.layers?.find(layer => layer.id === element.layerId)?.visible !== false);
+      .filter(element => element.opacity > 0 && !element.pasteboard && !element.editorialOnly && state.layers?.find(layer => layer.id === element.layerId)?.visible !== false);
+    const pageArtwork: CanvasElement[] = [];
+    if (options.transparency === 'flatten') flattenArtwork.push(pageArtwork);
+    if (options.pressStandard && pageElements.some(element => element.shadow)) throw new Error('Render object shadows into an image before preparing PDF/X; this exporter does not reproduce live shadows.');
 
+    const trapResult = trapEngine ? trapEngine.calculateProcessTraps(pageElements, css => documentColor(doc, css), options.trapping!.widthPt, options.trapping!.tacLimit || state.settings.colorManagement?.tacLimit || 320) : undefined;
+    if (trapResult) preflightWarnings.push(...trapResult.warnings.map(warning => `Page ${page.pageNumber}: ${warning}`));
     for (const el of pageElements) {
+      const fullResSrc = el.type === 'image' ? (assetStore.getFullResolution(el.assetId || el.src) as string) || el.src : undefined;
+      if (options.transparency === 'flatten') pageArtwork.push(el.type === 'image' && fullResSrc ? { ...el, src: fullResSrc } : el);
       if (el.spotColor) { const spot = getFreeToneColor(el.spotColor); if (spot) usedSpotColors.set(spot.name, spot); }
       if (structure) {
+        if (semantic) {
+          if (el.interactiveField || (el as any).hyperlink) throw new Error('Interactive fields and links need annotation tagging; remove them or use the ordinary tagged screen preset.');
+          semantic.image(el);
+        } else {
         const pageNumber = doc.getNumberOfPages();
         const mcid = tags.filter(tag => tag.page === pageNumber).length;
         const tag = structure.elementPdfTag(state, el, pageNumber, mcid);
@@ -261,6 +256,7 @@ export async function exportDocumentToPdf(
           const actualText = tag.text === undefined ? '' : ` /ActualText <FEFF${Array.from({ length: tag.text.length }, (_, index) => tag.text!.charCodeAt(index).toString(16).padStart(4, '0')).join('')}>`;
           (doc.internal as any).write(`/${tag.role} << /MCID ${tag.mcid}${actualText} >> BDC`);
         } else (doc.internal as any).write('/Artifact BMC');
+        }
       }
       const elX = originX + el.x;
       const elY = originY + el.y;
@@ -278,49 +274,28 @@ export async function exportDocumentToPdf(
 
       if (el.type === 'shape') {
         const shape = el as ShapeElement;
+        const fill = !!shape.spotColor || !!shape.fillColor && !['transparent', 'none'].includes(shape.fillColor);
+        const stroke = shape.strokeWidthMm > 0 && !!shape.strokeColor && !['transparent', 'none'].includes(shape.strokeColor);
         if (shape.spotColor) {
           applySpotColor(doc, shape.spotColor, false);
         } else {
           applyCmykFillColor(doc, shape.fillColor);
         }
         applyCmykDrawColor(doc, shape.strokeColor);
-        doc.setLineWidth(shape.strokeWidthMm || 0.2);
+        if (stroke) doc.setLineWidth(shape.strokeWidthMm);
+        doc.setLineDashPattern(shape.strokeDash === 'dashed' ? [2, 1] : [], 0);
+        const paint = fill && stroke ? 'FD' : fill ? 'F' : stroke ? 'S' : undefined;
 
         if (shape.shapeKind === 'rectangle') {
-          doc.rect(elX, elY, shape.width, shape.height, (shape.fillColor && shape.fillColor !== 'transparent') || shape.spotColor ? 'FD' : 'S');
+          if (paint) doc.rect(elX, elY, shape.width, shape.height, paint);
         } else if (shape.shapeKind === 'ellipse') {
-          doc.ellipse(elX + shape.width / 2, elY + shape.height / 2, shape.width / 2, shape.height / 2, (shape.fillColor && shape.fillColor !== 'transparent') || shape.spotColor ? 'FD' : 'S');
+          if (paint) doc.ellipse(elX + shape.width / 2, elY + shape.height / 2, shape.width / 2, shape.height / 2, paint);
         } else if (shape.shapeKind === 'line') {
-          doc.line(elX, elY, elX + shape.width, elY + shape.height);
+          if (stroke) { if (shape.spotColor) applySpotColor(doc, shape.spotColor, true); doc.line(elX, elY, elX + shape.width, elY + shape.height); }
         }
       } else if (el.type === 'path') {
         const pathEl = el as VectorPathElement;
-        if (pathEl.nodes.length >= 2) {
-          if (pathEl.spotColor) {
-            applySpotColor(doc, pathEl.spotColor, true);
-          } else {
-            applyCmykDrawColor(doc, pathEl.strokeColor);
-          }
-          doc.setLineWidth(pathEl.strokeWidthMm || 0.3);
-          for (let i = 1; i < pathEl.nodes.length; i++) {
-            const prev = pathEl.nodes[i - 1];
-            const curr = pathEl.nodes[i];
-            const p0 = { x: prev.x, y: prev.y };
-            const p1 = { x: prev.x + (prev.handleOut?.x || 0), y: prev.y + (prev.handleOut?.y || 0) };
-            const p2 = { x: curr.x + (curr.handleIn?.x || 0), y: curr.y + (curr.handleIn?.y || 0) };
-            const p3 = { x: curr.x, y: curr.y };
-            drawBezierSegmentInPdf(doc, elX, elY, p0, p1, p2, p3);
-          }
-          if (pathEl.closed && pathEl.nodes.length >= 3) {
-            const first = pathEl.nodes[0];
-            const last = pathEl.nodes[pathEl.nodes.length - 1];
-            const p0 = { x: last.x, y: last.y };
-            const p1 = { x: last.x + (last.handleOut?.x || 0), y: last.y + (last.handleOut?.y || 0) };
-            const p2 = { x: first.x + (first.handleIn?.x || 0), y: first.y + (first.handleIn?.y || 0) };
-            const p3 = { x: first.x, y: first.y };
-            drawBezierSegmentInPdf(doc, elX, elY, p0, p1, p2, p3);
-          }
-        }
+        drawVectorPathPdf(doc, pathEl, elX, elY);
       } else if (el.type === 'text') {
         const text = el as TextElement;
         const customFont = fontManager.getFont(text.fontFamily);
@@ -333,6 +308,8 @@ export async function exportDocumentToPdf(
           doc.setLineWidth(text.borderWidthMm);
           doc.rect(elX, elY, text.width, text.height, 'S');
         }
+        // Match the canvas optical-margin clip and bound glyph overhangs for flattening.
+        doc.rect(elX - 25.4 / 24, elY, text.width + 25.4 / 12, text.height, null); doc.clip(); doc.discardPath();
 
         if (text.spotColor) {
           applySpotColor(doc, text.spotColor, false);
@@ -373,12 +350,20 @@ export async function exportDocumentToPdf(
 
         const wrapObjects = publicationWrapObjects(state, spread);
         const hasWrap = wrapObjects.some(object => object.id !== text.id && object.pageId === text.pageId);
-        const flowContent = text.textContent || (hasWrap ? wrappedPlainContent(text, formatOpenTypeText(publicationText(state, text.text || '', page.pageNumber).replace(/\{index:[^}]+\}/g, ''), text.openTypeFeatures)) : undefined);
+        const flowContent = text.textContent || (hasWrap || semantic ? wrappedPlainContent(text, formatOpenTypeText(publicationText(state, text.text || '', page.pageNumber).replace(/\{index:[^}]+\}/g, ''), text.openTypeFeatures)) : undefined);
         if (flowContent) {
           const layout = layoutStory(flowContent, text, state.paragraphStyles, state.characterStyles, undefined, totalFnHtMm,
             { obstacles: wrapObjects, baselineGrid: state.settings.baselineGrid });
-          for (const line of layout.lines) for (const segment of line.segments) {
+          for (const line of layout.lines) {
+          const lineSemantics = semantic?.line(text, flowContent, line.start);
+          for (const original of line.segments) {
+          const parts = lineSemantics?.parts(original.text) || [{ text: original.text, parent: '' }];
+          let advance = 0;
+          for (const part of parts) {
+            const segment = { ...original, text: part.text, x: original.x + advance };
             const style = segment.style;
+            semantic?.assertFont(style.fontFamily, segment.text);
+            const end = lineSemantics?.begin(segment.text, part.parent);
             const font = fontManager.getFont(style.fontFamily);
             const x = elX + segment.x;
             const y = elY + line.y + style.fontSizePt * 25.4 / 72;
@@ -399,6 +384,9 @@ export async function exportDocumentToPdf(
               doc.setLineWidth(0.15);
               doc.line(x, y + 0.3, x + segment.width, y + 0.3);
             }
+            end?.(); advance += measureStoryText(part.text, style) + (style.letterSpacingPt || 0) * 25.4 / 72 * Array.from(part.text).length;
+          }
+          }
           }
           if (layout.overset && !text.nextFrameId) {
             const warning = `Page ${page.pageNumber}: Text frame "${text.id}" has overset manuscript text.`;
@@ -490,18 +478,22 @@ export async function exportDocumentToPdf(
           const noteFont = fontManager.getFont(noteLayout.family);
           applyFont(doc, noteLayout.family);
           noteLayout.lines.forEach(line => {
+            semantic?.assertFont(noteLayout.family, line.text);
+            const end = semantic?.note(text, line.noteId, line.text);
             const lineY = fnStartY + 3 + noteLayout.size * 25.4 / 72 + line.y;
             if (noteFont) {
               applyCmykFillColor(doc, text.color || '#222222');
               drawFontText(doc, noteFont, line.text, elX + padding + line.x, lineY, noteLayout.size);
             } else doc.text(line.text, elX + padding + line.x, lineY);
+            end?.();
           });
         }
       } else if (el.type === 'image') {
         const img = el as ImageElement;
-        const fullResSrc = (assetStore.getFullResolution(img.assetId || img.src) as string) || img.src;
-        if (img.equation || fullResSrc.startsWith('data:image/svg+xml')) {
-          const svgSource = img.equation ? (await import('../engine/equations')).renderEquation(img.equation).svg : new TextDecoder().decode(embeddedAsset(fullResSrc).bytes);
+        const source = fullResSrc ?? img.src;
+        if (img.equation || source.startsWith('data:image/svg+xml')) {
+          if (options.pressStandard) throw new Error('For PDF/X preparation, supply SVG/equation artwork as an sRGB raster image.');
+          const svgSource = img.equation ? (await import('../engine/equations')).renderEquation(img.equation).svg : new TextDecoder().decode(embeddedAsset(source).bytes);
           doc.saveGraphicsState();
           try {
             doc.rect(elX, elY, img.width, img.height, null); doc.clip(); doc.discardPath();
@@ -513,15 +505,15 @@ export async function exportDocumentToPdf(
             doc.setLineWidth(img.borderWidthMm);
             doc.rect(elX, elY, img.width, img.height, 'S');
           }
-        } else if (fullResSrc && (fullResSrc.startsWith('data:image') || fullResSrc.startsWith('http') || fullResSrc.startsWith('blob:'))) {
+        } else if (source && (source.startsWith('data:image') || source.startsWith('http') || source.startsWith('blob:'))) {
           try {
-            const managedImage = managedPdf ? await managedPdf.raster(fullResSrc) : undefined;
+            const managedImage = managedPdf ? await managedPdf.raster(source) : undefined;
             let imgW = img.originalWidth || 0;
             let imgH = img.originalHeight || 0;
             let fileType = 'JPEG';
 
             try {
-              const props = managedImage || doc.getImageProperties(fullResSrc);
+              const props = managedImage || doc.getImageProperties(source);
               if (props && props.width > 0 && props.height > 0) {
                 imgW = props.width;
                 imgH = props.height;
@@ -532,7 +524,7 @@ export async function exportDocumentToPdf(
             }
 
             if (!imgW || !imgH) {
-              const dims = stateManager.getImageDimensions(fullResSrc) || stateManager.getImageDimensions(img.src);
+              const dims = stateManager.getImageDimensions(source) || stateManager.getImageDimensions(img.src);
               if (dims && dims.width > 0 && dims.height > 0) {
                 imgW = dims.width;
                 imgH = dims.height;
@@ -553,7 +545,7 @@ export async function exportDocumentToPdf(
             }
 
             if (managedImage) doc.addImage(managedImage.bytes, 'RECTOCMYK', fit.drawX, fit.drawY, fit.drawW, fit.drawH, managedImage.alias);
-            else doc.addImage(fullResSrc, fileType, fit.drawX, fit.drawY, fit.drawW, fit.drawH);
+            else doc.addImage(source, fileType, fit.drawX, fit.drawY, fit.drawW, fit.drawH);
 
             if (needsClipping) {
               doc.restoreGraphicsState();
@@ -574,7 +566,8 @@ export async function exportDocumentToPdf(
         }
       } else if (el.type === 'table') {
         const table = el as TableElement;
-        tableEngine.exportPdfTable(doc, table, elX, elY, table.width, table.height, tableThread(state.spreads, table), overprintBlack);
+        const tableFrames = tableThread(state.spreads, table);
+        tableEngine.exportPdfTable(doc, table, elX, elY, table.width, table.height, tableFrames, overprintBlack, semantic?.table(table, tableFrames[0]));
       }
 
       // 4b. AcroForm Interactive PDF Form Field
@@ -610,17 +603,45 @@ export async function exportDocumentToPdf(
         }
       }
       doc.restoreGraphicsState();
+      for (const trap of trapResult?.traps.filter(trap => trap.afterElementId === el.id) || []) {
+        doc.saveGraphicsState();
+        applyCmykFillColor(doc, `cmyk(${trap.cmyk.join(',')})`);
+        const operations = trapGeometry!.inkCoordinates(trap.paths).flatMap(path => [
+          { op: 'm', c: [originX + path[0].x, originY + path[0].y] },
+          ...path.slice(1).map(point => ({ op: 'l', c: [originX + point.x, originY + point.y] })), { op: 'h', c: [] },
+        ]);
+        doc.path(operations); doc.fillEvenOdd(); doc.restoreGraphicsState();
+      }
       if (structure) (doc.internal as any).write('EMC');
     }
 
   }
 
-  if (options.strict && preflightWarnings.some(warning => /overset/i.test(warning))) {
+  if ((options.strict || options.accessibility) && preflightWarnings.some(warning => /overset/i.test(warning))) {
     throw new Error(preflightWarnings.filter(warning => /overset/i.test(warning)).join('\n'));
   }
   for (const warning of preflightWarnings) options.onWarning?.(warning);
+  semantic?.validate();
 
-  const finalized = (structure || usedSpotColors.size) ? await (structure || await import('./pdfStructure')).finishPdf(doc, state, [...usedSpotColors.values()], structure ? tags : undefined, options.compress !== false) : undefined;
+  let finalized = (structure || usedSpotColors.size) ? await (structure || await import('./pdfStructure')).finishPdf(doc, state, [...usedSpotColors.values()], semantic?.tags || (structure ? tags : undefined), options.compress !== false, semantic?.groups) : undefined;
+  if (options.transparency === 'flatten') {
+    const { flattenPdfTransparency } = await import('./transparencyFlatten');
+    const result = await flattenPdfTransparency(new Uint8Array(doc.output('arraybuffer')), state, flattenArtwork, slug + bleed, options.flattenDpi || 300);
+    finalized = result.bytes; (doc as any).flatteningReport = { rasterTiles: result.rasterTiles, flattenedPages: result.flattenedPages };
+    (await import('./pdfStructure')).bindFinalizedPdf(doc, finalized);
+  }
+  if (options.accessibility) {
+    finalized = await (await import('./pdfUa')).identifyPdfUa1(new Uint8Array(doc.output('arraybuffer')), state);
+    (await import('./pdfStructure')).bindFinalizedPdf(doc, finalized);
+    (doc as any).accessibilityReport = { standard: 'PDF/UA-1', humanReviewRequired: true, limits: ['No interactive annotation tagging', 'Embedded static TTF fonts required', 'Content-sized tables required'] };
+    options.onWarning?.('Accessible PDF/UA-1 prepared. Validate the final publication and review image descriptions and reading order with assistive technology.');
+  }
+  if (options.pressStandard) {
+    const result = await (await import('./pdfPress')).preparePressPdf(new Uint8Array(doc.output('arraybuffer')), state, options.pressStandard);
+    finalized = result.bytes; (doc as any).pressReport = result.report;
+    (await import('./pdfStructure')).bindFinalizedPdf(doc, finalized);
+    options.onWarning?.('PDF/X candidate prepared. Independent ISO preflight and printer approval are required; this export is not GWG certified.');
+  }
 
   const filename = `${state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'recto-document'}.pdf`;
   if (options.download !== false) {

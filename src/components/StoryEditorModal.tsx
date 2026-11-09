@@ -241,7 +241,7 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
             onSelect={captureSelection}
             onKeyUp={captureSelection}
             onMouseUp={captureSelection}
-            onBlur={captureSelection}
+            onBlur={() => { captureSelection(); stateManager.finishUndoGroup(); }}
             onInput={(e) => handleTextChange((e.target as HTMLTextAreaElement).value)}
             placeholder="Write manuscript story here... Canvas updates in real time."
             style={{

@@ -3,7 +3,7 @@ import { explicitCmyk, type Cmyk } from '../engine/inkColors';
 
 const managedColors = new WeakMap<object, ReadonlyMap<string, Cmyk>>();
 export const setManagedPdfColors = (doc: object, colors: ReadonlyMap<string, Cmyk>) => managedColors.set(doc, colors);
-const documentColor = (doc: object, color: string) => managedColors.get(doc)?.get(color.trim().toLowerCase()) || colorToCmyk(color);
+export const documentColor = (doc: object, color: string) => managedColors.get(doc)?.get(color.trim().toLowerCase()) || colorToCmyk(color);
 const pdfChannel = (doc: object, value: number) => managedColors.has(doc) ? String(Number((value / 100).toFixed(6))) : value / 100;
 
 /**

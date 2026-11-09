@@ -2662,6 +2662,7 @@ kbd {
 .publication-panel input, .publication-panel select { width: 100%; min-width: 0; box-sizing: border-box; padding: 6px 8px; color: var(--text-primary); background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: 3px; }
 .publication-panel .publication-check { display: flex; flex-direction: row; justify-content: flex-start; align-items: center; text-align: left; }
 .publication-check input { width: auto; }
+.publication-actions.proof-plates { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
 .publication-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .publication-panel p { margin: 10px 0 0; font-size: 11px; line-height: 1.5; color: var(--text-secondary); }
 .story-reference-tools { padding: 8px 20px; border-bottom: 1px solid var(--border-color); max-height: 30vh; overflow-y: auto; }

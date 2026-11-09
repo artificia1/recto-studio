@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { CollaborativeDocument, sharedProject } from '../src/engine/collaborativeDocument';
 import { INITIAL_STATE } from '../src/state/stateManager';
 import type { TextElement } from '../src/types';
@@ -17,6 +17,17 @@ function setup() {
 }
 
 describe('publication CRDT', () => {
+  it('seeds the same replica identities across different system collations', () => {
+    const baseline = sharedProject(structuredClone(INITIAL_STATE));
+    const a = new CollaborativeDocument(baseline);
+    const collation = vi.spyOn(String.prototype, 'localeCompare').mockImplementation(function (other) { return String(this) < String(other) ? 1 : -1; });
+    let b: CollaborativeDocument;
+    try { b = new CollaborativeDocument(baseline); } finally { collation.mockRestore(); }
+    try {
+      const snapshot = a.snapshot(); snapshot.settings.title = 'Shared across locales'; a.update(snapshot);
+      b.apply(a.encode()); expect(b.snapshot()).toEqual(a.snapshot());
+    } finally { a.destroy(); b!.destroy(); }
+  });
   it('merges simultaneous character edits without duplicating baseline text', () => {
     const { a, b, edit, frame } = setup();
     edit(a, { text: 'Hello brave world', rawStoryText: 'Hello brave world' });

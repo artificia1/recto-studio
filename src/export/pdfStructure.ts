@@ -3,8 +3,10 @@ import type { jsPDF } from 'jspdf';
 import type { CanvasElement, ProjectState } from '../types';
 import { getSafeSpotName, type FreeToneSpotColor } from '../engine/spotColors';
 import { storyText } from '../engine/storyContent';
+import { savePublicationFile } from '../desktop';
+import type { PdfStructureGroup } from './pdfSemantics';
 
-export interface PdfContentTag { page: number; mcid: number; role: string; text?: string; alt?: string; order: number }
+export interface PdfContentTag { page: number; mcid: number; role: string; text?: string; alt?: string; order: number; parentId?: string }
 export function elementPdfTag(state: ProjectState, element: CanvasElement, page: number, mcid: number): PdfContentTag | undefined {
   if (element.type === 'text') {
     const style = state.paragraphStyles.find(style => style.id === element.paragraphStyleId);
@@ -17,7 +19,7 @@ export function elementPdfTag(state: ProjectState, element: CanvasElement, page:
 }
 
 /** Repair resources and attach a real structure/parent tree without claiming PDF/UA conformance. */
-export async function finishPdf(doc: jsPDF, state: ProjectState, spots: FreeToneSpotColor[], tags?: PdfContentTag[], compress = true) {
+export async function finishPdf(doc: jsPDF, state: ProjectState, spots: FreeToneSpotColor[], tags?: PdfContentTag[], compress = true, groups?: PdfStructureGroup[]) {
   const pdf = await PDFDocument.load(doc.output('arraybuffer'), { updateMetadata: false });
   const { context } = pdf;
   for (const page of pdf.getPages()) {
@@ -35,17 +37,36 @@ export async function finishPdf(doc: jsPDF, state: ProjectState, spots: FreeTone
     const root = context.obj({ Type: 'StructTreeRoot' }), rootRef = context.register(root);
     const document = context.obj({ Type: 'StructElem', S: 'Document', P: rootRef }), documentRef = context.register(document);
     const children: PDFRef[] = [], nums = PDFArray.withContext(context);
+    const groupRefs = new Map<string, PDFRef>(), groupDicts = new Map<string, PDFDict>(), groupChildren = new Map<string, { ref: PDFRef; order: number }[]>();
+    for (const group of groups || []) {
+      const dict = context.obj({ Type: 'StructElem', S: group.role, ID: PDFHexString.fromText(group.id) });
+      if (group.attributes) dict.set(PDFName.of('A'), context.obj(group.attributes));
+      groupDicts.set(group.id, dict); groupRefs.set(group.id, context.register(dict)); groupChildren.set(group.id, []);
+    }
+    const orderedRoots: { ref: PDFRef; order: number }[] = [];
+    for (const group of groups || []) {
+      const parent = group.parentId ? groupRefs.get(group.parentId) : documentRef;
+      if (!parent) throw new Error('Missing PDF structure parent.');
+      groupDicts.get(group.id)!.set(PDFName.of('P'), parent);
+      (group.parentId ? groupChildren.get(group.parentId)! : orderedRoots).push({ ref: groupRefs.get(group.id)!, order: group.order });
+    }
     for (const [index, page] of pdf.getPages().entries()) {
       const records = tags.filter(tag => tag.page === index + 1);
       page.node.set(PDFName.of('StructParents'), PDFNumber.of(index));
       page.node.set(PDFName.of('Tabs'), PDFName.of('S'));
       const parents = context.obj(records.map(() => null));
       for (const tag of [...records].sort((a, b) => a.order - b.order || a.mcid - b.mcid)) {
-        const item = context.obj({ Type: 'StructElem', S: tag.role, P: documentRef, Pg: page.ref, K: tag.mcid });
+        const item = context.obj({ Type: 'StructElem', S: tag.role, P: tag.parentId ? groupRefs.get(tag.parentId)! : documentRef, Pg: page.ref, K: tag.mcid });
         if (tag.alt) item.set(PDFName.of('Alt'), PDFHexString.fromText(tag.alt));
-        const ref = context.register(item); parents.set(tag.mcid, ref); children.push(ref);
+        const ref = context.register(item); parents.set(tag.mcid, ref);
+        if (groups) (tag.parentId ? groupChildren.get(tag.parentId)! : orderedRoots).push({ ref, order: tag.order }); else children.push(ref);
       }
       nums.push(PDFNumber.of(index)); nums.push(parents);
+    }
+    if (groups) {
+      for (const group of groups) groupDicts.get(group.id)!.set(PDFName.of('K'), context.obj(groupChildren.get(group.id)!.sort((a, b) => a.order - b.order).map(child => child.ref)));
+      children.push(...orderedRoots.sort((a, b) => a.order - b.order).map(child => child.ref));
+      root.set(PDFName.of('IDTree'), context.register(context.obj({ Names: [...groupRefs].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).flatMap(([id, ref]) => [PDFHexString.fromText(id), ref]) })));
     }
     document.set(PDFName.of('K'), context.obj(children));
     root.set(PDFName.of('K'), context.obj([documentRef]));
@@ -57,6 +78,11 @@ export async function finishPdf(doc: jsPDF, state: ProjectState, spots: FreeTone
     pdf.catalog.set(PDFName.of('ViewerPreferences'), context.obj({ DisplayDocTitle: true }));
   }
   const bytes = await pdf.save({ useObjectStreams: compress, addDefaultPage: false, updateFieldAppearances: false });
+  bindFinalizedPdf(doc, bytes);
+  return bytes;
+}
+
+export function bindFinalizedPdf(doc: jsPDF, bytes: Uint8Array) {
   // Exported documents are complete snapshots. Preserve jsPDF's public output formats
   // while ensuring every consumer (downloads, packages and CLI) receives fixed bytes.
   const blob = () => new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
@@ -65,6 +91,12 @@ export async function finishPdf(doc: jsPDF, state: ProjectState, spots: FreeTone
     for (let offset = 0; offset < bytes.length; offset += 8192) chunks.push(String.fromCharCode(...bytes.subarray(offset, offset + 8192)));
     return chunks.join('');
   };
+  doc.save = ((filename = 'document.pdf', options?: { returnPromise?: boolean }) => {
+    const saved = savePublicationFile(filename, new Uint8Array(bytes), 'application/pdf');
+    if (options?.returnPromise) return saved.then(() => doc);
+    void saved.catch(error => console.error('PDF could not be saved:', error));
+    return doc;
+  }) as jsPDF['save'];
   doc.output = ((format?: string) => {
     if (!format) return binary();
     if (format === 'arraybuffer') return new Uint8Array(bytes).buffer;
@@ -73,5 +105,4 @@ export async function finishPdf(doc: jsPDF, state: ProjectState, spots: FreeTone
     if (format === 'datauristring' || format === 'dataurlstring') return `data:application/pdf;base64,${btoa(binary())}`;
     throw new Error(`Output format “${format}” is unavailable for finalized PDFs. Use arraybuffer or blob.`);
   }) as jsPDF['output'];
-  return bytes;
 }

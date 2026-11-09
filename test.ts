@@ -1483,7 +1483,7 @@ assert(!stateManager.getSnapshots().some((s) => s.id === snap1.id), 'Deleted sna
 // 5. CollabSession: Presence, Heartbeat & Operational Mutations
 const { CollaborativeDocument, sharedProject } = await import('./src/engine/collaborativeDocument');
 let collaborationBaseline = sharedProject(structuredClone(stateManager.getState()));
-let collaborationBaselineId = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(collaborationBaseline)))), value => value.toString(16).padStart(2, '0')).join('');
+let collaborationBaselineId = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('recto-yjs-v2\n' + JSON.stringify(collaborationBaseline)))), value => value.toString(16).padStart(2, '0')).join('');
 let remoteReplica = new CollaborativeDocument(collaborationBaseline);
 await collabSession.connect('test-collab-room', 'Tester Designer');
 assert.strictEqual(collabSession.isConnected(), true, 'CollabSession must be connected');
@@ -1548,7 +1548,7 @@ const remoteAddedElem: TextElement = {
 let remoteDocument = remoteReplica.snapshot();
 remoteDocument.spreads[stateManager.getState().activeSpreadIndex].elements.push(remoteAddedElem);
 remoteReplica.update(remoteDocument);
-await collabSession.handleMessage({ type: 'crdt_update', peerId: 'peer-unit-99', baselineId: collaborationBaselineId, update: remoteReplica.encode() });
+await collabSession.handleMessage({ type: 'crdt_update', protocol: 'recto-yjs-v2', peerId: 'peer-unit-99', baselineId: collaborationBaselineId, update: remoteReplica.encode() });
 
 let curSpread = stateManager.getActiveSpread();
 assert(curSpread.elements.some((e) => e.id === 'remote-elem-sync-1'), 'op_add must insert element into spread');
@@ -1557,7 +1557,7 @@ assert(curSpread.elements.some((e) => e.id === 'remote-elem-sync-1'), 'op_add mu
 remoteDocument = remoteReplica.snapshot();
 Object.assign(remoteDocument.spreads[stateManager.getState().activeSpreadIndex].elements.find(element => element.id === 'remote-elem-sync-1')!, { width: 110, text: 'Live Collab Updated', rawStoryText: 'Live Collab Updated' });
 remoteReplica.update(remoteDocument);
-await collabSession.handleMessage({ type: 'crdt_update', peerId: 'peer-unit-99', baselineId: collaborationBaselineId, update: remoteReplica.encode() });
+await collabSession.handleMessage({ type: 'crdt_update', protocol: 'recto-yjs-v2', peerId: 'peer-unit-99', baselineId: collaborationBaselineId, update: remoteReplica.encode() });
 
 curSpread = stateManager.getActiveSpread();
 const updatedRemote = curSpread.elements.find((e) => e.id === 'remote-elem-sync-1') as TextElement;
@@ -1568,7 +1568,7 @@ assert.strictEqual(updatedRemote?.text, 'Live Collab Updated', 'op_update must u
 remoteDocument = remoteReplica.snapshot();
 remoteDocument.spreads[stateManager.getState().activeSpreadIndex].elements = remoteDocument.spreads[stateManager.getState().activeSpreadIndex].elements.filter(element => element.id !== 'remote-elem-sync-1');
 remoteReplica.update(remoteDocument);
-await collabSession.handleMessage({ type: 'crdt_update', peerId: 'peer-unit-99', baselineId: collaborationBaselineId, update: remoteReplica.encode() });
+await collabSession.handleMessage({ type: 'crdt_update', protocol: 'recto-yjs-v2', peerId: 'peer-unit-99', baselineId: collaborationBaselineId, update: remoteReplica.encode() });
 
 curSpread = stateManager.getActiveSpread();
 assert(!curSpread.elements.some((e) => e.id === 'remote-elem-sync-1'), 'op_delete must remove element from spread');
@@ -1580,7 +1580,7 @@ assert.strictEqual(collabSession.isConnected(), false, 'collabSession must be di
 // 6. CollabSession: Password Authentication & Intruder Rejection
 remoteReplica.destroy();
 collaborationBaseline = sharedProject(structuredClone(stateManager.getState()));
-collaborationBaselineId = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(collaborationBaseline)))), value => value.toString(16).padStart(2, '0')).join('');
+collaborationBaselineId = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('recto-yjs-v2\n' + JSON.stringify(collaborationBaseline)))), value => value.toString(16).padStart(2, '0')).join('');
 remoteReplica = new CollaborativeDocument(collaborationBaseline);
 await collabSession.connect('secure-editorial-room', 'Alice Senior Dev', 'SuperSecretPass2026!');
 assert.strictEqual(collabSession.isConnected(), true, 'Must connect to secure room');
@@ -1649,7 +1649,7 @@ const authorizedElem: TextElement = {
 remoteDocument = remoteReplica.snapshot();
 remoteDocument.spreads[stateManager.getState().activeSpreadIndex].elements.push(authorizedElem);
 remoteReplica.update(remoteDocument);
-await collabSession.handleMessage({ type: 'crdt_update', peerId: 'authorized-peer-1', baselineId: collaborationBaselineId, update: remoteReplica.encode(), authHash: validAuthHash });
+await collabSession.handleMessage({ type: 'crdt_update', protocol: 'recto-yjs-v2', peerId: 'authorized-peer-1', baselineId: collaborationBaselineId, update: remoteReplica.encode(), authHash: validAuthHash });
 
 curSpread = stateManager.getActiveSpread();
 assert(curSpread.elements.some((e) => e.id === 'authorized-text-elem'), 'Authorized peer with matching password hash must be accepted and added to state');

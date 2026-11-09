@@ -46,7 +46,7 @@ Recto Studio was conceived, designed, and architected from first principles by *
 
 ## Architectural & Engineering Highlights
 
-- **Browser PDF Export**: Clean PDFs and print PDFs with configured bleed, crop marks, trim/bleed boxes, and process/spot color helpers. Output is not certified PDF/X, PDF/A, or PDF/UA; see [publishing behavior and validation](PUBLISHING.md).
+- **Browser PDF Export**: ICC-managed print PDFs, hybrid transparency flattening, guarded PDF/X candidates, and semantic PDF/UA-1 export. Independent validator fixtures run in CI; each final publication still needs printer or accessibility review. See [publishing behavior and validation](PUBLISHING.md).
 - **Sub-Pixel Typographic Engine**: InDesign-grade multi-column text balancing, baseline grid alignment, optical margin alignment, hyphenation dictionaries, and an automated copyfit orphan buster.
 - **Canvas Editing**: Render coalescing, coordinate mapping, guides, and snapping. Performance depends on document complexity and device; see [startup measurements](PERFORMANCE.md).
 - **Mobile, Tablet & Stylus Architecture (iOS / iPadOS & Android)**: Actively developed mobile and tablet engine featuring:

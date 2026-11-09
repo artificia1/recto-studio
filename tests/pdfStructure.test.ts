@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { savePublicationFile } from '../src/desktop';
+vi.mock('../src/desktop', async importOriginal => ({ ...await importOriginal<typeof import('../src/desktop')>(), savePublicationFile: vi.fn(async () => true) }));
 import { PDFArray, PDFDict, PDFDocument, PDFName } from 'pdf-lib';
 import { StateManager } from '../src/state/stateManager';
 import { exportDocumentToPdf } from '../src/export/pdfExport';
@@ -17,6 +19,13 @@ describe('PDF object resources and accessibility structure', () => {
     const separation = colors.lookup(PDFName.of('CS_FreeTone_185_C'), PDFArray);
     expect(separation.get(0).toString()).toBe('/Separation'); expect(separation.get(2).toString()).toBe('/DeviceCMYK');
     expect(result.output()).not.toContain('/GTS_PDFXVersion');
+    vi.mocked(savePublicationFile).mockClear();
+    await result.save('commercial-spot.pdf', { returnPromise: true });
+    expect(savePublicationFile).toHaveBeenCalledWith('commercial-spot.pdf', expect.any(Uint8Array), 'application/pdf');
+    const saved = vi.mocked(savePublicationFile).mock.calls[0][1] as Uint8Array;
+    expect(saved).toEqual(new Uint8Array(result.output('arraybuffer')));
+    const savedPdf = await PDFDocument.load(saved);
+    expect(savedPdf.getPages()[0].node.Resources()!.lookup(PDFName.of('ColorSpace'), PDFDict).has(PDFName.of('CS_FreeTone_185_C'))).toBe(true);
   });
   it('writes connected parent trees, language, actual text and explicit reading order', async () => {
     const manager = new StateManager(); manager.createBlankProject('A4', 'Tagged publication', false);

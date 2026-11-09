@@ -71,6 +71,33 @@ def validate_epub(path):
             assert item.attrib['idref'] in manifest
 
 
+def validate_press_candidate(path, flattened):
+    reader = PdfReader(path, strict=True)
+    assert reader.pdf_header == ('%PDF-1.4' if flattened else '%PDF-1.6')
+    expected = 'PDF/X-1a:2003' if flattened else 'PDF/X-4'
+    assert reader.metadata['/GTS_PDFXVersion'] == expected
+    assert reader.metadata['/Trapped'] == '/False'
+    root = reader.trailer['/Root']
+    intent = root['/OutputIntents'][0].get_object()
+    assert intent['/S'] == '/GTS_PDFX'
+    profile = intent['/DestOutputProfile']
+    assert profile['/N'] == 4 and profile.get_data()[16:20] == b'CMYK'
+    for page in reader.pages:
+        operations = page.get_contents().operations
+        assert not any(operator in (b'rg', b'RG') for _, operator in operations)
+        assert '/TrimBox' in page and '/BleedBox' in page and '/Annots' not in page
+        states = page['/Resources']['/ExtGState']
+        if flattened:
+            assert any(operator == b'W*' for _, operator in operations)
+            assert any(operator == b'Do' for _, operator in operations)
+            assert all(not {'/BM', '/CA', '/ca', '/SMask'}.intersection(state.get_object()) for state in states.values())
+            images = page['/Resources']['/XObject']
+            assert all(image.get_object()['/ColorSpace'] == '/DeviceCMYK' and '/SMask' not in image.get_object() for image in images.values())
+        else:
+            assert page['/Group']['/CS'] == '/DeviceCMYK'
+            assert any(state.get_object().get('/ca') == 0.5 for state in states.values())
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--render', action='store_true')
@@ -87,6 +114,11 @@ def main():
                 pdf[0].render(scale=1).to_pil().save(path.with_suffix('.png'))
                 pdf.close()
     validate_epub(folder / 'publication.epub')
+    validate_press_candidate(folder / 'pdfx1a-2003.pdf', flattened=True)
+    validate_press_candidate(folder / 'pdfx4.pdf', flattened=False)
+    accessible = PdfReader(folder / 'accessible-ua1.pdf', strict=True)
+    assert 'café' in accessible.pages[0].extract_text()
+    assert accessible.trailer['/Root']['/StructTreeRoot']['/K'][0].get_object()['/S'] == '/Document'
     manuscript = PdfReader(folder / 'manuscript.pdf', strict=True)
     assert len(manuscript.pages) == 1
     extracted = manuscript.pages[0].extract_text()
@@ -113,7 +145,7 @@ def main():
         assert any(name.endswith('.recto') for name in names)
         validate_pdf(io.BytesIO(package.read(next(name for name in names if name.endswith('.pdf')))), 297, 210, True)
         assert 'not certified PDF/X' in package.read('Instructions.txt').decode()
-    print('Validated four PDF variants, custom-font EPUB structure, packaged PDF, and formatted manuscript PDF/EPUB.')
+    print('Validated ordinary, print candidate and accessible PDFs, custom-font EPUB structure, and publication packages.')
 
 
 if __name__ == '__main__':

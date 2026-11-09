@@ -13,6 +13,7 @@ import { layoutContentTables } from './tableLayout';
 import { drawContentTableCanvas, drawContentTablePdf } from './tableContentRenderer';
 import { fontManager } from '../fontManager';
 import { drawFontText, fontTextWidth } from '../export/fontOutlines';
+import type { TablePdfSemantics } from '../export/pdfSemantics';
 import { applyCmykFillColor, applyCmykDrawColor, applyCmykTextColor } from '../export/pdfColors';
 
 export interface TableRowSlice {
@@ -229,13 +230,14 @@ export class TableEngine {
     wMm: number,
     hMm: number,
     allTablesInThread: TableElement[] = [table],
-    overprintBlack: boolean = true
+    overprintBlack: boolean = true,
+    semantics?: TablePdfSemantics
   ): void {
     if ((allTablesInThread[0] || table).rowSizing === 'content') {
       const result = layoutContentTables(allTablesInThread);
       if (result.pendingRows.length || result.frames.some(frame => frame.horizontalOverflow)) throw new Error(`Table ${allTablesInThread[0].id} has content that does not fit. Add continuation frames or enlarge the table before PDF export.`);
       const layout = result.frames.find(frame => frame.frameId === table.id);
-      if (layout) drawContentTablePdf(doc, table, layout, xMm, yMm, overprintBlack);
+      if (layout) drawContentTablePdf(doc, table, layout, xMm, yMm, overprintBlack, semantics);
       return;
     }
     const slice = this.computeFrameSlice(table, allTablesInThread);
@@ -309,6 +311,7 @@ export class TableEngine {
         const cellWidth = cellW * span;
         const cell = rowItem.cells?.[c];
         const textStr = cell?.text || '';
+        const end = semantics?.beginCell(rowItem.originalIndex, c, rowItem.isHeader || !!cell?.isHeader, cell?.rowSpan || 1, span, textStr);
 
         if (textStr) {
           let textCol = cell?.textColor;
@@ -334,6 +337,7 @@ export class TableEngine {
             drawFontText(doc, font, textStr, x, drawY, table.fontSizePt);
           } else doc.text(textStr, drawX, drawY, { align: align as any });
         }
+        end?.();
       }
     }
   }

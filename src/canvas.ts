@@ -2272,6 +2272,7 @@ export class SpreadCanvas {
   }
 
   private handlePointerUp(e: PointerEvent) {
+    stateManager.finishUndoGroup();
     if (e.pointerId === this.activePenPointerId) {
       this.activePenPointerId = null;
     }

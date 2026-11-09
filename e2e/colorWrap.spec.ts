@@ -60,3 +60,22 @@ test('samples actual artwork for the separations preview and toggles individual 
   await expect(page.getByRole('status').filter({ hasText: /above 320%/ })).toBeVisible();
   await page.screenshot({ path: 'test-results/ink-preview.png', fullPage: true });
 });
+
+test('does not apply a pending ICC import to a different document', async ({ page }) => {
+  let release!: () => void, arrived!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const requested = new Promise<void>(resolve => { arrived = resolve; });
+  await page.context().route(/lcms[^/]*\.wasm/, async route => { arrived(); await gate; await route.continue(); });
+  try {
+    await importProject(page);
+    await page.getByRole('button', { name: 'Setup', exact: true }).click();
+    await page.getByText('ICC colour management', { exact: true }).click();
+    await page.getByLabel('CMYK output ICC profile', { exact: true }).setInputFiles('tests/fixtures/icc/lcms-test-output.icc');
+    await requested;
+    const replacement = projectFixture(); replacement.settings.title = 'Replacement document';
+    await importProject(page, replacement);
+    release();
+    await expect(page.getByRole('status').filter({ hasText: /document changed while the profile was loading/ })).toBeVisible();
+    expect((await savedProject(page)).settings.colorManagement).toBeUndefined();
+  } finally { release(); }
+});

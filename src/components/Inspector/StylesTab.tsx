@@ -169,6 +169,7 @@ export function StylesTab({ state }: StylesTabProps) {
                     <option value="H4">H4 (Subheading Level 4)</option>
                     <option value="P">P (Paragraph / Body Text)</option>
                     <option value="BlockQuote">BlockQuote (Pullquote / Callout)</option>
+                    <option value="LI">List item (automatic list structure)</option>
                     <option value="Caption">Caption (Figure / Photo Caption)</option>
                     <option value="Div">Div (Generic Block)</option>
                   </select>

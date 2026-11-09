@@ -10,6 +10,8 @@ const collections = new Set(['spreads', 'masterSpreads', 'paragraphStyles', 'cha
 const derivedText = new Set(['text', 'rawStoryText', 'storyContent', 'textContent', 'storyStart', 'storyEnd', 'autoPaginationError']);
 const localOrigin = Symbol('local-document-edit');
 const seedOrigin = Symbol('shared-document-seed');
+// Replica ordering must not depend on the operating system's language settings.
+const compareKeys = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
 type Attributes = Record<string, unknown>;
 type Delta = { insert: string; attributes?: Attributes };
 type SharedMap = Y.Map<unknown>;
@@ -80,7 +82,7 @@ function syncObject(parent: SharedMap, value: Record<string, unknown>, type?: st
   const wanted = new Map(Object.entries(value).filter(([key, item]) => item !== undefined &&
     !(textElement && derivedText.has(key)) && !(type === 'spreads' && key === 'spreadIndex') && !(type === 'pages' && key === 'pageNumber')));
   for (const key of [...parent.keys()]) if (!wanted.has(key) && key !== 'manuscript') parent.delete(key);
-  for (const [key, item] of [...wanted].sort(([a], [b]) => a.localeCompare(b))) syncValue(parent, key, item);
+  for (const [key, item] of [...wanted].sort(([a], [b]) => compareKeys(a, b))) syncValue(parent, key, item);
   if (textElement) {
     if (!value.prevFrameId && !value.generated) {
       const node = wrapper(parent, 'manuscript', 'story');
@@ -129,7 +131,7 @@ function readValue(value: unknown): unknown {
   const data = value.get('data') as SharedMap;
   if (value.get('kind') === 'object') return readObject(data);
   if (value.get('kind') === 'list') return [...data.entries()].filter(([, record]) => !(record as SharedMap).get('deleted'))
-    .sort(([a, x], [b, y]) => Number((x as SharedMap).get('order')) - Number((y as SharedMap).get('order')) || a.localeCompare(b))
+    .sort(([a, x], [b, y]) => Number((x as SharedMap).get('order')) - Number((y as SharedMap).get('order')) || compareKeys(a, b))
     .map(([, record]) => readObject((record as SharedMap).get('value') as SharedMap));
   throw new Error('Unknown collaborative value type.');
 }

@@ -5,9 +5,10 @@ import { CanvasElement, PeerPresence, CollabMessage, ProjectState } from './type
 import { stateManager, StateManager } from './state';
 import { fontManager } from './fontManager';
 import type { CollaborativeDocument, SharedProject } from './engine/collaborativeDocument';
+import { encodePeerMessage, decodePeerMessage, MAX_PEER_MESSAGE_BYTES } from './engine/collabWire';
 
 async function baselineDigest(baseline: SharedProject) {
-  const bytes = new TextEncoder().encode(JSON.stringify(baseline));
+  const bytes = new TextEncoder().encode('recto-yjs-v2\n' + JSON.stringify(baseline));
   return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), value => value.toString(16).padStart(2, '0')).join('');
 }
 
@@ -185,8 +186,10 @@ export class CollabSession {
       this.p2pAction = action;
 
       action.onMessage = (data: any) => {
-        this.handleMessage(data as CollabMessage);
+        try { return this.handleMessage(decodePeerMessage(data)); }
+        catch (error) { console.warn('Invalid peer message ignored:', error); }
       };
+      action.onReceive = ({ byteLength }: { byteLength: number }) => Number.isSafeInteger(byteLength) && byteLength > 0 && byteLength <= MAX_PEER_MESSAGE_BYTES;
 
       room.onPeerJoin = () => {
         this.broadcastPresence(this.lastX, this.lastY);
@@ -302,7 +305,7 @@ export class CollabSession {
   }
 
   private sendMessage(msg: CollabMessage): void {
-    const payload = { ...msg, sessionId: this.sessionId || undefined, ...(this.passwordHash ? { authHash: this.passwordHash } : {}) };
+    const payload = { ...msg, protocol: 'recto-yjs-v2', sessionId: this.sessionId || undefined, ...(this.passwordHash ? { authHash: this.passwordHash } : {}) };
     if (this.channel) {
       try {
         this.channel.postMessage(payload);
@@ -312,7 +315,7 @@ export class CollabSession {
     }
     if (this.p2pAction && typeof this.p2pAction.send === 'function') {
       try {
-        this.p2pAction.send(payload).catch(() => {});
+        this.p2pAction.send(encodePeerMessage(payload)).catch(() => {});
       } catch (e) {
         console.warn('Failed to broadcast WebRTC P2P message', e);
       }
@@ -391,6 +394,10 @@ export class CollabSession {
     }
 
     if (msg.type === 'crdt_update' || msg.type === 'crdt_sync') {
+      if (msg.protocol !== 'recto-yjs-v2') {
+        this.protocolError = 'Incompatible collaboration protocol. Update every participant to the same Recto version.';
+        this.notifyPeers(); return;
+      }
       if (!this.shared || !(msg.update instanceof Uint8Array) || msg.update.byteLength > 64 * 1024 * 1024) return;
       if (msg.type === 'crdt_sync') {
         if (!this.syncRequest || msg.requestId !== this.syncRequest || !msg.targetPeerId) return;
@@ -444,6 +451,7 @@ export class CollabSession {
         versions: Object.fromEntries(this.versions),
       });
     } else if (msg.type === 'sync_response') {
+      if (this.shared) { this.protocolError = 'An older peer tried to send a legacy snapshot. Update every participant to the same Recto version.'; this.notifyPeers(); return; }
       if (!this.syncRequest || msg.requestId !== this.syncRequest || !msg.targetPeerId) return;
       if (this.manager.getDocumentRevision() !== this.syncRevision) {
         this.syncRequest = null;

@@ -130,6 +130,24 @@ describe('Collaboration between independent peers', () => {
     expect(b.manager.getState().settings.title).toBe('New local work');
   });
 
+  it('rejects incompatible seeded replicas before applying their operations', async () => {
+    const { manager, session } = peer(); await session.connect('room');
+    const before = manager.exportJson();
+    await session.handleMessage({ type: 'crdt_update', peerId: 'older-peer', baselineId: 'old-seed', update: new Uint8Array([1]) });
+    expect(manager.exportJson()).toBe(before);
+    expect(session.getProtocolError()).toContain('Incompatible collaboration protocol');
+  });
+
+  it('keeps completed gestures in separate local undo groups', async () => {
+    const a = peer(), b = peer(); await a.session.connect('room'); await b.session.connect('room'); await flush();
+    const id = a.manager.getActiveSpread().elements[0].id;
+    a.manager.updateElement(id, { width: 77 }); a.manager.finishUndoGroup();
+    a.manager.updateElement(id, { width: 88 }); a.manager.finishUndoGroup(); await flush();
+    a.manager.undo(); await flush();
+    expect(a.manager.getElementById(id)?.width).toBe(77); expect(b.manager.getElementById(id)?.width).toBe(77);
+    a.manager.redo(); await flush(); expect(b.manager.getElementById(id)?.width).toBe(88);
+  });
+
   it('merges manuscript edits with layout and settings edits and keeps undo local', async () => {
     const a = peer(), b = peer();
     await a.session.connect('room'); await b.session.connect('room'); await flush();

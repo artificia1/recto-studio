@@ -1596,6 +1596,7 @@ export class StateManager {
   public setTableRowSizing(frameId: string, mode: 'equal' | 'content') {
     const frames = this.editableTableThread(frameId);
     if (mode !== 'equal' && mode !== 'content') throw new Error('Choose a supported row sizing mode.');
+    if (mode === 'equal' && (frames[0].allowRowSplit || frames[0].cells.some(row => row.some(cell => (cell.rowSpan || 1) > 1)))) throw new Error('Disable row splitting and unmerge vertical cells before choosing equal rows.');
     for (const frame of frames) frame.rowSizing = mode;
     this.pushHistory(); this.notify();
   }
@@ -1608,9 +1609,11 @@ export class StateManager {
     return frames;
   }
 
-  public updateTableSource(frameId: string, updates: Partial<Pick<TableElement, 'cells' | 'rows' | 'cols' | 'headerRowCount' | 'footerRowCount' | 'headerFillColor' | 'headerTextColor' | 'footerFillColor' | 'footerTextColor' | 'alternateRowColor' | 'fontFamily' | 'fontSizePt' | 'cellPaddingMm' | 'borderColor' | 'borderWidthMm' | 'colWidthsMm' | 'rowHeightsMm'>>) {
+  public updateTableSource(frameId: string, updates: Partial<Pick<TableElement, 'cells' | 'rows' | 'cols' | 'rowSizing' | 'allowRowSplit' | 'headerRowCount' | 'footerRowCount' | 'headerFillColor' | 'headerTextColor' | 'footerFillColor' | 'footerTextColor' | 'alternateRowColor' | 'fontFamily' | 'fontSizePt' | 'cellPaddingMm' | 'borderColor' | 'borderWidthMm' | 'colWidthsMm' | 'rowHeightsMm'>>) {
     const frames = this.editableTableThread(frameId);
-    for (const frame of frames) Object.assign(frame, structuredClone(updates));
+    const candidate = structuredClone(this.state), ids = new Set(frames.map(frame => frame.id));
+    for (const spread of candidate.spreads) for (const frame of spread.elements) if (ids.has(frame.id)) Object.assign(frame, structuredClone(updates));
+    this.state = parseProject(JSON.stringify(candidate), INITIAL_STATE);
     this.pushHistory(); this.notify();
   }
 
@@ -2527,13 +2530,15 @@ export class StateManager {
     this.notify();
   }
 
-  private collaborativeHistory: { undo(): void; redo(): void } | null = null;
+  private collaborativeHistory: { undo(): void; redo(): void; stopCapturing?(): void } | null = null;
 
-  public setCollaborativeHistory(history: { undo(): void; redo(): void } | null) {
+  public setCollaborativeHistory(history: { undo(): void; redo(): void; stopCapturing?(): void } | null) {
     this.collaborativeHistory = history;
     // A pre-session snapshot must never undo another participant's work later.
     this.history.clear(); this.history.push(this.state);
   }
+
+  public finishUndoGroup() { this.collaborativeHistory?.stopCapturing?.(); }
 
   /** Validate the complete shared publication before replacing any local state. */
   public applySharedPublication(document: Partial<ProjectState>) {

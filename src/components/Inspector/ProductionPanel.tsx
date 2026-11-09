@@ -18,6 +18,7 @@ export default function ProductionPanel({ state }: { state: ProjectState }) {
   const [preset, setPreset] = useState<PdfPreset>('screen');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [trapping, setTrapping] = useState(false), [trapWidth, setTrapWidth] = useState(0.144);
   const request = useRef(0);
   const run = async (action: () => Promise<void>) => { setBusy(true); setMessage(''); try { await action(); } catch (reason) { setMessage(reason instanceof Error ? reason.message : String(reason)); } finally { setBusy(false); } };
   const book = () => bookEngine.createBook(title, chapters.map(chapter => ({ title: chapter.state.settings.title || chapter.name, filePath: chapter.name, forceRectoOpening: chapter.recto })));
@@ -27,8 +28,13 @@ export default function ProductionPanel({ state }: { state: ProjectState }) {
     <summary>Production & books</summary>
     <label>PDF preset<select value={preset} onChange={event => setPreset(event.currentTarget.value as PdfPreset)}>{Object.entries(PDF_PRESETS).map(([id, item]) => <option key={id} value={id}>{item.label}</option>)}</select></label>
     <p>{PDF_PRESETS[preset].description} PDF presets do not certify PDF/X, PDF/A or PDF/UA conformance.</p>
+    <details><summary>Process-colour trapping</summary>
+      <label className="publication-check"><input type="checkbox" checked={trapping} onChange={event => setTrapping(event.currentTarget.checked)}/>Spread lighter opaque fills into adjacent darker fills</label>
+      <label>Trap width (pt)<input aria-label="Trap width in points" type="number" min={0.001} max={2} step={0.001} value={trapWidth} onChange={event => setTrapWidth(Number(event.currentTarget.value))}/></label>
+      <p>Export-only vector traps for closed process-colour fills without visible strokes. Text, photographs, stroked or transparent artwork and spot inks require printer trapping. Confirm the trap width with your printer; 0.144 pt is a starting value, not a press guarantee.</p>
+    </details>
     <div className="publication-actions">
-      <button className="sm-btn" disabled={busy} onClick={() => run(async () => { const { exportDocumentToPdf } = await import('../../export/pdfExport'); await exportDocumentToPdf(structuredClone(stateManager.getState()), PDF_PRESETS[preset].options); setMessage('PDF export completed.'); })}>Export document PDF</button>
+      <button className="sm-btn" disabled={busy} onClick={() => run(async () => { const { exportDocumentToPdf } = await import('../../export/pdfExport'); const warnings: string[] = []; await exportDocumentToPdf(structuredClone(stateManager.getState()), { ...PDF_PRESETS[preset].options, ...(trapping ? { trapping: { widthPt: trapWidth } } : {}), onWarning: warning => warnings.push(warning) }); setMessage(`PDF export completed.${warnings.length ? ` Review: ${warnings.join(' ')}` : ''}`); })}>Export document PDF</button>
       <button className="sm-btn" disabled={busy} onClick={() => run(async () => {
         const snapshot = structuredClone(stateManager.getState());
         const report = { title: snapshot.settings.title, created: new Date().toISOString(), preset, issues: publicationPreflight(snapshot, 'print'), fonts: documentFontUsage(snapshot), headings: publicationHeadings(snapshot) };
@@ -84,8 +90,9 @@ export default function ProductionPanel({ state }: { state: ProjectState }) {
       <button className="sm-btn" disabled={busy || !chapters.length} onClick={() => run(async () => {
         const manifest = book(); const combined = assembleBook(manifest, load);
         const { exportDocumentToPdf } = await import('../../export/pdfExport');
-        const doc = await exportDocumentToPdf(combined, { ...PDF_PRESETS[preset].options, download: false });
-        await savePublicationFile(`${safeName}.pdf`, doc.output('arraybuffer'), 'application/pdf'); setMessage(`Book exported: ${combined.spreads.reduce((n, spread) => n + spread.pages.length, 0)} pages.`);
+        const warnings: string[] = [];
+        const doc = await exportDocumentToPdf(combined, { ...PDF_PRESETS[preset].options, ...(trapping ? { trapping: { widthPt: trapWidth } } : {}), download: false, onWarning: warning => warnings.push(warning) });
+        await savePublicationFile(`${safeName}.pdf`, doc.output('arraybuffer'), 'application/pdf'); setMessage(`Book exported: ${combined.spreads.reduce((n, spread) => n + spread.pages.length, 0)} pages.${warnings.length ? ` Review: ${warnings.join(' ')}` : ''}`);
       })}>Export book PDF</button>
       <button className="sm-btn" disabled={busy || !chapters.length} onClick={() => run(async () => {
         const entries = bookEngine.generateUnifiedBookToc(book(), load);

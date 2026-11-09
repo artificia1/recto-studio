@@ -117,6 +117,10 @@ export type SemanticPdfTag =
   | 'Title'
   | 'Caption'
   | 'BlockQuote'
+  | 'L'
+  | 'LI'
+  | 'Lbl'
+  | 'LBody'
   | 'Figure'
   | 'Table';
 
@@ -447,6 +451,7 @@ export interface ShapeElement extends BaseElement {
 }
 
 export interface TableCell {
+  rowSpan?: number;
   colSpan?: number;
   text: string;
   align?: 'left' | 'center' | 'right';
@@ -457,6 +462,7 @@ export interface TableCell {
 }
 
 export interface TableElement extends BaseElement {
+  allowRowSplit?: boolean;
   rowSizing?: 'equal' | 'content';
   type: 'table';
   rows: number;
@@ -654,6 +660,7 @@ type CollabPayload =
   | { type: 'sync_response'; peerId: string; state: ProjectState; authHash?: string };
 
 export type CollabMessage = CollabPayload & {
+  protocol?: string;
   sessionId?: string;
   spreadId?: string;
   clock?: number;
