@@ -9,6 +9,7 @@ import { exportDocumentToPdf } from '../src/export/pdfExport';
 import { generateFlipbookHtml } from '../src/flipbookExport';
 import { createProfileAsset } from '../src/engine/iccProfiles';
 import { createNodePdfRaster } from '../src/export/pdfRasterNode';
+import { createZipArchive, readZip } from '../src/zip';
 import type { ShapeElement } from '../src/types';
 
 const scribus = `<SCRIBUSUTF8NEW Version="1.6.7"><DOCUMENT PAGEWIDTH="300" PAGEHEIGHT="400">
@@ -66,4 +67,19 @@ it('reports unsupported Scribus stop opacity instead of silently treating it as 
   const { project, warnings } = parseScribus(scribus.replace('NAME="Cyan" RAMP="0.6"', 'NAME="Cyan" RAMP="0.6" TRANS="0.5"'));
   expect((project.spreads[0].elements[0] as ShapeElement).fillGradient).toBeUndefined();
   expect(warnings.join(' ')).toContain('transparency');
+});
+
+it('uses the frame extent for a linear IDML fill with only the angle specified', async () => {
+  const { project } = parseScribus(scribus);
+  const files = await readZip(exportDocumentToIdml(project));
+  const name = [...files.keys()].find(key => key.startsWith('Spreads/') && key.endsWith('.xml'))!;
+  const xml = new TextDecoder().decode(files.get(name));
+  const changed = xml.replace(/ GradientFillStart="[^"]*" GradientFillLength="[^"]*" GradientFillAngle="[^"]*"/, ' GradientFillAngle="90"');
+  expect(changed).not.toBe(xml);
+  files.set(name, new TextEncoder().encode(changed));
+  const imported = await parseIdmlPackage(createZipArchive(Object.fromEntries(files)));
+  const gradient = (imported.spreads[0].elements[0] as ShapeElement).fillGradient;
+  expect(gradient?.start.x).toBeCloseTo(0.5);
+  expect(gradient?.start.y).toBeCloseTo(1);
+  expect(gradient?.end.y).toBeCloseTo(0);
 });

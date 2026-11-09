@@ -515,16 +515,31 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
   const frameGradient = (xml: string, bounds: ReturnType<typeof parseElementSpreadBounds>): FillGradient | undefined => {
     const swatch = gradientSwatches.get(extractXmlAttr(xml, 'FillColor') || '');
     if (!swatch || bounds.widthPt <= 0 || bounds.heightPt <= 0) return;
-    const source = (extractXmlAttr(xml, 'GradientFillStart') || '').trim().split(/\s+/).map(Number);
-    const length = Number(extractXmlAttr(xml, 'GradientFillLength'));
+    const startAttr = extractXmlAttr(xml, 'GradientFillStart');
+    const lengthAttr = extractXmlAttr(xml, 'GradientFillLength');
     const angle = -Number(extractXmlAttr(xml, 'GradientFillAngle') ?? 0) * Math.PI / 180;
     const [a, b, c, d, tx, ty] = parseTransform(extractXmlAttr(xml, 'ItemTransform'));
-    if (source.length !== 2 || !source.every(Number.isFinite) || !(length > 0) || !Number.isFinite(angle)) return;
+    if (!Number.isFinite(angle)) return;
     if (Math.abs(a * c + b * d) > 1e-6 || Math.abs(a * a + b * b - c * c - d * d) > 1e-6) return;
-    const point = (x: number, y: number) => ({ x: (a * x + c * y + tx - bounds.spreadLeft) / bounds.widthPt,
-      y: (b * x + d * y + ty - bounds.spreadTop) / bounds.heightPt });
-    const [x, y] = source;
-    const gradient = { ...swatch, start: point(x, y), end: point(x + Math.cos(angle) * length, y + Math.sin(angle) * length) };
+    const dx = a * Math.cos(angle) + c * Math.sin(angle), dy = b * Math.cos(angle) + d * Math.sin(angle);
+    const scale = Math.hypot(dx, dy);
+    if (!(scale > 0)) return;
+    const ux = dx / scale, uy = dy / scale;
+    const defaultLength = swatch.kind === 'linear' ? Math.abs(ux) * bounds.widthPt + Math.abs(uy) * bounds.heightPt : Math.hypot(bounds.widthPt, bounds.heightPt) / 2;
+    const length = lengthAttr === null ? defaultLength : Number(lengthAttr) * scale;
+    if (!(length > 0) || !Number.isFinite(length)) return;
+    let x = bounds.widthPt / 2, y = bounds.heightPt / 2;
+    if (startAttr !== null) {
+      const source = startAttr.trim().split(/\s+/).map(Number);
+      if (source.length !== 2 || !source.every(Number.isFinite)) return;
+      x = a * source[0] + c * source[1] + tx - bounds.spreadLeft;
+      y = b * source[0] + d * source[1] + ty - bounds.spreadTop;
+    } else if (swatch.kind === 'linear') {
+      x -= ux * length / 2;
+      y -= uy * length / 2;
+    }
+    const point = (px: number, py: number) => ({ x: px / bounds.widthPt, y: py / bounds.heightPt });
+    const gradient = { ...swatch, start: point(x, y), end: point(x + ux * length, y + uy * length) };
     return validGradient(gradient) ? gradient : undefined;
   };
   const textVariablesMap = parseIdmlTextVariables(files);
