@@ -57,8 +57,11 @@ Browser and desktop PDF exports preserve supported SVG artwork as vectors.
 Headless SVG output uses a 300 dpi rasterization capped at 20 megapixels.
 
 EPUB export produces reflowable XHTML, navigation, styles, SVG graphics, and
-embedded custom fonts. It does not preserve every canvas position or promise
-fixed-layout output. Font distribution must be allowed by the font's license.
+embedded custom fonts. Use **Export Fixed-Layout EPUB** for a separate edition
+with page-sized XHTML, positioned selectable text, image descriptions, and
+explicit reading order. Fixed layout checks for unsupported objects such as
+tables, live blend effects, gradient fills, and interactive fields. Font
+distribution must be allowed by the font's license.
 Production EPUB embeds resolved image bytes. External links must be reachable or
 embedded first; unresolved links block production export. Reader compatibility
 still needs checking. Set the publication language explicitly when appropriate.
@@ -241,6 +244,34 @@ the input bytes and filename and returns records of scalar fields. These modules
 run with the CLI's permissions. Use modules you trust.
 
 ## Proof review and production references
+
+In **Pages → Production & books → Book delivery package**, choose a PDF
+preset, cover stock, and binding. The required cover dimensions use the
+assembled interior page count, including blanks inserted for right-hand
+openings. Supply a one-page cover project with the displayed trim and bleed,
+then approve those dimensions. A changed spine or wrap requires another review.
+
+The package contains an interior PDF, a separate cover PDF, a reflowable EPUB,
+and a JSON report. Recto checks the PDF page counts and the EPUB container
+before saving the ZIP. Save the book archive to retain the cover and delivery
+settings. The printer and ebook distributor still have their own acceptance
+checks for the delivered files.
+
+The preflight drawer groups identical findings and lists the affected pages.
+In **Links**, preview the impact of a replacement font or relinked image
+before applying it. The previews show cleared, introduced, and remaining
+findings against the current layout.
+
+For embedded PNG, JPEG, and WebP files, use **Image adjustments** for grayscale,
+levels, and a tone curve. The project retains the original bytes and editable
+settings. PDF and EPUB render the adjustments into their output copies. PDF
+applies adjustments before ICC conversion.
+
+**Vector fills and strokes** supports hatching with physical spacing, RGB or
+process-CMYK mesh grids, and patterned strokes. Canvas and PDF use the same
+geometry. PDF clips hatch lines and sampled mesh cells as vectors. IDML export
+flags these new effects for review, and fixed-layout EPUB reports unsupported
+fills before it saves a file.
 
 Open **Pages → Production & books → Compare proofs**. Download a clean review
 PDF, then load it alongside a revised or annotated copy. The comparison lists

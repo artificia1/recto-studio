@@ -13,6 +13,7 @@ import { exportDocumentToPdf, ExportOptions } from '../export/pdfExport';
 import { jsPDF } from 'jspdf';
 import { assembleBook } from './bookAssembly';
 import { publicationHeadings } from './publicationReferences';
+import type { BookReference } from './bookReferences';
 
 export interface BookChapter {
   id: string;
@@ -27,6 +28,7 @@ export interface RectoBook {
   title: string;
   styleSourceChapterId: string;
   chapters: BookChapter[];
+  references?: BookReference[];
   colorMode?: 'cmyk' | 'rgb';
   iccProfile?: string;
 }
@@ -143,6 +145,13 @@ export class BookEngine {
     book: RectoBook,
     loadChapterState: (filePath: string) => ProjectState
   ): UnifiedTocItem[] {
+    if (book.references) {
+      const combined = assembleBook(book, loadChapterState);
+      return publicationHeadings(combined).map(heading => ({
+        title: heading.title, level: heading.level, pageNumber: heading.pageNumber,
+        chapterTitle: book.chapters.findLast(chapter => chapter.startPageNumber <= heading.pageNumber)?.title || '',
+      }));
+    }
     const repaginated = this.repaginateBook(book, loadChapterState);
     const tocItems: UnifiedTocItem[] = [];
 

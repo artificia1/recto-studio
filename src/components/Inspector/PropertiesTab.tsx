@@ -10,6 +10,8 @@ const TableInspector = lazy(() => import('./TableInspector'));
 const TextInspector = lazy(() => import('./TextInspector'));
 const TextWrapInspector = lazy(() => import('./TextWrapInspector'));
 const GradientInspector = lazy(() => import('./GradientInspector'));
+const ImageAdjustmentsPanel = lazy(() => import('./ImageAdjustmentsPanel'));
+const VectorDecorationPanel = lazy(() => import('./VectorDecorationPanel'));
 
 interface PropertiesTabProps {
   state: ProjectState;
@@ -495,6 +497,9 @@ export function PropertiesTab({ state }: PropertiesTabProps) {
         onClick={() => stateManager.updateElement(selectedEl.id, shapeToPath(selectedEl))}>Convert to editable path</button></div>}
       {selectedEl.type === 'table' && <Suspense fallback={<p role="status">Loading table controls…</p>}><TableInspector element={selectedEl as TableElement} /></Suspense>}
       {selectedEl.type === 'path' && <VectorPathInspector element={selectedEl as VectorPathElement} />}
+      {(selectedEl.type === 'shape' || selectedEl.type === 'path') &&
+        <Suspense fallback={null}><VectorDecorationPanel element={selectedEl}
+          disabled={selectedEl.locked || !!state.layers.find(layer => layer.id === selectedEl.layerId)?.locked}/></Suspense>}
       {((selectedEl.type === 'shape' && selectedEl.shapeKind !== 'line') || (selectedEl.type === 'path' && selectedEl.closed)) &&
         <Suspense fallback={null}><GradientInspector key={selectedEl.id} element={selectedEl}
           disabled={selectedEl.locked || !!selectedEl.spotColor || !!state.layers.find(layer => layer.id === selectedEl.layerId)?.locked} /></Suspense>}
@@ -562,6 +567,7 @@ function ImageInspector({ element }: { element: ImageElement }) {
         onChange={handleFileChange}
       />
       {imageError && <p role="alert">{imageError}</p>}
+      <Suspense fallback={null}><ImageAdjustmentsPanel image={element}/></Suspense>
 
       {element.isPsd && element.psdLayers && element.psdLayers.length > 0 && (
         <div

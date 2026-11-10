@@ -5,6 +5,7 @@ import { cascadeStyles } from '../engine/styleInheritance';
 import { revisedStory } from '../engine/storyRevisions';
 import { profileBytes } from '../engine/iccProfiles';
 import { tableGrid } from '../engine/tableCells';
+import { explicitCmyk, rgbColor } from '../engine/inkColors';
 
 type Validator = (value: unknown, path: string) => void;
 type Schema = Record<string, Validator>;
@@ -76,6 +77,22 @@ const fillGradient = optional((value, path) => {
   object({ kind: choice('linear', 'radial'), start: point, end: point, stops: array(object({ offset: number, color: text })) })(value, path);
   if (!validGradient(value as FillGradient)) fail(path, 'invalid gradient geometry or colour stops');
 });
+const vectorEffects = {
+  strokePattern: optional(object({ dash: positive, gap: positive })),
+  decoration: optional((value, path) => {
+    const data = record(value, path);
+    if (data.kind === 'hatch') {
+      object({ color: text, angle: number, spacing: positive, weight: positive, crossed: boolean })(value, path);
+      if ((data.spacing as number) < 0.25 || (data.weight as number) > (data.spacing as number) ||
+        !(explicitCmyk(data.color as string) || rgbColor(data.color as string))) fail(path, 'invalid hatch geometry or color');
+    } else if (data.kind === 'mesh') {
+      object({ columns: count, rows: count, colors: array(text) })(value, path);
+      const columns = data.columns as number, rows = data.rows as number, colors = data.colors as string[];
+      if (columns < 2 || columns > 6 || rows < 2 || rows > 6 || colors.length !== columns * rows ||
+        !(colors.every(explicitCmyk) || colors.every(rgbColor))) fail(path, 'invalid mesh grid or mixed color spaces');
+    } else fail(path, 'unknown vector fill');
+  }),
+};
 const typography = { fontFamily: text, fontSizePt: positive };
 const grepRule = object({ id: identifier, pattern: text, color: optional(text), bold: optional(boolean), italic: optional(boolean) });
 const paragraphStyle = object({
@@ -125,11 +142,19 @@ const elementSchemas: Record<string, Schema> = {
     src: text, fitMode: choice('fill', 'fit', 'frameToContent', 'contentToFrame', 'center', 'stretch'),
     focalPoint: optional(object({ x: (value, path) => { number(value, path); if ((value as number) < 0 || (value as number) > 1) fail(path, 'must be between 0 and 1'); }, y: (value, path) => { number(value, path); if ((value as number) < 0 || (value as number) > 1) fail(path, 'must be between 0 and 1'); } })),
     borderColor: text, borderWidthMm: nonnegative, altText: optional(text), proxySrc: optional(text),
+    adjustments: optional((value, path) => {
+      object({ grayscale: optional(boolean), black: number, white: number, gamma: number,
+        curve: array(object({ input: number, output: number })) })(value, path);
+      const { black, white, gamma, curve } = value as import('../types').ImageAdjustments;
+      if (black < 0 || white > 255 || white <= black || gamma < 0.1 || gamma > 5 || curve.length > 8 ||
+        curve.some((point, index) => point.input <= (curve[index - 1]?.input || 0) ||
+          point.input >= 255 || point.output < 0 || point.output > 255)) fail(path, 'invalid image levels or curve');
+    }),
   },
-  shape: { shapeKind: choice('rectangle', 'ellipse', 'line'), fillColor: text, fillGradient, ...stroke },
+  shape: { shapeKind: choice('rectangle', 'ellipse', 'line'), fillColor: text, fillGradient, ...stroke, ...vectorEffects },
   path: {
     nodes: array(object({ x: number, y: number, handleIn: optional(point), handleOut: optional(point) })),
-    closed: boolean, fillColor: text, fillGradient, ...stroke,
+    closed: boolean, fillColor: text, fillGradient, ...stroke, ...vectorEffects,
     strokeCap: choice('butt', 'round', 'square'), strokeJoin: choice('miter', 'round', 'bevel'),
   },
   table: {

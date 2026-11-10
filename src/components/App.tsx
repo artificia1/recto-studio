@@ -321,7 +321,11 @@ export function App() {
     <div id="app" onDragOver={handleDragOver} onDrop={handleDrop}>
       {pendingManuscript && <Suspense fallback={null}><ManuscriptImportModal manuscript={pendingManuscript.story}
         fileName={pendingManuscript.fileName} frame={pendingManuscript.frame} state={state}
-        onClose={() => setPendingManuscript(null)} onPlace={content => {
+        onClose={() => setPendingManuscript(null)}
+        onUpdate={pendingManuscript.createFrame ? undefined : (content, notes) => {
+          stateManager.applyManuscriptUpdate(pendingManuscript.frame.id, pendingManuscript.revision, content, notes);
+          setPendingManuscript(null);
+        }} onPlace={content => {
           if (stateManager.getDocumentRevision() !== pendingManuscript.revision) {
             throw new Error('The document changed. Close this preview and place the manuscript again.');
           }

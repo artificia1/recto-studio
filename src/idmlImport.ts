@@ -58,10 +58,53 @@ export function extractXmlTags(xml: string, tagName: string): string[] {
 export function parseTransform(str: string | null | undefined): [number, number, number, number, number, number] {
   if (!str) return [1, 0, 0, 1, 0, 0];
   const parts = str.trim().split(/\s+/).map(Number);
-  if (parts.length >= 6 && !parts.some(isNaN)) {
+  if (parts.length === 6 && parts.every(Number.isFinite)) {
     return parts as [number, number, number, number, number, number];
   }
   return [1, 0, 0, 1, 0, 0];
+}
+
+function styleProperty(xml: string, header: string, name: string): string | undefined {
+  const value = extractXmlAttr(header, name) ?? xml.match(new RegExp(`<${name}\\b[^>]*>([^<]*)</${name}>`, 'i'))?.[1];
+  return value === undefined ? undefined : decodeStoryXml(value.trim());
+}
+
+function resolveParagraphStyleProperties(xml: string) {
+  const definitions = extractXmlTags(xml, 'ParagraphStyle').map((tag, index) => {
+    const header = tag.slice(0, tag.indexOf('>') + 1);
+    const property = (name: string) => styleProperty(tag, header, name);
+    const id = property('Self') || `#anonymous-${index}`;
+    const properties: Record<string, string> = {};
+    for (const key of ['AppliedFont', 'PointSize', 'Leading', 'Justification', 'FillColor', 'FillTint', 'DropCapLines']) {
+      const value = property(key);
+      if (value) properties[key] = value;
+    }
+    return { id, name: property('Name'), parentId: property('BasedOn'), properties };
+  });
+  const byId = new Map(definitions.map(def => [def.id, def]));
+  const resolved = new Map<string, Record<string, string>>();
+  for (const definition of definitions) {
+    const chain: typeof definitions = [];
+    const positions = new Map<string, number>();
+    let next: typeof definition | undefined = definition;
+    while (next && !resolved.has(next.id)) {
+      const cycleStart = positions.get(next.id);
+      if (cycleStart !== undefined) {
+        // Keep local values on cyclic styles. Descendants can still inherit from them.
+        for (const member of chain.slice(cycleStart)) resolved.set(member.id, member.properties);
+        break;
+      }
+      positions.set(next.id, chain.length);
+      chain.push(next);
+      next = next.parentId ? byId.get(next.parentId) : undefined;
+    }
+    for (const style of chain.reverse()) {
+      if (resolved.has(style.id)) continue;
+      const parent = style.parentId ? resolved.get(style.parentId) : undefined;
+      resolved.set(style.id, { ...parent, ...style.properties });
+    }
+  }
+  return definitions.map(({ id, name }) => ({ id, name, properties: resolved.get(id)! }));
 }
 
 export interface PageSpreadBox {
@@ -84,7 +127,7 @@ export function parseSpreadPages(
   defaultWidthMm: number,
   defaultHeightMm: number
 ): PageSpreadBox[] {
-  const pageMatches = spreadXml.match(/<Page\b[\s\S]*?<\/Page>/gi) || spreadXml.match(/<Page\b[^>]*\/>/gi) || [];
+  const pageMatches = extractXmlTags(spreadXml, 'Page');
   const pages: PageSpreadBox[] = [];
 
   let pNum = startPageNumber;
@@ -98,8 +141,8 @@ export function parseSpreadPages(
     const defaultHPt = defaultHeightMm / PT_TO_MM;
     const defaultWPt = defaultWidthMm / PT_TO_MM;
     const geomParts = (geomStr || `0 0 ${defaultHPt} ${defaultWPt}`).trim().split(/\s+/).map(Number);
-    const [y1, x1, y2, x2] = geomParts.length >= 4 && !geomParts.some(isNaN) ? geomParts : [0, 0, defaultHPt, defaultWPt];
-    const [a, b, c, d, tx, ty] = parseTransform(transStr);
+    const [y1, x1, y2, x2] = geomParts.length === 4 && geomParts.every(Number.isFinite) ? geomParts : [0, 0, defaultHPt, defaultWPt];
+    const [, , , , tx, ty] = parseTransform(transStr);
 
     const left = x1 + tx;
     const top = y1 + ty;
@@ -170,19 +213,19 @@ export function parseElementSpreadBounds(
 
   if (geomStr) {
     const parts = geomStr.trim().split(/\s+/).map(Number);
-    if (parts.length >= 4 && !parts.some(isNaN)) {
+    if (parts.length === 4 && parts.every(Number.isFinite)) {
       const [y1, x1, y2, x2] = parts;
-      const wx1 = a * x1 + c * y1 + tx;
-      const wy1 = b * x1 + d * y1 + ty;
-      const wx2 = a * x2 + c * y2 + tx;
-      const wy2 = b * x2 + d * y2 + ty;
-      const minX = Math.min(wx1, wx2);
-      const maxX = Math.max(wx1, wx2);
-      const minY = Math.min(wy1, wy2);
-      const maxY = Math.max(wy1, wy2);
+      const xTerms = [a * x1, a * x2];
+      const yTerms = [d * y1, d * y2];
+      const skewX = [c * y1, c * y2];
+      const skewY = [b * x1, b * x2];
+      const minX = Math.min(...xTerms) + Math.min(...skewX);
+      const maxX = Math.max(...xTerms) + Math.max(...skewX);
+      const minY = Math.min(...yTerms) + Math.min(...skewY);
+      const maxY = Math.max(...yTerms) + Math.max(...skewY);
       geomBoundsParsed = {
-        spreadLeft: minX,
-        spreadTop: minY,
+        spreadLeft: minX + tx,
+        spreadTop: minY + ty,
         widthPt: Math.max(10, maxX - minX),
         heightPt: Math.max(10, maxY - minY),
       };
@@ -192,27 +235,28 @@ export function parseElementSpreadBounds(
   // Check PathGeometry anchors
   const pathMatches = elXml.match(/<PathPointType\b[^>]*Anchor="([^"]+)"/gi);
   if (pathMatches && pathMatches.length > 0) {
-    const worldXs: number[] = [];
-    const worldYs: number[] = [];
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
 
     for (const pm of pathMatches) {
       const anchor = pm.match(/Anchor="([^"]+)"/)?.[1];
       if (anchor) {
         const [ax, ay] = anchor.trim().split(/\s+/).map(Number);
-        if (!isNaN(ax) && !isNaN(ay)) {
+        if (Number.isFinite(ax) && Number.isFinite(ay)) {
           const wx = a * ax + c * ay + tx;
           const wy = b * ax + d * ay + ty;
-          worldXs.push(wx);
-          worldYs.push(wy);
+          if (!Number.isFinite(wx) || !Number.isFinite(wy)) continue;
+          minX = Math.min(minX, wx);
+          maxX = Math.max(maxX, wx);
+          minY = Math.min(minY, wy);
+          maxY = Math.max(maxY, wy);
         }
       }
     }
 
-    if (worldXs.length > 0) {
-      const minX = Math.min(...worldXs);
-      const maxX = Math.max(...worldXs);
-      const minY = Math.min(...worldYs);
-      const maxY = Math.max(...worldYs);
+    if (minX !== Infinity) {
       const pathW = Math.max(10, maxX - minX);
       const pathH = Math.max(10, maxY - minY);
 
@@ -594,39 +638,39 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
   const stylesFile = files.get('Resources/Styles.xml');
   if (stylesFile) {
     const xml = textDecoder.decode(stylesFile);
-    const pStyleTags = extractXmlTags(xml, 'ParagraphStyle');
-
-    for (const tag of pStyleTags) {
-      const name = decodeStoryXml(extractXmlAttr(tag, 'Name') || '');
+    const usedIds = new Set(parsedStyles.map(style => style.id));
+    for (const { id, name, properties } of resolveParagraphStyleProperties(xml)) {
       if (!name || name.startsWith('$ID') || name === 'NormalParagraphStyle') continue;
 
-      const ptSize = parseFloat(extractXmlAttr(tag, 'PointSize') || '10');
-      const leadingPt = parseFloat(extractXmlAttr(tag, 'Leading') || '13');
-      const just = extractXmlAttr(tag, 'Justification') || 'LeftAlign';
+      const importedSize = parseFloat(properties.PointSize ?? '');
+      const ptSize = Number.isFinite(importedSize) && importedSize > 0 ? importedSize : 10;
+      const leadingPt = parseFloat(properties.Leading ?? '13');
+      const fillTint = parseFloat(properties.FillTint ?? '');
+      const just = properties.Justification || 'LeftAlign';
 
       let alignment: 'left' | 'center' | 'right' | 'justify' = 'left';
       if (just.includes('Center')) alignment = 'center';
       else if (just.includes('Right')) alignment = 'right';
       else if (just.includes('Just')) alignment = 'justify';
 
-      const styleId = `idml-style-${name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
-      if (!parsedStyles.some((s) => s.id === styleId)) {
-        parsedStyles.push({
-          id: styleId,
-          name,
-          fontFamily: decodeStoryXml(extractXmlAttr(tag, 'AppliedFont') || tag.match(/<AppliedFont\b[^>]*>([^<]+)<\/AppliedFont>/i)?.[1] || 'serif'),
-          fontSizePt: !isNaN(ptSize) ? ptSize : 10,
-          lineHeight: !isNaN(leadingPt) && !isNaN(ptSize) && ptSize > 0 ? Math.round((leadingPt / ptSize) * 100) / 100 : 1.3,
-          letterSpacingPt: 0,
-          color: extractXmlAttr(tag, 'FillColor') ? resolveIdmlColor(extractXmlAttr(tag, 'FillColor'), undefined, colorsMap) : '#1a1a1a',
-          alignment,
-          snapToBaseline: true,
-          dropCapLines: parseInt(extractXmlAttr(tag, 'DropCapLines') || '0') || 0,
-        });
-      }
-      const reference = extractXmlAttr(tag, 'Self');
-      const style = parsedStyles.find(item => item.id === styleId);
-      if (reference && style) styleRefs.set(reference, style);
+      const baseId = `idml-style-${name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+      let styleId = baseId;
+      for (let suffix = 2; usedIds.has(styleId); suffix++) styleId = `${baseId}-${suffix}`;
+      usedIds.add(styleId);
+      const style: ParagraphStyle = {
+        id: styleId,
+        name,
+        fontFamily: properties.AppliedFont || 'serif',
+        fontSizePt: ptSize,
+        lineHeight: Number.isFinite(leadingPt) && leadingPt > 0 ? Math.round((leadingPt / ptSize) * 100) / 100 : 1.3,
+        letterSpacingPt: 0,
+        color: properties.FillColor ? resolveIdmlColor(properties.FillColor, Number.isFinite(fillTint) ? fillTint : undefined, colorsMap) : '#1a1a1a',
+        alignment,
+        snapToBaseline: true,
+        dropCapLines: parseInt(properties.DropCapLines ?? '', 10) || 0,
+      };
+      parsedStyles.push(style);
+      styleRefs.set(id, style);
     }
   }
 
@@ -668,12 +712,9 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
       const storyGrepRules: { pattern: string; color: string; bold?: boolean; italic?: boolean }[] = [];
 
       for (const [rangeIndex, pr] of pRanges.entries()) {
-        const applied = extractXmlAttr(pr, 'AppliedParagraphStyle');
-        if (applied) {
-          const cleanName = applied.replace('ParagraphStyle/', '');
-          const match = styleRefs.get(applied) || parsedStyles.find((s) => s.name.toLowerCase() === cleanName.toLowerCase());
-          if (match && !detectedStyleId) detectedStyleId = match.id;
-        }
+        const applied = decodeStoryXml(extractXmlAttr(pr, 'AppliedParagraphStyle') || '');
+        const paragraphStyle = applied ? styleRefs.get(applied) || parsedStyles.find(style => style.name.toLowerCase() === applied.replace('ParagraphStyle/', '').toLowerCase()) : undefined;
+        if (paragraphStyle && !detectedStyleId) detectedStyleId = paragraphStyle.id;
 
         const just = extractXmlAttr(pr, 'Justification') || '';
         if (just.includes('Center')) detectedAlignment = 'center';
@@ -765,7 +806,6 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
           const last = richRuns.findLast(run => run.text.length);
           if (last?.text.endsWith('\n')) last.text = last.text.slice(0, -1);
         }
-        const paragraphStyle = applied ? styleRefs.get(applied) || parsedStyles.find(style => style.name.toLowerCase() === applied.replace('ParagraphStyle/', '').toLowerCase()) : undefined;
         // Preserve hard breaks as structured paragraph boundaries with the same run formatting.
         let currentRuns: StoryRun[] = [];
         for (const run of richRuns) run.text.split('\n').forEach((text, index) => {

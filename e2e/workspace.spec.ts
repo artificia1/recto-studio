@@ -84,6 +84,40 @@ test('preserves a Data Merge draft across closing and reopening the dialog', asy
     .toEqual(['{{Title}}', 'First record', 'Second record']);
 });
 
+test('saves editable image and vector effects through the inspector', async ({ page }) => {
+  const imageProject = projectFixture();
+  const photo = imageProject.spreads[0].elements[0];
+  const source = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 16;
+    const context = canvas.getContext('2d')!;
+    context.fillStyle = '#ff0000';
+    context.fillRect(0, 0, 16, 16);
+    return canvas.toDataURL();
+  });
+  Object.assign(photo, { type: 'image', src: source, fitMode: 'fit' });
+  await importProject(page, imageProject);
+  await page.getByText('Image adjustments', { exact: true }).click();
+  await page.getByLabel('Grayscale', { exact: true }).check();
+  const edited = (await savedProject(page)).spreads[0].elements[0];
+  expect(edited.adjustments.grayscale).toBe(true);
+  expect(edited.src).toBe(source);
+
+  const shapeProject = projectFixture();
+  shapeProject.settings.title = 'Vector effects';
+  Object.assign(shapeProject.spreads[0].elements[0], { type: 'shape', shapeKind: 'rectangle', fillColor: '#ebebeb',
+    strokeColor: '#111111', strokeWidthMm: 1, strokeDash: 'solid' });
+  await importProject(page, shapeProject);
+  await page.getByText('Vector fills and strokes', { exact: true }).click();
+  await page.getByLabel('Vector fill', { exact: true }).selectOption('mesh');
+  await page.getByRole('button', { name: 'Start CMYK mesh' }).click();
+  await page.getByLabel('Patterned stroke', { exact: true }).check();
+  const decorated = (await savedProject(page)).spreads[0].elements[0];
+  expect(decorated.decoration).toMatchObject({ kind: 'mesh', columns: 2, rows: 2 });
+  expect(decorated.decoration.colors[0]).toMatch(/^cmyk\(/);
+  expect(decorated.strokePattern).toEqual({ dash: 3, gap: 2 });
+});
+
 test('drags artwork from the first spread to page 48 and undoes the transfer', async ({ page }) => {
   const project = projectFixture();
   const photo = project.spreads[0].elements[0];
@@ -167,6 +201,9 @@ test('loads a licensed replacement font and replaces document references', async
   await expect(page.getByRole('status').filter({ hasText: 'Font loaded.' })).toBeVisible();
   const family = await page.getByLabel('Use loaded font').inputValue();
   expect(family).toBeTruthy();
+  await page.getByRole('button', { name: 'Preview font replacement' }).click();
+  await expect(page.getByText('Affected document pages: 1.')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Preflight change preview' })).toBeVisible();
   await page.getByRole('button', { name: 'Replace font throughout document' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Font references replaced.' })).toBeVisible();
   expect((await savedProject(page)).spreads[0].elements[0].fontFamily).toBe(family);

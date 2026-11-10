@@ -16,7 +16,9 @@ test('records cold startup resources and timings', async ({ page }) => {
       })),
     };
   });
-  expect(metrics.javaScript.some(item => /jspdf|pdfExport|epubExport|idmlImport|CoverSpineModal|BookletImpositionModal/.test(item.file))).toBe(false);
+  expect(metrics.javaScript.some(item => /jspdf|pdfExport|epubExport|idmlImport|CoverSpineModal|BookletImpositionModal|CollaborationDialog|NewProjectMenu|ExportMenu/.test(item.file))).toBe(false);
   expect(metrics.javaScript.reduce((total, item) => total + item.decodedBytes, 0)).toBeLessThan(1_000_000);
   console.log('STARTUP_METRICS', JSON.stringify(metrics));
+  await page.getByTitle('Live Peer-to-Peer Real-Time Collaboration').click();
+  await expect(page.getByRole('heading', { name: 'Real-Time P2P WebRTC Collaboration' })).toBeVisible();
 });

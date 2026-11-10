@@ -2718,6 +2718,42 @@ export class SpreadCanvas {
     return null;
   }
 
+  private readonly adjustedImages = new WeakMap<HTMLImageElement | HTMLCanvasElement, Map<string, HTMLImageElement | HTMLCanvasElement>>();
+  private vectorDecorationRenderer?: typeof import('./engine/vectorDecoration').drawCanvasDecoration;
+  private loadingVectorDecorations = false;
+
+  private drawDecoration(ctx: CanvasRenderingContext2D, element: ShapeElement | VectorPathElement, x: number, y: number, scale: number, path?: Path2D) {
+    if (!element.decoration || element.spotColor) return;
+    if (this.vectorDecorationRenderer) this.vectorDecorationRenderer(ctx, element.decoration, x, y, element.width, element.height, scale, path);
+    else if (!this.loadingVectorDecorations) {
+      this.loadingVectorDecorations = true;
+      void import('./engine/vectorDecoration').then(module => {
+        this.vectorDecorationRenderer = module.drawCanvasDecoration;
+        this.render();
+      }).catch(() => { /* A later redraw can retry loading the optional tool. */ })
+        .finally(() => { this.loadingVectorDecorations = false; });
+    }
+  }
+
+  private adjustedBitmap(bitmap: HTMLImageElement | HTMLCanvasElement, settings: NonNullable<ImageElement['adjustments']>) {
+    let variants = this.adjustedImages.get(bitmap);
+    if (!variants) {
+      variants = new Map();
+      this.adjustedImages.set(bitmap, variants);
+    }
+    const key = JSON.stringify(settings), current = variants.get(key);
+    if (current) return current;
+    if (variants.size >= 4) variants.delete(variants.keys().next().value!);
+    variants.set(key, bitmap);
+    const pending = variants;
+    void import('./engine/imageAdjustments').then(({ adjustedCanvasBitmap }) => {
+      if (!pending.has(key)) return;
+      pending.set(key, adjustedCanvasBitmap(bitmap, settings));
+      this.render();
+    }).catch(() => { /* Keep the source preview when browser pixel reads are unavailable. */ });
+    return bitmap;
+  }
+
   private renderMissingImagePlaceholder(
     ctx: CanvasRenderingContext2D,
     x: number,
@@ -2951,12 +2987,19 @@ export class SpreadCanvas {
         ctx.strokeStyle = displayGradientColor(shape.strokeColor || '#000000');
         ctx.lineWidth = (shape.strokeWidthMm || 0.3) * pxPerMm;
 
-        if (shape.strokeDash === 'dashed') {
+        if (shape.strokePattern) {
+          ctx.setLineDash([shape.strokePattern.dash * pxPerMm, shape.strokePattern.gap * pxPerMm]);
+        } else if (shape.strokeDash === 'dashed') {
           ctx.setLineDash([6, 4]);
         }
 
         if (shape.shapeKind === 'rectangle') {
           if (gradient || shape.fillColor && shape.fillColor !== 'transparent') ctx.fillRect(elScreenX, elScreenY, elScreenW, elScreenH);
+          if (shape.decoration && !shape.spotColor) {
+            const outline = new Path2D();
+            outline.rect(elScreenX, elScreenY, elScreenW, elScreenH);
+            this.drawDecoration(ctx, shape, elScreenX, elScreenY, pxPerMm, outline);
+          }
           if (shape.strokeWidthMm > 0) ctx.strokeRect(elScreenX, elScreenY, elScreenW, elScreenH);
         } else if (shape.shapeKind === 'ellipse') {
           ctx.beginPath();
@@ -2970,6 +3013,7 @@ export class SpreadCanvas {
             Math.PI * 2
           );
           if (gradient || shape.fillColor && shape.fillColor !== 'transparent') ctx.fill();
+          this.drawDecoration(ctx, shape, elScreenX, elScreenY, pxPerMm);
           if (shape.strokeWidthMm > 0) ctx.stroke();
         } else if (shape.shapeKind === 'line') {
           ctx.beginPath();
@@ -3005,7 +3049,8 @@ export class SpreadCanvas {
           if (!proof) { ctx.fillStyle = '#f8f8f8'; ctx.fillRect(elScreenX, elScreenY, elScreenW, elScreenH); }
 
           if (img.src || img.proxySrc) {
-            const displayBitmap = this.getDisplayImage(img.src, quality, img.proxySrc, img.assetId);
+            const bitmap = this.getDisplayImage(img.src, quality, img.proxySrc, img.assetId);
+            const displayBitmap = bitmap && img.adjustments ? this.adjustedBitmap(bitmap, img.adjustments) : bitmap;
             if (displayBitmap) {
               const bW = displayBitmap.width;
               const bH = displayBitmap.height;
@@ -3154,7 +3199,6 @@ export class SpreadCanvas {
 
         const obstacles = publicationWrapObjects(state, spread).filter(other => other.id !== text.id && other.pageId === text.pageId);
 
-        const footnotes = stateManager.getFootnotesForElement(text.id);
         const fnSettings = state.settings.footnoteSettings || {
           numberingStyle: 'superscript',
           separatorRuleWidthMm: 30,
@@ -3165,7 +3209,7 @@ export class SpreadCanvas {
         const fnFontSizePx = (fnFontSizePt * (96 / 72)) * state.zoom;
         const fnLineSpacingPx = fnFontSizePx * 1.35;
         const fnRuleGapPx = 6 * state.zoom;
-        const noteLayout = layoutFrameNotes(state, text, footnotes);
+        const noteLayout = layoutFrameNotes(state, text);
         const totalFootnoteHeightPx = noteLayout.height * pxPerMm;
 
         let isOverflowing = false;
@@ -3465,7 +3509,7 @@ export class SpreadCanvas {
           }
         }
 
-        if (footnotes.length > 0) {
+        if (noteLayout.lines.length > 0) {
           const fnStartY = elScreenY + elScreenH - paddingPx - totalFootnoteHeightPx;
           const ruleThicknessPx = (fnSettings.separatorRuleThicknessPt || 0.5) * (96 / 72) * state.zoom;
           const maxRuleW = (fnSettings.separatorRuleWidthMm || 30) * pxPerMm;
@@ -4775,6 +4819,7 @@ export class SpreadCanvas {
       ctx.fillStyle = gradient ? canvasGradient(ctx, gradient, elScreenX, elScreenY, el.width * pxPerMm, el.height * pxPerMm, monochrome) : displayGradientColor(el.fillColor);
       ctx.fill();
     }
+    if (el.closed) this.drawDecoration(ctx, el, elScreenX, elScreenY, pxPerMm);
 
     // Stroke
     if (el.strokeWidthMm > 0 && el.strokeColor !== 'transparent') {
@@ -4782,7 +4827,9 @@ export class SpreadCanvas {
       ctx.lineWidth = Math.max(0.5, el.strokeWidthMm * pxPerMm);
       ctx.lineCap = el.strokeCap || 'round';
       ctx.lineJoin = el.strokeJoin || 'round';
-      if (el.strokeDash === 'dashed') {
+      if (el.strokePattern) {
+        ctx.setLineDash([el.strokePattern.dash * pxPerMm, el.strokePattern.gap * pxPerMm]);
+      } else if (el.strokeDash === 'dashed') {
         ctx.setLineDash([4 * pxPerMm, 3 * pxPerMm]);
       } else {
         ctx.setLineDash([]);

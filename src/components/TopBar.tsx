@@ -16,6 +16,9 @@ import { BookletImpositionModal, CoverSpineModal } from './LazyPrintDialogs';
 import { lazy, Suspense } from 'preact/compat';
 const AppUpdater = lazy(() => import('./AppUpdater').then(module => ({ default: module.AppUpdater })));
 const ScribusImportDialog = lazy(() => import('./ScribusImportDialog'));
+const NewProjectMenu = lazy(() => import('./NewProjectMenu'));
+const ExportMenu = lazy(() => import('./ExportMenu'));
+const CollaborationDialog = lazy(() => import('./CollaborationDialog'));
 const DataMergeDialog = lazy(() => import('./DataMergeDialog'));
 const VersionHistoryDialog = lazy(() => import('./VersionHistoryDialog'));
 
@@ -357,6 +360,12 @@ export function TopBar({
     if (isDesktop()) await savePublicationFile(result.filename, result.buffer, 'application/epub+zip');
   });
 
+  const handleExportFixedEpub = () => runExport(async () => {
+    const { exportFixedEpub } = await import('../export/fixedEpub');
+    const name = state.settings.title.replace(/[^\p{L}\p{N} _-]/gu, '').trim() || 'publication';
+    await savePublicationFile(`${name}-fixed.epub`, await exportFixedEpub(state), 'application/epub+zip');
+  });
+
   const handleExportFlipbook = () => runExport(async () => {
     const { exportDocumentToFlipbook } = await import('../flipbookExport');
     const result = exportDocumentToFlipbook(state, { download: !isDesktop() });
@@ -691,70 +700,7 @@ export function TopBar({
               ▾
             </button>
           </div>
-          {showNewMenu && (
-            <div className="top-dropdown-menu new-dropdown-menu">
-              <button
-                className="top-dropdown-item"
-                onClick={() => handleCreateBlank('A4', true)}
-                title="Create blank facing spread magazine (210 x 297 mm)"
-              >
-                <div>
-                  <div className="dropdown-item-title">Blank Editorial Magazine (A4)</div>
-                  <div className="dropdown-item-sub">210 × 297 mm · Facing Pages · Pristine Canvas</div>
-                </div>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => handleCreateBlank('Book-Trade-6x9', true)}
-                title="Create blank fiction / trade paperback book (6 x 9 in)"
-              >
-                <div>
-                  <div className="dropdown-item-title">Blank Novel / Trade Book (6 × 9 in)</div>
-                  <div className="dropdown-item-sub">152.4 × 228.6 mm · Standard Fiction & Nonfiction</div>
-                </div>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => handleCreateBlank('US-Letter', true)}
-                title="Create blank North American standard publication (8.5 x 11 in)"
-              >
-                <div>
-                  <div className="dropdown-item-title">Blank Magazine (US Letter)</div>
-                  <div className="dropdown-item-sub">8.5 × 11 in · North American Standard</div>
-                </div>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => handleCreateBlank('Digest-5.5x8.5', true)}
-                title="Create blank digest journal / essay book (5.5 x 8.5 in)"
-              >
-                <div>
-                  <div className="dropdown-item-title">Blank Digest (5.5 × 8.5 in)</div>
-                  <div className="dropdown-item-sub">139.7 × 215.9 mm · Literary Journal & Memoir</div>
-                </div>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => handleCreateBlank('Zine-A5', true)}
-                title="Create blank compact zine or chapbook (148 x 210 mm)"
-              >
-                <div>
-                  <div className="dropdown-item-title">Blank Zine / Pamphlet (A5)</div>
-                  <div className="dropdown-item-sub">148 × 210 mm · Underground Press & Poetry</div>
-                </div>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => handleCreateBlank('A4', false)}
-                title="Create blank single page poster or flyer (210 x 297 mm)"
-              >
-                <div>
-                  <div className="dropdown-item-title">Single Sheet / Poster (A4)</div>
-                  <div className="dropdown-item-sub">210 × 297 mm · Non-facing Single Pages</div>
-                </div>
-              </button>
-            </div>
-          )}
+          {showNewMenu && <Suspense fallback={null}><NewProjectMenu onCreate={handleCreateBlank} /></Suspense>}
         </div>
 
         {/* Quick Save Project */}
@@ -1168,126 +1114,11 @@ export function TopBar({
               ▾
             </button>
           </div>
-          {showExportMenu && (
-            <div className="top-dropdown-menu export-dropdown-menu">
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowExportMenu(false);
-                  handleExportPdfClean();
-                }}
-              >
-                <div>
-                  <div className="dropdown-item-title">Standard PDF (Clean / Proof)</div>
-                  <div className="dropdown-item-sub">Exact trim size, perfect for digital sharing & screen</div>
-                </div>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowExportMenu(false);
-                  handleExportPdfPress();
-                }}
-              >
-                <div>
-                  <div className="dropdown-item-title">Print PDF (Bleed & Marks)</div>
-                  <div className="dropdown-item-sub">CMYK, 3mm Bleed, Crop Marks, Color Bars, Registration</div>
-                </div>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowExportMenu(false);
-                  handleExportEpub();
-                }}
-              >
-                <div>
-                  <div className="dropdown-item-title">Export EPUB 3</div>
-                  <div className="dropdown-item-sub">Reflowable/Fixed package for Kindle & Apple Books</div>
-                </div>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowExportMenu(false);
-                  handleExportFlipbook();
-                }}
-              >
-                <div>
-                  <div className="dropdown-item-title">Export Web Flipbook</div>
-                  <div className="dropdown-item-sub">Single-file HTML5 with 3D page-flip animations</div>
-                </div>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={handleExportSpreadPng}
-                title="Export current spread as high-resolution PNG image"
-              >
-                <div>
-                  <div className="dropdown-item-title">Export Spread as Image (PNG)...</div>
-                  <div className="dropdown-item-sub">High-resolution raster preview for client review and sharing</div>
-                </div>
-              </button>
-              <div className="dropdown-divider" />
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowExportMenu(false);
-                  handlePackageDocument();
-                }}
-              >
-                <div>
-                  <div className="dropdown-item-title">Package Document for Print...</div>
-                  <div className="dropdown-item-sub">Bundle project, PDF, assets, and instructions into ZIP</div>
-                </div>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowExportMenu(false);
-                  handleExportIdml();
-                }}
-              >
-                <div>
-                  <div className="dropdown-item-title">Adobe InDesign Package (.idml)</div>
-                  <div className="dropdown-item-sub">Two-way exchange package for agency handoff</div>
-                </div>
-              </button>
-              <button className="top-dropdown-item" onClick={() => { setShowExportMenu(false); handleExportIdml(true); }}>
-                <div>
-                  <div className="dropdown-item-title">InDesign Validation Kit (.zip)</div>
-                  <div className="dropdown-item-sub">IDML and a native round-trip check script</div>
-                </div>
-              </button>
-              <div className="dropdown-divider" />
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowExportMenu(false);
-                  handleOpenImposition();
-                }}
-                title="Export imposed duplex printer spreads"
-              >
-                <div>
-                  <div className="dropdown-item-title">Export Imposed Booklet PDF...</div>
-                  <div className="dropdown-item-sub">Duplex signature printer spreads with crop marks and creep compensation</div>
-                </div>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowExportMenu(false);
-                  handleOpenCoverSpine();
-                }}
-                title="Export print-ready wrap jacket cover"
-              >
-                <div>
-                  <div className="dropdown-item-title">Export Full Wrap Cover PDF...</div>
-                  <div className="dropdown-item-sub">Complete jacket with calculated spine, fold guides, and bleed</div>
-                </div>
-              </button>
-            </div>
-          )}
+          {showExportMenu && <Suspense fallback={null}><ExportMenu onClose={() => setShowExportMenu(false)} actions={{
+            proof: handleExportPdfClean, press: handleExportPdfPress, epub: handleExportEpub, fixed: handleExportFixedEpub,
+            flipbook: handleExportFlipbook, image: handleExportSpreadPng, package: handlePackageDocument,
+            idml: () => handleExportIdml(), kit: () => handleExportIdml(true), booklet: handleOpenImposition, cover: handleOpenCoverSpine,
+          }} /></Suspense>}
         </div>
 
         {/* Immersive Fullscreen Mode (Removes Mobile/Tablet Browser Navigation Chrome) */}
@@ -1309,308 +1140,11 @@ export function TopBar({
         setCommitMessage={setCommitMessage} onClose={() => setShowVersionModal(false)} handleCreateSnapshot={handleCreateSnapshot}
         handleSelectSnapshot={handleSelectSnapshot} handleDeleteSnapshot={handleDeleteSnapshot} handleRollback={handleRollback} /></Suspense>}
 
-      {showCollabModal && (
-        <div
-          className="modal-overlay"
-          onClick={() => setShowCollabModal(false)}
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(0, 0, 0, 0.7)',
-            zIndex: 1000,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <div
-            className="modal-card"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: '#202020',
-              border: '1px solid #444',
-              borderRadius: '8px',
-              width: '500px',
-              maxWidth: '92vw',
-              padding: '20px',
-              color: '#fff',
-              boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
-            }}
-          >
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: '16px',
-                borderBottom: '1px solid #333',
-                paddingBottom: '12px',
-              }}
-            >
-              <div>
-                <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>Real-Time P2P WebRTC Collaboration</h3>
-                <span style={{ fontSize: '11px', color: '#888' }}>
-                  Peer-to-peer live co-editing across different machines and networks
-                </span>
-              </div>
-              <button
-                className="icon-btn"
-                onClick={() => setShowCollabModal(false)}
-                style={{ fontSize: '16px', color: '#888' }}
-              >
-                ✕
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '11px', color: '#aaa', marginBottom: '4px' }}>
-                  Session Room ID:
-                </label>
-                <input
-                  type="text"
-                  value={collabRoom}
-                  disabled={isConnected}
-                  onInput={(e) => setCollabRoom((e.target as HTMLInputElement).value)}
-                  style={{
-                    width: '100%',
-                    background: isConnected ? '#181818' : '#242424',
-                    color: '#fff',
-                    border: '1px solid #444',
-                    borderRadius: '4px',
-                    padding: '6px 10px',
-                    fontSize: '12px',
-                    boxSizing: 'border-box',
-                  }}
-                />
-              </div>
-
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                  <label style={{ fontSize: '11px', color: '#aaa' }}>
-                    Room Password (Required to Secure Access):
-                  </label>
-                  {collabPassword.trim() && (
-                    <span style={{ fontSize: '10px', color: '#10b981', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                      [Protected Session]
-                    </span>
-                  )}
-                </div>
-                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    placeholder="Set password to block random users from joining..."
-                    value={collabPassword}
-                    disabled={isConnected}
-                    onInput={(e) => setCollabPassword((e.target as HTMLInputElement).value)}
-                    style={{
-                      width: '100%',
-                      background: isConnected ? '#181818' : '#242424',
-                      color: '#fff',
-                      border: '1px solid #444',
-                      borderRadius: '4px',
-                      padding: '6px 52px 6px 10px',
-                      fontSize: '12px',
-                      boxSizing: 'border-box',
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword((p) => !p)}
-                    style={{
-                      position: 'absolute',
-                      right: '6px',
-                      background: 'transparent',
-                      border: 'none',
-                      color: '#9ca3af',
-                      cursor: 'pointer',
-                      fontSize: '11px',
-                      padding: '2px 6px',
-                    }}
-                    title={showPassword ? 'Hide password' : 'Show password'}
-                  >
-                    {showPassword ? 'Hide' : 'Show'}
-                  </button>
-                </div>
-                <span style={{ fontSize: '10px', color: '#777', marginTop: '3px', display: 'block' }}>
-                  {collabPassword.trim()
-                    ? 'Only peers entering this exact password can connect, synchronize, and edit.'
-                    : 'Set a password to lock this session, or leave blank for open collaboration.'}
-                </span>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '11px', color: '#aaa', marginBottom: '4px' }}>
-                  Your Designer Handle:
-                </label>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input
-                    type="text"
-                    value={collabUserName}
-                    onInput={(e) => {
-                      const name = (e.target as HTMLInputElement).value;
-                      setCollabUserName(name);
-                      collabSession.setUserName(name);
-                    }}
-                    style={{
-                      flex: 1,
-                      background: '#242424',
-                      color: '#fff',
-                      border: '1px solid #444',
-                      borderRadius: '4px',
-                      padding: '6px 10px',
-                      fontSize: '12px',
-                    }}
-                  />
-                  <div
-                    style={{
-                      width: '24px',
-                      height: '24px',
-                      borderRadius: '50%',
-                      background: collabSession.getUserColor(),
-                      border: '2px solid #fff',
-                    }}
-                    title="Your cursor & badge color"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Connection Status & Toggle */}
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                padding: '12px',
-                background: '#181818',
-                borderRadius: '6px',
-                border: '1px solid #333',
-                marginBottom: '16px',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div
-                  style={{
-                    width: '10px',
-                    height: '10px',
-                    borderRadius: '50%',
-                    background: isConnected ? '#10b981' : '#6b7280',
-                    boxShadow: isConnected ? '0 0 8px #10b981' : 'none',
-                  }}
-                />
-                <span style={{ fontSize: '12px', fontWeight: 600 }}>
-                  {isConnected
-                    ? `Connected to '${collabSession.getSessionId()}' ${collabSession.isPasswordProtected() ? '(Protected)' : '(Public)'} · Yjs collaboration`
-                    : 'Disconnected'}
-                </span>
-              </div>
-              <button
-                className={isConnected ? 'action-btn' : 'action-btn-primary'}
-                onClick={handleToggleCollab}
-                style={{
-                  color: isConnected ? '#ef4444' : undefined,
-                  borderColor: isConnected ? '#7f1d1d' : undefined,
-                }}
-              >
-                {isConnected ? 'Disconnect' : 'Connect Session'}
-              </button>
-            </div>
-            {collabSession.getProtocolError() && <p role="alert">{collabSession.getProtocolError()}</p>}
-
-            {/* Active Peers List */}
-            {isConnected && (
-              <div style={{ marginBottom: '16px' }}>
-                <div style={{ fontSize: '11px', color: '#aaa', marginBottom: '6px' }}>
-                  Active Collaborators ({collabPeers.length + 1}):
-                </div>
-                <div
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '6px',
-                    maxHeight: '120px',
-                    overflowY: 'auto',
-                  }}
-                >
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '6px 10px',
-                      background: '#242424',
-                      borderRadius: '4px',
-                      fontSize: '11px',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <div
-                        style={{
-                          width: '10px',
-                          height: '10px',
-                          borderRadius: '50%',
-                          background: collabSession.getUserColor(),
-                        }}
-                      />
-                      <span>{collabUserName} (You)</span>
-                    </div>
-                    <span style={{ color: '#10b981', fontSize: '10px' }}>Spread {state.activeSpreadIndex + 1}</span>
-                  </div>
-
-                  {collabPeers.map((peer) => (
-                    <div
-                      key={peer.peerId}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '6px 10px',
-                        background: '#242424',
-                        borderRadius: '4px',
-                        fontSize: '11px',
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <div
-                          style={{
-                            width: '10px',
-                            height: '10px',
-                            borderRadius: '50%',
-                            background: peer.color,
-                          }}
-                        />
-                        <span>{peer.name}</span>
-                      </div>
-                      <span style={{ color: '#93c5fd', fontSize: '10px' }}>
-                        Spread {peer.spreadIndex + 1}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <button
-                className="action-btn"
-                onClick={handleCopyShareLink}
-                title="Copy shareable room link to clipboard"
-              >
-                {copiedLink
-                  ? (collabPassword.trim() ? 'Copied Secure Link!' : 'Copied Link!')
-                  : (collabPassword.trim() ? 'Copy Secure Share Link' : 'Copy Share Link')}
-              </button>
-              <button className="action-btn" onClick={() => setShowCollabModal(false)}>
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {showCollabModal && <Suspense fallback={null}><CollaborationDialog {...{
+        collabRoom, setCollabRoom, collabPassword, setCollabPassword, showPassword, setShowPassword,
+        collabUserName, setCollabUserName, collabPeers, isConnected, copiedLink, currentSpreadNum,
+        handleToggleCollab, handleCopyShareLink,
+      }} onClose={() => setShowCollabModal(false)} /></Suspense>}
 
       {!onOpenImposition && showImpositionModal && (
         <BookletImpositionModal

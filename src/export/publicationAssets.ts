@@ -54,7 +54,7 @@ export function fullImageSource(image: ImageElement): string {
 }
 
 /** Snapshot and freeze external image bytes before export; no proxy or browser-local URL escapes. */
-export async function prepareExportAssets(source: ProjectState, fetchExternal = false, includeHidden = false): Promise<ProjectState> {
+export async function prepareExportAssets(source: ProjectState, fetchExternal = false, includeHidden = false, renderAdjustments = false): Promise<ProjectState> {
   const state = structuredClone(source);
   const hiddenEditions = hiddenEditionIds(state);
   const masters = masterDependencies(state.masterSpreads, state.spreads.map(spread => spread.masterSpreadId));
@@ -67,9 +67,10 @@ export async function prepareExportAssets(source: ProjectState, fetchExternal = 
   for (const image of images) {
     let src = fullImageSource(image);
     if (!src) continue; // Empty design placeholders are handled by target-specific preflight.
-    let asset = cache.get(src);
+    const adjustments = renderAdjustments ? image.adjustments : undefined;
+    const key = adjustments ? JSON.stringify([src, adjustments]) : src;
+    let asset = cache.get(key);
     if (!asset) {
-      const key = src;
       if (!src.startsWith('data:')) {
         if (!fetchExternal && !src.startsWith('blob:')) throw new Error(`Image “${image.name || image.id}” is linked externally. Embed or relink it before export.`);
         const url = new URL(src);
@@ -86,11 +87,16 @@ export async function prepareExportAssets(source: ProjectState, fetchExternal = 
         for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
         src = `data:application/octet-stream;base64,${uint8ArrayToBase64(bytes)}`;
       }
+      if (adjustments) {
+        const { adjustedRasterSource } = await import('../engine/imageAdjustments');
+        src = await adjustedRasterSource(src, adjustments);
+      }
       asset = embeddedAsset(src); total += asset.bytes.length;
       if (total > 256 * 1024 * 1024) throw new Error('Embedded export images exceed 256 MB. Export a smaller document or reduce image sizes.');
       cache.set(key, asset);
     }
     image.src = asset.dataUrl; delete image.proxySrc; delete image.assetId;
+    if (adjustments) delete image.adjustments;
   }
   return state;
 }

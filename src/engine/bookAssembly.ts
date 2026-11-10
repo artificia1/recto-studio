@@ -1,5 +1,6 @@
-import type { ProjectState } from '../types';
+import type { ProjectState, StoryRun } from '../types';
 import type { RectoBook } from './bookEngine';
+import { resolveBookMarkers } from './bookReferences';
 
 /** Assemble editable chapter snapshots before rendering; never copy empty PDF pages. */
 export function assembleBook(book: RectoBook, load: (path: string) => ProjectState): ProjectState {
@@ -13,6 +14,7 @@ export function assembleBook(book: RectoBook, load: (path: string) => ProjectSta
   output.settings.title = book.title;
   output.selectedElementId = null; output.selectedElementIds = []; output.activeSpreadIndex = 0;
   let pageNumber = 1;
+  const chapterIds = new Map<string, Map<string, string>>();
   chapters.forEach((original, index) => {
     if (original.settings.widthMm !== output.settings.widthMm || original.settings.heightMm !== output.settings.heightMm || original.settings.bleedMm !== output.settings.bleedMm) {
       throw new Error('Book chapters must use the same page size and bleed.');
@@ -37,6 +39,7 @@ export function assembleBook(book: RectoBook, load: (path: string) => ProjectSta
     };
     const state = remap(original) as ProjectState;
     const chapter = book.chapters[index];
+    chapterIds.set(chapter.id, ids);
     if (chapter.forceRectoOpening && pageNumber % 2 === 0) {
       output.spreads.push({ id: `book-blank-${index}`, spreadIndex: output.spreads.length, elements: [], pages: [{ id: `book-blank-page-${index}`, pageNumber: pageNumber++, side: 'left' }] });
     }
@@ -70,5 +73,14 @@ export function assembleBook(book: RectoBook, load: (path: string) => ProjectSta
     }
   });
   output.activeLayerId = output.layers[0]?.id || '';
-  return output;
+  const references = new Map<string, StoryRun['reference']>();
+  for (const reference of book.references || []) {
+    const ids = chapterIds.get(reference.chapterId);
+    const targetParagraphId = reference.paragraphId ? ids?.get(reference.paragraphId) : undefined;
+    const targetElementId = ids?.get(reference.elementId);
+    if (reference.paragraphId ? targetParagraphId : targetElementId) {
+      references.set(reference.key, { targetElementId: targetElementId || '', targetParagraphId, format: reference.format });
+    }
+  }
+  return resolveBookMarkers(output, references);
 }

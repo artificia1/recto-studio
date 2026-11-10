@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { bookEngine, RectoBook } from '../src/engine/bookEngine';
+import { assembleBook } from '../src/engine/bookAssembly';
+import { readBookArchive } from '../src/engine/bookArchive';
 import { ProjectState, Page, Spread, TextElement, ParagraphStyle } from '../src/types';
 
 describe('Multi-Document Book Engine (.rectobook / .indb synchronization)', () => {
@@ -96,6 +98,54 @@ describe('Multi-Document Book Engine (.rectobook / .indb synchronization)', () =
       pan: { x: 0, y: 0 },
     };
   };
+
+  it('updates a formatted book reference after a revised chapter moves its heading', () => {
+    const book = bookEngine.createBook('Collected essays', [
+      { title: 'Introduction', filePath: 'intro' }, { title: 'Methods', filePath: 'methods' },
+    ]);
+    const intro = createMockChapterState(1, 1, 'See page [[book:methods]].');
+    const source = intro.spreads[0].elements[0] as TextElement;
+    source.storyContent = { version: 1, paragraphs: [{ id: 'intro-heading', runs: [
+      { text: 'See page ' }, { text: '[[book:', bold: true }, { text: 'methods]]' }, { text: '.' },
+    ] }] };
+    const methods = createMockChapterState(2, 1, 'Methods');
+    methods.layers = intro.layers = [];
+    const target = methods.spreads[0].elements[0] as TextElement;
+    target.storyContent = { version: 1, paragraphs: [{ id: 'methods-heading', runs: [{ text: 'Methods' }] }] };
+    book.references = [{ key: 'methods', chapterId: book.chapters[1].id, elementId: target.id, paragraphId: 'methods-heading', format: 'page' }];
+    const load = (path: string) => path === 'intro' ? intro : methods;
+    const assembled = () => assembleBook(book, load).spreads[0].elements[0] as TextElement;
+    expect(assembled().text).toBe('See page 3.');
+
+    const oldFrameId = target.id;
+    target.id = 'moved-heading-frame';
+    target.pageId = 'methods-revised-page';
+    methods.spreads.push({ id: 'methods-revised', spreadIndex: 1, elements: methods.spreads[0].elements.splice(0),
+      pages: [{ id: target.pageId, pageNumber: 2, side: 'left' }] });
+    expect(book.references[0].elementId).toBe(oldFrameId);
+    const updated = assembled();
+    expect(updated.text).toBe('See page 4.');
+    expect(updated.storyContent!.paragraphs[0].runs[1]).toMatchObject({ text: '4', bold: true });
+    expect(bookEngine.generateUnifiedBookToc(book, load).map(entry => [entry.title, entry.pageNumber]))
+      .toEqual([['See page 4.', 1], ['Methods', 4]]);
+    expect(source.text).toContain('[[book:methods]]');
+
+    methods.spreads[1].elements = [];
+    expect(() => assembleBook(book, load)).toThrow(/book reference.*methods/i);
+  });
+
+  it('upgrades snapshot archives and round-trips stable chapter references', () => {
+    const state = createMockChapterState(1, 1, 'Opening');
+    const parse = (text: string) => JSON.parse(text) as ProjectState;
+    const legacy = readBookArchive(JSON.stringify({ version: 1, title: 'Saved book', chapters: [{ name: 'opening.recto', recto: true, state }] }), parse);
+    expect(legacy.references).toEqual([]);
+    const references = [{ key: 'opening', chapterId: legacy.chapters[0].id, elementId: 'c1-el-h1', format: 'page' }];
+    const archive = { ...legacy, version: 2, references };
+    const reopened = readBookArchive(JSON.stringify(archive), parse);
+    expect(reopened.references).toEqual(references);
+    expect(reopened.chapters[0].id).toBe(legacy.chapters[0].id);
+    expect(() => readBookArchive(JSON.stringify({ ...archive, references: [...references, ...references] }), parse)).toThrow('Invalid book reference list');
+  });
 
   it('creates a new Recto Book manifest with default style source', () => {
     const book = bookEngine.createBook('Encyclopedia of Watchmaking', [

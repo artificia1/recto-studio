@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { StateManager } from '../src/state/stateManager';
 import { instantiateMasterItem, resolveMaster } from '../src/engine/masterInheritance';
 import { prepareExportAssets } from '../src/export/publicationAssets';
-import { spreadGrid, workspaceDrop } from '../src/engine/spatialWorkspace';
+import { spreadGrid, visibleSpreadCells, workspaceDrop } from '../src/engine/spatialWorkspace';
 import { exportDocumentToPdf } from '../src/export/pdfExport';
 import { generateEpubPackage } from '../src/epubExport';
 import { fontManager } from '../src/fontManager';
@@ -150,6 +150,17 @@ describe('spatial, master and arrangement systems', () => {
     manager.addSpread(); const state = manager.getState(), grid = spreadGrid(state, 4), cell = grid.cells[1];
     expect(workspaceDrop(state, 4, cell.x + state.settings.widthMm + 12, cell.y + 20)).toMatchObject({ pageId: cell.spread.pages[1].id, x: 12, y: 20, pasteboard: false });
     expect(workspaceDrop(state, 4, cell.x - 10, cell.y + 20)?.pasteboard).toBe(true);
+  });
+  it('culls spread rows near the end of a long document without dropping visible columns', () => {
+    const state = manager.getState();
+    const spread = state.spreads[0];
+    const grid = spreadGrid({ ...state, spreads: Array.from({ length: 201 }, () => spread) }, 4);
+    const target = grid.cells[196];
+    const viewport = { x: -10, y: target.y - 1, width: target.width + 70, height: grid.rowHeight + 2 };
+
+    expect(visibleSpreadCells(grid, viewport).map(cell => cell.index)).toEqual([196, 200]);
+    expect(visibleSpreadCells(grid, { ...viewport, y: grid.height + 50 })).toEqual([]);
+    expect(visibleSpreadCells(grid, { ...viewport, y: -viewport.height - 1 })).toEqual([]);
   });
   it('assigns each member of a transferred group to its physical facing page', () => {
     manager.addElement(shape('a', 10)); manager.addElement(shape('b', 30)); manager.selectElements(['a', 'b']); manager.groupSelection();

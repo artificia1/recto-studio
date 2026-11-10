@@ -38,3 +38,4 @@
 .story-revisions .publication-actions { justify-content: flex-start; }
 .story-revisions .sm-btn { flex: 0 0 auto; width: auto; padding: 5px 12px; }
 .revision-comparison { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 12px; }
+.manuscript-preview .revision-comparison pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 14em; overflow: auto; }

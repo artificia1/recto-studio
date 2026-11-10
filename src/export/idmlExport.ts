@@ -31,6 +31,11 @@ function escapeXml(str: string): string {
 }
 
 export function exportDocumentToIdml(state: ProjectState): Uint8Array {
+  const unsupported = [...state.spreads, ...state.masterSpreads].flatMap(spread => spread.elements).filter(element =>
+    !element.pasteboard && !element.editorialOnly && (
+      (element.type === 'image' && element.adjustments) ||
+      ((element.type === 'shape' || element.type === 'path') && (element.decoration || element.strokePattern))));
+  if (unsupported.length) throw new Error(`IDML cannot preserve the image adjustments or vector effects on ${unsupported.length} object(s). Use PDF for the final appearance.`);
   const files: Record<string, string | Uint8Array> = {};
   const swatches = new Map<string, string>();
   const gradients = new Map<string, string>();

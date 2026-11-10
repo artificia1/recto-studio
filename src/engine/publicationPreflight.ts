@@ -37,8 +37,10 @@ export function publicationPreflight(state: ProjectState, target: 'editor' | 'ep
   }
   for (const frame of frames) {
     if (frame.generated?.kind === 'caption' && !captions.has(frame.id)) issue('MISSING_REFERENCE', 'This caption no longer has visible artwork. Move or remove the caption before export.', frame.id);
-    if (layoutFrameNotes(state, frame).height > frame.height - 2 * (frame.paddingMm ?? 2) - frame.fontSizePt * 25.4 / 72) {
-      issue('NOTE_OVERFLOW', 'Footnotes leave no room for their reference line. Shorten the notes, enlarge the frame, or convert them to endnotes.', frame.id);
+    const notes = layoutFrameNotes(state, frame);
+    if (target !== 'epub' && (notes.unplacedAnchors || (!frame.nextFrameId && notes.remaining) ||
+      notes.height > frame.height - 2 * (frame.paddingMm ?? 2) - frame.fontSizePt * 25.4 / 72)) {
+      issue('NOTE_OVERFLOW', 'Footnote text does not fit beside its anchor or at the end of its story. Add a continuation frame, enlarge the frame, or convert the note to an endnote.', frame.id);
     }
   }
   for (const spread of state.spreads) for (const element of spread.elements) if (element.type === 'image') {
@@ -46,6 +48,17 @@ export function publicationPreflight(state: ProjectState, target: 'editor' | 'ep
     if (!element.src) issue('MISSING_ASSET', 'This image frame has no source. Place an image or remove the placeholder before production export.', element.id);
     else if (!element.src.startsWith('data:')) issue('EXTERNAL_ASSET', 'This image is not embedded. Relink it from a local file, or let export download it; unavailable links will block export.', element.id, 'warning');
     if (!element.decorative && !element.altText?.trim()) issue('MISSING_ALT_TEXT', 'Add an image description or mark this artwork as decorative before production EPUB export.', element.id, target === 'epub' ? 'error' : 'warning');
+    if (element.adjustments && !/^data:image\/(?:png|jpeg|webp);/i.test(element.src)) {
+      issue('PUBLICATION_FLOW', 'Image adjustments require an embedded PNG, JPEG or WebP image.', element.id);
+    }
+  }
+  for (const spread of [...state.spreads, ...state.masterSpreads]) for (const artwork of spread.elements) {
+    if ((artwork.type !== 'shape' && artwork.type !== 'path') || !artwork.decoration || excluded(artwork)) continue;
+    if (artwork.spotColor) issue('PUBLICATION_FLOW', 'Mesh gradients and hatching require process or RGB colors.', artwork.id);
+    if (artwork.decoration.kind === 'hatch' && Math.hypot(artwork.width, artwork.height) / (2 * artwork.decoration.spacing) > 2048) {
+      issue('PUBLICATION_FLOW', 'Increase hatch spacing for this large frame.', artwork.id);
+    }
+    if (target === 'epub') issue('PUBLICATION_FLOW', 'This EPUB edition uses the standard fill for mesh or hatch artwork.', artwork.id, 'warning');
   }
   if (state.publicationError) issue('PUBLICATION_FLOW', state.publicationError);
   const reviewedTables = new Set<string>();

@@ -1,5 +1,5 @@
 import { instantiateMasterItem, resolveMaster } from '../engine/masterInheritance';
-import { layoutFrameNotes, notesForFrame, publicationSnapshot, publicationText } from '../engine/publicationReferences';
+import { layoutFrameNotes, publicationSnapshot, publicationText } from '../engine/publicationReferences';
 import { publicationPreflight } from '../engine/publicationPreflight';
 import { embeddedAsset, prepareExportAssets } from './publicationAssets';
 import { registerPdfFonts, usedPdfFonts } from './pdfFonts';
@@ -27,6 +27,7 @@ import { prepareManagedPdf } from './iccPdf';
 import { publicationWrapObjects, wrappedPlainContent } from '../engine/publicationWrap';
 import { formatOpenTypeText } from '../engine/legacyTypography';
 import { drawVectorPathPdf } from './vectorPathPdf';
+import { drawPdfDecoration } from './pdfVectorDecoration';
 import { drawPdfGradient, hasPdfGradients } from './pdfGradients';
 import { documentColor } from './pdfColors';
 import type { PdfContentTag } from './pdfStructure';
@@ -69,7 +70,7 @@ export async function exportDocumentToPdf(
   if (options.accessibility && options.spreadRange && options.spreadRange !== 'all') throw new Error('Accessible PDF currently exports the whole publication so linked tables and story structure remain complete.');
   if (options.transparency === 'flatten' && (options.tagged || options.accessibility)) throw new Error('Use separate tagged screen and flattened print exports; a flattened print PDF is not an accessible screen edition.');
   await fontManager.restoreFonts(source.embeddedFonts);
-  const state = publicationSnapshot(await prepareExportAssets(source, options.fetchExternalAssets ?? typeof window !== 'undefined'));
+  const state = publicationSnapshot(await prepareExportAssets(source, options.fetchExternalAssets ?? typeof window !== 'undefined', false, true));
   const publicationIssues = publicationPreflight(state, options.strict ? 'print' : 'editor');
   const tableErrors = publicationIssues.filter(issue => issue.code === 'TABLE_LAYOUT' && issue.severity === 'error');
   if (tableErrors.length) throw new Error(tableErrors.map(issue => `Page ${issue.pageNumber}: ${issue.message}`).join('\n'));
@@ -286,14 +287,22 @@ export async function exportDocumentToPdf(
         }
         applyCmykDrawColor(doc, shape.strokeColor);
         if (stroke) doc.setLineWidth(shape.strokeWidthMm);
-        doc.setLineDashPattern(shape.strokeDash === 'dashed' ? [2, 1] : [], 0);
+        doc.setLineDashPattern(shape.strokePattern ? [shape.strokePattern.dash, shape.strokePattern.gap] : shape.strokeDash === 'dashed' ? [2, 1] : [], 0);
         const paint = fill && stroke ? 'FD' : fill ? 'F' : stroke ? 'S' : undefined;
 
         if (gradient) drawPdfGradient(doc, gradient, elX, elY, shape.width, shape.height, () => {
           if (shape.shapeKind === 'rectangle') doc.rect(elX, elY, shape.width, shape.height, null);
           else doc.ellipse(elX + shape.width / 2, elY + shape.height / 2, shape.width / 2, shape.height / 2, null);
         });
-        if (shape.shapeKind === 'rectangle') {
+        if (shape.decoration && shape.shapeKind !== 'line' && !shape.spotColor) {
+          const trace = () => {
+            if (shape.shapeKind === 'rectangle') doc.rect(elX, elY, shape.width, shape.height, null);
+            else doc.ellipse(elX + shape.width / 2, elY + shape.height / 2, shape.width / 2, shape.height / 2, null);
+          };
+          if (fill && shape.decoration.kind === 'hatch') { trace(); doc.fill(); }
+          drawPdfDecoration(doc, shape.decoration, elX, elY, shape.width, shape.height, trace);
+          if (stroke) { trace(); doc.stroke(); }
+        } else if (shape.shapeKind === 'rectangle') {
           if (paint) doc.rect(elX, elY, shape.width, shape.height, paint);
         } else if (shape.shapeKind === 'ellipse') {
           if (paint) doc.ellipse(elX + shape.width / 2, elY + shape.height / 2, shape.width / 2, shape.height / 2, paint);
@@ -329,7 +338,6 @@ export async function exportDocumentToPdf(
         const padding = text.paddingMm ?? 0;
         const availableWidth = Math.max(2, text.width - (padding * 2));
 
-        const footnotes = notesForFrame(state, text);
         const fnSettings = state.settings.footnoteSettings || {
           numberingStyle: 'superscript',
           separatorRuleWidthMm: 30,
@@ -338,7 +346,7 @@ export async function exportDocumentToPdf(
         };
         const fnFontSizePt = fnSettings.fontSizePt || 8;
         const fnLineHeightMm = fnFontSizePt * 0.3527 * 1.35;
-        const noteLayout = layoutFrameNotes(state, text, footnotes);
+        const noteLayout = layoutFrameNotes(state, text);
         const totalFnHtMm = noteLayout.height;
         const availableHeight = Math.max(0, text.height - (padding * 2) - totalFnHtMm);
 
@@ -472,7 +480,7 @@ export async function exportDocumentToPdf(
         }
 
         }
-        if (footnotes.length > 0) {
+        if (noteLayout.lines.length > 0) {
           const fnStartY = elY + text.height - padding - totalFnHtMm;
           const ruleWidthMm = Math.min(noteLayout.columnWidth * 0.45, fnSettings.separatorRuleWidthMm || 30);
 

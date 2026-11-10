@@ -1262,11 +1262,11 @@ export class StateManager {
       if (width <= 0 || height <= 0) throw new Error('Page margins leave no room for text.');
       while (true) {
         const found = this.findElementById(tail.id)!;
-        const notes = this.getFootnotesForElement(tail.id);
+        const notes = layoutFrameNotes(this.state, tail);
         const layout = layoutStory(tail.textContent!, tail, this.state.paragraphStyles, this.state.characterStyles,
-          undefined, layoutFrameNotes(this.state, tail).height,
+          undefined, notes.height,
           { obstacles: found.spread.elements, baselineGrid: this.state.settings.baselineGrid });
-        if (!layout.overset) break;
+        if (!layout.overset && !notes.remaining) break;
         if (added >= maxPages) throw new Error(`This story needs more than ${maxPages} additional pages. No pages were added.`);
         const insertionIndex = this.state.spreads.indexOf(found.spread) + 1;
         const pageNumber = found.spread.pages[found.spread.pages.length - 1].pageNumber + 1;
@@ -1305,7 +1305,10 @@ export class StateManager {
         }
         this.state.spreads.splice(insertionIndex, 0, newSpread);
         this.reflowStory(head.id);
-        if ((tail.storyStart || 0) <= previousStart && added > 1) throw new Error('The page cannot fit a line of this story. Increase the page size or reduce its text size.');
+        if ((tail.storyStart || 0) <= previousStart && added > 1 &&
+          (!notes.remaining || layoutFrameNotes(this.state, tail).remaining >= notes.remaining)) {
+          throw new Error('The page cannot fit more of this story or its notes. Increase the page size or reduce its text size.');
+        }
       }
       if (added) {
         this.renumberPages();
@@ -1423,6 +1426,28 @@ export class StateManager {
     this.reflowStory(head.id);
     this.pushHistory();
     this.notify();
+  }
+
+  public applyManuscriptUpdate(frameId: string, expectedRevision: number, content: StoryContent,
+    notes: { id: string; kind: 'footnote' | 'endnote'; text: string }[]) {
+    if (this.documentRevision !== expectedRevision) throw new Error('The document changed. Open a fresh manuscript preview.');
+    const head = this.assertStoryEditable(frameId);
+    const backup = structuredClone(this.state);
+    try {
+      const runs = (story: StoryContent) => story.paragraphs.flatMap(paragraph => paragraph.runs);
+      const prior = runs(contentOf(head)), updated = runs(content);
+      const previousNotes = new Set(prior.map(run => run.noteId));
+      const previousIndex = new Set(prior.map(run => run.indexId));
+      const keptNotes = new Set(updated.map(run => run.noteId));
+      const keptIndex = new Set(updated.map(run => run.indexId));
+      this.state.settings.footnotes = [...this.getFootnotes().filter(note => !previousNotes.has(note.id) || keptNotes.has(note.id)),
+        ...notes.map(note => ({ ...note, number: 1, anchorVersion: 1 as const, elementId: head.id, pageId: head.pageId }))];
+      this.state.indexEntries = this.state.indexEntries?.filter(entry => !previousIndex.has(entry.id) || keptIndex.has(entry.id));
+      head.storyContent = structuredClone(content);
+      head.rawStoryText = storyText(content);
+      this.reflowStory(head.id);
+      this.pushHistory(); this.notify();
+    } catch (error) { this.state = backup; throw error; }
   }
 
   public proposeStoryRevision(frameId: string, before: StoryContent, start: number, end: number, replacement: string, author: string, note = '') {
@@ -2762,9 +2787,9 @@ export class StateManager {
   return 0;
 }
 
-  public runPreflightCheck(): PreflightIssue[] {
+  public runPreflightCheck(snapshot = this.state): PreflightIssue[] {
     const issues: PreflightIssue[] = [];
-    const settings = this.state.settings;
+    const settings = snapshot.settings;
     const pageWidthMm = settings.widthMm;
     const pageHeightMm = settings.heightMm;
     const bleedMm = settings.bleedMm ?? 3;
@@ -2772,7 +2797,7 @@ export class StateManager {
     let hasSeenH1 = false;
     let lastHeadingLevel = 0;
 
-    this.state.spreads.forEach((spread, spreadIdx) => {
+    snapshot.spreads.forEach((spread, spreadIdx) => {
       for (const el of spread.elements) {
         if (el.pasteboard) continue;
         const page = spread.pages.find((p) => p.id === el.pageId) || spread.pages[0];
@@ -2803,7 +2828,7 @@ export class StateManager {
             }
             const totalLinesCapacity = maxLinesPerCol * cols;
 
-            const overset = textEl.textContent ? layoutStory(textEl.textContent, textEl, this.state.paragraphStyles, this.state.characterStyles, undefined, layoutFrameNotes(this.state, textEl).height,
+            const overset = textEl.textContent ? layoutStory(textEl.textContent, textEl, snapshot.paragraphStyles, snapshot.characterStyles, undefined, layoutFrameNotes(snapshot, textEl).height,
               { obstacles: spread.elements, baselineGrid: settings.baselineGrid }).overset
               : approxRenderedLines > totalLinesCapacity || textContent.length > totalCapacity * 1.15;
             if (overset) {
@@ -2837,7 +2862,9 @@ export class StateManager {
               pageNumber,
               elementId: el.id,
             });
-          } else if (imgEl.src.startsWith('data:image') && imgEl.src.length < 250 && imgEl.width > 15) {
+          } else if (!imgEl.src.startsWith('data:image/svg+xml') && (imgEl.originalWidth && imgEl.originalHeight
+            ? Math.min(imgEl.originalWidth / imgEl.width, imgEl.originalHeight / imgEl.height) * 25.4 < 220
+            : imgEl.src.startsWith('data:image') && imgEl.src.length < 250 && imgEl.width > 15)) {
             issues.push({
               id: `preflight-lowres-${spreadIdx}-${el.id}`,
               severity: 'warning',
@@ -2923,7 +2950,7 @@ export class StateManager {
         if (el.type === 'text') {
           const textEl = el as TextElement;
           if (textEl.paragraphStyleId) {
-            const style = this.state.paragraphStyles.find((s) => s.id === textEl.paragraphStyleId);
+            const style = snapshot.paragraphStyles.find((s) => s.id === textEl.paragraphStyleId);
             const tag = style?.pdfTag;
             if (tag && /^H[1-6]$/i.test(tag)) {
               const level = parseInt(tag.substring(1), 10);
@@ -3043,7 +3070,7 @@ export class StateManager {
       }
     });
 
-    return [...issues, ...publicationPreflight(this.state).filter(issue => !(((issue.code === 'MISSING_ASSET' && issues.some(existing => existing.elementId === issue.elementId && existing.severity === 'error')) || (issue.code === 'MISSING_ALT_TEXT' && issues.some(existing => existing.elementId === issue.elementId && existing.code === issue.code)))))];
+    return [...issues, ...publicationPreflight(snapshot).filter(issue => !(((issue.code === 'MISSING_ASSET' && issues.some(existing => existing.elementId === issue.elementId && existing.severity === 'error')) || (issue.code === 'MISSING_ALT_TEXT' && issues.some(existing => existing.elementId === issue.elementId && existing.code === issue.code)))))];
   }
 
   public autoFixPreflightIssue(issue: PreflightIssue): boolean {
@@ -3603,6 +3630,7 @@ export class StateManager {
     if (note.elementId && this.getElementById(note.elementId)) this.assertStoryEditable(note.elementId);
     if (updates.text !== undefined) note.text = updates.text;
     if (updates.kind !== undefined) note.kind = updates.kind;
+    this.refreshPublicationReferences(false);
     this.pushHistory(); this.notify();
   }
 
@@ -3763,6 +3791,7 @@ export class StateManager {
       }),
       ...updates,
     };
+    this.refreshPublicationReferences(false);
     this.pushHistory();
     this.notify();
   }

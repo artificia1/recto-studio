@@ -1,6 +1,7 @@
 import type { RefObject } from 'preact';
 import type { PreflightIssue } from '../types';
 import { stateManager } from '../state';
+import { groupPreflightIssues } from '../engine/preflightReview';
 
 export default function PreflightDrawer({ issues, drawerRef, onClose }: {
   issues: PreflightIssue[];
@@ -65,9 +66,12 @@ export default function PreflightDrawer({ issues, drawerRef, onClose }: {
             </div>
           </div>
         ) : (
-          issues.map((issue) => (
+          groupPreflightIssues(issues).map(([key, group]) => <details key={key} open={group.length === 1}>
+            <summary>{group[0].code} · {group.length} {group.length === 1 ? 'finding' : 'findings'} · Pages {[...new Set(group.map(issue => issue.pageNumber))].sort((a, b) => a - b).join(', ')}</summary>
+            {group.length > 1 && <p>{group[0].message}</p>}
+            {group.map((issue, index) => (
             <div
-              key={issue.id}
+              key={`${issue.id}-${index}`}
               className="preflight-item"
               style={{
                 borderLeft: `3px solid ${issue.severity === 'error' ? '#e63946' : '#f4a261'}`,
@@ -101,7 +105,8 @@ export default function PreflightDrawer({ issues, drawerRef, onClose }: {
                 </button>
               </div>
             </div>
-          ))
+            ))}
+          </details>)
         )}
       </div>
     </div>

@@ -2,6 +2,9 @@ import { useRef, useState } from 'preact/hooks';
 import { stateManager } from '../../state';
 import { ProjectState, AssetLink } from '../../types';
 import { lazy, Suspense } from 'preact/compat';
+import { reviewPreflightChange } from '../../engine/preflightReview';
+import { PreflightChangeSummary } from '../PreflightChangeSummary';
+import type { readPlacedImage } from '../../engine/placedImage';
 const DataBindingsPanel = lazy(() => import('./DataBindingsPanel'));
 const DocumentFontsPanel = lazy(() => import('./DocumentFontsPanel'));
 
@@ -13,8 +16,11 @@ export function LinksTab({ state }: LinksTabProps) {
   const links = stateManager.getAssetLinks();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const targetImage = useRef<ReturnType<typeof stateManager.getElementById>>();
+  const relinkRequest = useRef(0);
   const [message, setMessage] = useState('');
   const [embedding, setEmbedding] = useState(false);
+  const [preview, setPreview] = useState<{ id: string; revision: number; image: Awaited<ReturnType<typeof readPlacedImage>>;
+    result: ReturnType<typeof reviewPreflightChange> }>();
 
   const lowResCount = links.filter((l) => l.isLowRes).length;
 
@@ -23,6 +29,7 @@ export function LinksTab({ state }: LinksTabProps) {
   };
 
   const handleRelinkClick = (elementId: string) => {
+    relinkRequest.current++;
     targetImage.current = stateManager.getElementById(elementId);
     fileInputRef.current?.click();
   };
@@ -33,13 +40,27 @@ export function LinksTab({ state }: LinksTabProps) {
     input.value = '';
     const image = targetImage.current;
     if (!file || !image) return;
+    const request = ++relinkRequest.current;
+    setPreview(undefined);
+    const revision = stateManager.getDocumentRevision();
     try {
-      const changed = stateManager.getElementById(image.id) === image && await stateManager.registerImageAsset(image.id, file);
-      if (targetImage.current === image) setMessage(changed
-        ? 'Image relinked. Full image bytes will be saved with the project.'
-        : 'The image frame changed or is locked. Select it and try again.');
+      const { readPlacedImage } = await import('../../engine/placedImage');
+      const replacement = await readPlacedImage(file);
+      if (request !== relinkRequest.current || targetImage.current !== image) return;
+      if (stateManager.getDocumentRevision() !== revision || stateManager.getElementById(image.id) !== image) {
+        throw new Error('The document changed. Select the replacement again.');
+      }
+      const snapshot = structuredClone(stateManager.getState());
+      const target = snapshot.spreads.flatMap(spread => spread.elements).find(element => element.id === image.id);
+      if (target?.type !== 'image' || target.locked || snapshot.layers.find(layer => layer.id === target.layerId)?.locked) {
+        throw new Error('Unlock the image and its layer before relinking.');
+      }
+      Object.assign(target, replacement, { assetId: undefined, actualDpi: undefined, equation: undefined });
+      setPreview({ id: target.id, revision, image: replacement,
+        result: reviewPreflightChange(stateManager.runPreflightCheck(), stateManager.runPreflightCheck(snapshot)) });
+      setMessage('');
     } catch (error) {
-      if (targetImage.current === image) setMessage(error instanceof Error ? error.message : String(error));
+      if (request === relinkRequest.current && targetImage.current === image) setMessage(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -54,6 +75,22 @@ export function LinksTab({ state }: LinksTabProps) {
         finally { setEmbedding(false); }
       }}>{embedding ? 'Embedding…' : 'Embed linked images'}</button>
       {message && <p role="status" style={{ fontSize: '11px', lineHeight: 1.5 }}>{message}</p>}
+      {preview && <section aria-label="Image relink review">
+        <p>Replacement: {preview.image.name}</p>
+        <PreflightChangeSummary result={preview.result}/>
+        <button className="sm-btn" onClick={() => {
+          if (stateManager.getDocumentRevision() !== preview.revision) {
+            setMessage('The document changed. Select the replacement again.');
+            setPreview(undefined);
+            return;
+          }
+          const { src, originalWidth, originalHeight, ...metadata } = preview.image;
+          const changed = stateManager.relinkAsset(preview.id, src, { ...metadata, width: originalWidth, height: originalHeight });
+          setMessage(changed ? 'Image relinked.' : 'The image frame changed or is locked.');
+          setPreview(undefined);
+        }}>Apply image relink</button>
+        <button className="sm-btn" onClick={() => setPreview(undefined)}>Cancel image relink</button>
+      </section>}
       {/* Hidden file input for relinking */}
       <input
         type="file"

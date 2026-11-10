@@ -1,11 +1,14 @@
 import type { Footnote, ProjectState, StoryContent, StoryRun, TextElement } from '../types';
 import { plainStory, sliceStory, storyText } from './storyContent';
 import { pageLabel } from './pageLabels';
-import { layoutStory, measureStoryText } from './storyLayout';
+import { layoutStory } from './storyLayout';
 import { publicationWrapObjects } from './publicationWrap';
 import { hierarchicalIndex } from './indexLayout';
 import { applyEditionVisibility } from './publicationEditions';
 import { publicationCaptions } from './publicationCaptions';
+import { composeFootnotes, footnoteGeometry, wrapFootnote, type NoteContinuation } from './footnoteFlow';
+
+const composedFootnotes = new WeakMap<TextElement, { state: ProjectState; layout: ReturnType<typeof composeFootnotes> }>();
 
 export const noteMarker = (number: number) => String(number).replace(/\d/g, digit => '⁰¹²³⁴⁵⁶⁷⁸⁹'[Number(digit)]);
 export const textFrames = (state: ProjectState) => state.spreads.flatMap(spread => spread.elements).filter((item): item is TextElement => item.type === 'text');
@@ -81,6 +84,7 @@ export function publicationHeadings(state: ProjectState): PublicationHeading[] {
 }
 
 export function notesForFrame(state: ProjectState, frame: TextElement): Footnote[] {
+  if (!state.settings.footnotes?.length) return [];
   const runs = (frame.textContent || frame.storyContent)?.paragraphs.flatMap(paragraph => paragraph.runs) || [];
   const ids = new Set(runs.map(run => run.noteId).filter(Boolean));
   return (state.settings.footnotes || []).filter(note => note.kind !== 'endnote' &&
@@ -99,21 +103,38 @@ export function reflowStoryState(state: ProjectState, frameId: string) {
   const content = head.storyContent || plainStory(head.rawStoryText ?? chain.map(frame => frame.text).join('\n\n'), head.paragraphStyleId);
   head.storyContent = content; head.rawStoryText = storyText(content);
   let offset = 0;
+  let pending: NoteContinuation[] = [];
+  const documentHasNotes = !!state.settings.footnotes?.length;
   for (const [index, frame] of chain.entries()) {
     const remaining = sliceStory(content, offset, head.rawStoryText.length);
     const spread = state.spreads.find(spread => spread.elements.some(element => element.id === frame.id));
     const options = { obstacles: spread ? publicationWrapObjects(state, spread) : [], baselineGrid: state.settings.baselineGrid };
     let reserved = 0;
     let layout = layoutStory(remaining, frame, state.paragraphStyles, state.characterStyles, undefined, reserved, options);
-    for (let pass = 0; pass < 8; pass++) {
-      const required = layoutFrameNotes(state, { ...frame, textContent: sliceStory(remaining, 0, layout.consumed) }).height;
-      if (required <= reserved + 0.001) break;
-      reserved = required;
-      layout = layoutStory(remaining, frame, state.paragraphStyles, state.characterStyles, undefined, reserved, options);
+    let fragments: ReturnType<typeof composeFootnotes> | undefined;
+    if (documentHasNotes) {
+      const lastFrame = index === chain.length - 1;
+      const tailNotes = lastFrame ? notesForFrame(state, { ...frame, textContent: remaining }) : [];
+      for (let pass = 0; pass <= 8; pass++) {
+        const visible = sliceStory(remaining, 0, layout.consumed);
+        const notes = notesForFrame(state, { ...frame, textContent: visible });
+        if (!notes.length && !pending.length && !reserved && !tailNotes.length) { fragments = undefined; break; }
+        fragments = composeFootnotes(state, frame, visible, layout.lines, notes, pending);
+        fragments.unplacedAnchors += Math.max(0, tailNotes.length - notes.length);
+        if (fragments.height <= reserved + 0.001 || pass === 8) break;
+        reserved = fragments.height;
+        layout = layoutStory(remaining, frame, state.paragraphStyles, state.characterStyles, undefined, reserved, options);
+      }
     }
     const end = index === chain.length - 1 ? head.rawStoryText.length : offset + layout.consumed;
     frame.textContent = sliceStory(content, offset, end); frame.text = head.rawStoryText.slice(offset, end);
     frame.storyStart = offset; frame.storyEnd = end;
+    if (fragments) {
+      composedFootnotes.set(frame, { state, layout: { ...fragments, height: Math.max(reserved, fragments.height) } });
+      pending = fragments.carry;
+    } else {
+      composedFootnotes.delete(frame);
+    }
     if (index) { delete frame.storyContent; delete frame.rawStoryText; }
     offset = end;
   }
@@ -154,17 +175,14 @@ export function migrateLegacyNotes(state: ProjectState) {
 }
 
 /** Shared physical layout for state flow, canvas and PDF. Long notes wrap by measured width. */
-export function layoutFrameNotes(state: ProjectState, frame: TextElement, notes = notesForFrame(state, frame)) {
-  const settings = state.settings.footnoteSettings;
-  const size = settings?.fontSizePt || 8;
-  const family = settings?.fontFamily || frame.fontFamily;
-  const columns = frame.spanColumns ? 1 : Math.max(1, frame.splitColumns || frame.columns || 1);
-  const gutter = frame.columnGutterMm ?? 4;
-  const width = Math.max(1, (frame.width - 2 * (frame.paddingMm ?? 2) - gutter * (columns - 1)) / columns);
-  const lineHeight = size * 25.4 / 72 * 1.35;
-  const style = { fontFamily: family, fontSizePt: size, letterSpacingPt: 0, color: frame.color };
+export function layoutFrameNotes(state: ProjectState, frame: TextElement, notes?: Footnote[]) {
+  const composed = composedFootnotes.get(frame);
+  if (composed?.state === state) return composed.layout;
+  notes ??= notesForFrame(state, frame);
+  const { size, family, columns, gutter, columnWidth: width, lineHeight } = footnoteGeometry(state, frame);
   const lines: { text: string; noteId: string; column: number; x: number; y: number }[] = [];
-  if (!notes.length) return { lines, size, family, lineHeight, height: 0, columnWidth: width };
+  const base = { lines, size, family, lineHeight, columnWidth: width, remaining: 0, unplacedAnchors: 0 };
+  if (!notes.length) return { ...base, height: 0 };
   const content = frame.textContent || frame.storyContent || plainStory(frame.text);
   const anchors = new Map<string, number>();
   let offset = 0;
@@ -173,23 +191,7 @@ export function layoutFrameNotes(state: ProjectState, frame: TextElement, notes 
     offset++;
   }
   let placements = new Map<string, number>();
-  const wrapped = new Map<string, string[]>();
-  for (const note of notes) {
-    const noteLines: string[] = [];
-    for (const paragraph of `${note.number}. ${note.text}`.split('\n')) {
-      let line = '';
-      for (const token of paragraph.match(/\s+|\S+/g) || []) {
-        if (line && !/^\s+$/.test(token) && measureStoryText(line + token, style) > width) { noteLines.push(line.trimEnd()); line = ''; }
-        for (const character of Array.from(token)) {
-          if (!line && /\s/.test(character)) continue;
-          if (line && measureStoryText(line + character, style) > width) { noteLines.push(line.trimEnd()); line = ''; }
-          if (line || !/\s/.test(character)) line += character;
-        }
-      }
-      noteLines.push(line);
-    }
-    wrapped.set(note.id, noteLines);
-  }
+  const wrapped = new Map(notes.map(note => [note.id, wrapFootnote(`${note.number}. ${note.text}`, width, size, family)]));
   let height = 0;
   const spread = state.spreads.find(spread => spread.elements.some(element => element.id === frame.id));
   const options = { obstacles: spread ? publicationWrapObjects(state, spread) : [], baselineGrid: state.settings.baselineGrid };
@@ -210,7 +212,7 @@ export function layoutFrameNotes(state: ProjectState, frame: TextElement, notes 
     const column = placements.get(note.id) ?? 0;
     for (const text of wrapped.get(note.id)!) lines.push({ text, noteId: note.id, column, x: column * (width + gutter), y: rows[column]++ * lineHeight });
   }
-  return { lines, size, family, lineHeight, height, columnWidth: width };
+  return { ...base, height };
 }
 
 /** Refresh derived references only. The caller reflows between bounded passes. */

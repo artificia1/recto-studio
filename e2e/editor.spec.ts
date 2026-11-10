@@ -657,6 +657,34 @@ test('imports a Word manuscript with source style mapping and explicit warnings'
   expect(saved.spreads[0].elements[0].storyContent.paragraphs[1].runs[0]).toMatchObject({ italic: true, text: 'Italic Word body & text.' });
 });
 
+test('merges a revised Word manuscript while preserving unchanged heading identity', async ({ page }) => {
+  const project = projectFixture();
+  Object.assign(project.spreads[0].elements[0], {
+    text: 'A Word chapter\nOriginal body',
+    storyContent: { version: 1, paragraphs: [
+      { id: 'stable-heading', styleId: 'style-h1', runs: [{ text: 'A Word chapter', bold: true }] },
+      { runs: [{ text: 'Original body' }] },
+    ] },
+  });
+  await importProject(page, project);
+  const buffer = createZipArchive({
+    'word/document.xml': '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>A Word chapter</w:t></w:r></w:p><w:p><w:r><w:t>Updated body</w:t></w:r></w:p></w:body></w:document>',
+  });
+  await page.locator('input[accept=".md,.markdown,.txt,.docx"]').setInputFiles({
+    name: 'revised.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', buffer: Buffer.from(buffer),
+  });
+  const dialog = page.getByRole('dialog', { name: 'Import manuscript' });
+  await dialog.getByRole('button', { name: 'Review manuscript changes' }).click();
+  await expect(dialog.getByLabel('Manuscript changes')).toContainText('Updated body');
+  await dialog.getByRole('button', { name: 'Apply selected changes' }).click();
+  await expect(dialog).toBeHidden();
+  const saved = await savedProject(page);
+  expect(saved.spreads[0].elements[0].storyContent.paragraphs).toMatchObject([
+    { id: 'stable-heading', styleId: 'style-h1', runs: [{ text: 'A Word chapter', bold: true }] },
+    { runs: [{ text: 'Updated body' }] },
+  ]);
+});
+
 test('reports an unavailable export module and preserves the document', async ({ page }) => {
   await importProject(page);
   await page.route(/\/assets\/epubExport-[^/]+\.js$/, route => route.abort());

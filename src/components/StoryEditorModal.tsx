@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useRef } from 'preact/hooks';
-import { ProjectState, TextElement } from '../types';
+import { ProjectState, StoryContent, TextElement } from '../types';
 import { stateManager } from '../state';
 import { sliceStory, storyText } from '../engine/storyContent';
 import { StoryPreview } from './StoryPreview';
@@ -13,6 +13,7 @@ import { useModalFocus } from '../hooks/useModalFocus';
 import './manuscript.css';
 import { StoryReferenceTools } from './StoryReferenceTools';
 import { StoryRevisionsPanel } from './StoryRevisionsPanel';
+import { manuscriptEditRange } from '../engine/manuscriptUpdates';
 
 interface StoryEditorModalProps {
   isOpen: boolean;
@@ -29,6 +30,8 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
   const [editorText, setEditorText] = useState<string>('');
   const [fontSize, setFontSize] = useState<number>(16);
   const [spellcheck, setSpellcheck] = useState(true);
+  const [tracking, setTracking] = useState<{ id: string; before: StoryContent }>();
+  const [reviewer, setReviewer] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalFocus(isOpen, dialogRef);
@@ -40,6 +43,10 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
   const [styleName, setStyleName] = useState('');
   const [error, setError] = useState('');
   const content = stateManager.getStoryContent(activeEl?.id || '');
+  const trackedText = tracking && storyText(tracking.before);
+  const trackedEdit = trackedText !== undefined ? manuscriptEditRange(trackedText, editorText) : null;
+  const discardDraft = () => !trackedEdit || confirm('Discard the unsaved tracked edit?');
+  const closeEditor = () => { if (discardDraft()) onClose(); };
   const activeParagraph = storyText(content).slice(0, selection.start).split('\n').length - 1;
   const selectedContent = sliceStory(content, selection.start, selection.end);
   const selectedRun = selectedContent.paragraphs[0]?.runs[0];
@@ -54,13 +61,13 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
   };
 
   useEffect(() => {
-    if (isOpen) { setCurrentElementId(selectedTextEl?.id || ''); setSelection({ start: 0, end: 0 }); }
+    if (isOpen) { setCurrentElementId(selectedTextEl?.id || ''); setSelection({ start: 0, end: 0 }); setTracking(undefined); }
   }, [isOpen]);
   useEffect(() => {
-    if (isOpen && activeEl) {
+    if (isOpen && activeEl && !tracking) {
       setEditorText(storyText(stateManager.getStoryContent(activeEl.id)));
     }
-  }, [isOpen, activeEl?.id, activeEl?.text, activeEl?.rawStoryText]);
+  }, [isOpen, activeEl?.id, activeEl?.text, activeEl?.rawStoryText, tracking]);
   if (!isOpen) return null;
 
   const words = editorText.trim() ? editorText.trim().split(/\s+/).filter(Boolean).length : 0;
@@ -70,6 +77,7 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
 
   const handleTextChange = (newText: string) => {
     setEditorText(newText);
+    if (tracking) return;
     if (activeEl) {
       try {
         stateManager.setStoryText(activeEl.id, newText);
@@ -92,10 +100,10 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
         if (event.key === 'Escape') {
           event.preventDefault();
           event.stopPropagation();
-          onClose();
+          closeEditor();
         }
       }}
-      onClick={onClose}
+      onClick={closeEditor}
       style={{
         position: 'fixed',
         top: 0,
@@ -145,7 +153,11 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
             {textElements.length > 1 && (
               <select
                 value={currentElementId}
-                onChange={(e) => setCurrentElementId((e.target as HTMLSelectElement).value)}
+                onChange={event => {
+                  if (!discardDraft()) { event.currentTarget.value = activeEl?.id || ''; return; }
+                  setTracking(undefined);
+                  setCurrentElementId(event.currentTarget.value);
+                }}
                 style={{
                   background: '#23232a',
                   border: '1px solid #38383e',
@@ -182,7 +194,7 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
               </button>
             </div>
             <button
-              onClick={onClose}
+              onClick={closeEditor}
               style={{
                 background: 'transparent',
                 border: 'none',
@@ -198,7 +210,26 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
           </div>
         </div>
 
-        <div className="story-format-bar">
+        {activeEl && !activeEl.generated && <div className="story-format-bar">
+          <label><input type="checkbox" checked={!!tracking} onChange={event => {
+            if (event.currentTarget.checked) setTracking({ id: activeEl.id, before: structuredClone(content) });
+            else if (discardDraft()) setTracking(undefined);
+            else event.currentTarget.checked = true;
+          }}/>Track manuscript edits</label>
+          {tracking && <>
+            <label>Reviewer <input value={reviewer} maxLength={100} onInput={event => setReviewer(event.currentTarget.value)}/></label>
+            <button className="sm-btn" disabled={!trackedEdit || !reviewer.trim() || activeEl.id !== tracking.id} onClick={() => {
+              if (!trackedEdit) return;
+              try {
+                stateManager.proposeStoryRevision(tracking.id, tracking.before, trackedEdit.start, trackedEdit.end, trackedEdit.replacement, reviewer);
+                setEditorText(trackedText!);
+                setTracking(undefined);
+                setError('');
+              } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+            }}>Save tracked edit for review</button>
+          </>}
+        </div>}
+        {!tracking && <div className="story-format-bar">
           <label><input type="checkbox" checked={spellcheck} onChange={event => setSpellcheck(event.currentTarget.checked)}/>Spellcheck</label>
           <label>Paragraph <select aria-label="Paragraph style" disabled={!activeEl} value={selectedContent.paragraphs[0]?.styleId || ''}
             onChange={e => activeEl && apply(() => stateManager.styleStoryRange(activeEl.id, selection.start, selection.end, e.currentTarget.value))}>
@@ -223,14 +254,14 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
             stateManager.formatStoryRange(activeEl.id, selection.start, selection.end, { characterStyleId: id, bold: undefined, italic: undefined, underline: undefined });
             setStyleName('');
           })}>Save style</button>
-        </div>
+        </div>}
         {error && <p role="alert" style={{ padding: '8px 20px' }}>{error}</p>}
-        {activeEl && !activeEl.generated && !!state.conditions?.length && <label>Edition of paragraph at cursor <select aria-label="Paragraph edition"
+        {activeEl && !activeEl.generated && !tracking && !!state.conditions?.length && <label>Edition of paragraph at cursor <select aria-label="Paragraph edition"
           value={content.paragraphs[activeParagraph]?.conditionId || ''} onChange={event => {
             const conditionId = event.currentTarget.value || undefined;
             apply(() => stateManager.setStoryContent(activeEl.id, { ...content, paragraphs: content.paragraphs.map((paragraph, index) => index === activeParagraph ? { ...paragraph, conditionId } : paragraph) }));
           }}><option value="">All editions</option>{state.conditions.map(condition => <option key={condition.id} value={condition.id}>{condition.name}</option>)}</select></label>}
-        {activeEl && !activeEl.generated && <StoryReferenceTools frameId={activeEl.id} start={selection.start} end={selection.end} apply={apply}/>}
+        {activeEl && !activeEl.generated && !tracking && <StoryReferenceTools frameId={activeEl.id} start={selection.start} end={selection.end} apply={apply}/>}
         {activeEl && !activeEl.generated && <StoryRevisionsPanel key={activeEl.id} frameId={activeEl.id} state={state} start={selection.start} end={selection.end}/>}
         {activeEl?.generated && <p style={{ padding: '8px 20px' }}>This list updates automatically. Use Pages to make it static before editing its manuscript.</p>}
         {!activeEl && <p style={{ padding: '16px' }}>Select or create a text frame to edit a story.</p>}
@@ -264,7 +295,15 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
               fontFamily: activeEl?.fontFamily ? `${activeEl.fontFamily}, Georgia, serif` : 'Georgia, serif',
             }}
           />
-          {activeEl && <StoryPreview content={content} frame={activeEl} state={state} />}
+          {activeEl && (tracking ? <div className="manuscript-preview" aria-label="Tracked changes preview">
+            <p>Tracked text stays out of the layout until you accept its proposal.</p>
+            {trackedEdit && <p style={{ whiteSpace: 'pre-wrap' }}>
+              {trackedText!.slice(Math.max(0, trackedEdit.start - 80), trackedEdit.start)}
+              <del>{trackedText!.slice(trackedEdit.start, trackedEdit.end)}</del>
+              <ins>{trackedEdit.replacement}</ins>
+              {trackedText!.slice(trackedEdit.end, trackedEdit.end + 80)}
+            </p>}
+          </div> : <StoryPreview content={content} frame={activeEl} state={state} />)}
         </div>
 
         {/* Footer Stats */}

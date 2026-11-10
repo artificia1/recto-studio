@@ -155,11 +155,13 @@ index or endnotes lists. Lists can use an empty existing page or a new page at t
 end, and refresh after edits and page-number changes. Make a generated list static
 before editing its manuscript manually.
 
-Footnotes reserve measured space in their owning frame. Long notes do not split
-across pages: shorten the note, enlarge the frame, or convert it to an endnote if
-preflight reports insufficient space. For print, create an endnotes list. EPUB
-exports linked notes separately with return links. Deleted note markers and
-reference targets produce preflight errors rather than silently changing targets.
+Footnotes reserve measured space in their owning frame. Long notes continue
+through subsequent columns and linked frames, with the original note number and
+a continuation label. Automatic story pagination can create a continuation page
+even when only note text remains. If the note cannot finish, preflight reports
+it and strict print export blocks delivery. EPUB exports one linked note body
+with a return link. Deleted markers and reference targets produce preflight
+errors.
 
 ## Table of Authorities
 
@@ -251,8 +253,30 @@ contents. Synchronization changes the snapshots in the book archive; save that
 archive to retain changes. Original chapter files and the open document remain
 separate. Chapters currently need matching page dimensions and bleed. Book PDF
 renders each chapter's artwork and inserts real blank pages for recto openings.
-Book-wide contents exports as text; references inside chapters retain their
-targets, while cross-document reference authoring is still pending.
+Book-wide contents exports as text.
+
+Use **Refresh chapter** to select a revised source file. The preview shows the
+old and new page counts, moved or changed headings, and new or resolved preflight
+findings. It flags assigned targets missing from the revision.
+Apply the refresh to replace the snapshot in the book, then save the archive.
+Refresh is manual and leaves the source files untouched.
+
+To reference a heading or a numbered figure or table in another chapter, type
+a marker like `[[book:methods]]` in an ordinary story, then use **Book
+references** to assign its key to a target. Keys use lowercase letters,
+digits, and hyphens. Choose a page number, heading text, or caption number.
+Book exports resolve markers against the assembled pages and report missing
+targets. The chapter itself retains the marker. The archive remembers
+chapter and reference IDs across renames and reordering. Use **Update
+reference target** if an edit recreates the heading with a new ID.
+
+Use **Manage publication layouts → Shared layouts** to bundle separate trim
+sizes as `.rectoset`. Add or refresh editable layout snapshots, select a source
+and destination story or artwork object, and preview the update before applying
+it. The destination keeps its dimensions and object placement. Linked stories
+map named styles to their destination equivalents. The preview calls out local
+content changes. Detach a link to retain the current destination as independent
+content, and download an editable `.recto` copy of any layout.
 
 **Styles** supports parent paragraph styles. Choosing a parent inherits its
 formatting; changing a property makes that property a local override. Choose
@@ -305,7 +329,16 @@ stories and edits across note/reference/index markers are also protected.
 **Pages → Manuscript revisions** lists pending proposals across the document,
 opens their stories for review, and allows rejection of orphaned proposals.
 Resolved records can be removed in one undo step. Review currently supports
-100 proposals per document and manuscripts up to 200,000 characters. This is
-an explicit proposal workflow; ordinary typing still edits the manuscript
-directly. Inline automatic change tracking and concurrent revision merging are
-not implemented.
+100 proposals per document and manuscripts up to 200,000 characters. Turn on
+**Track manuscript edits** in Story Editor to type a draft and see insertions
+and deletions in context. Save the tracked edit for review, then accept or
+reject it in **Proposed revisions**. A draft represents one replacement range.
+Save and review separate edits independently when a note or reference lies
+between them. With tracking off, typing still edits the manuscript directly.
+
+To update a laid-out story from a revised DOCX, place the file into its text
+frame, map paragraph styles, and choose **Review manuscript changes**. The
+review keeps matching paragraphs, including their formatting and note anchors.
+Changes that touch annotations or a referenced heading start unchecked. Check
+the sections you want to replace, then apply them together in one undo step.
+Reopen the preview if the publication changes while it is open.

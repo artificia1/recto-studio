@@ -42,7 +42,7 @@ Use `V` for Selection, `T` for Type, `P` for Pen, and `W` for Preview.
 
 | Workflow | Shipped tools |
 | --- | --- |
-| **Long documents** | Book assembly, automatic story pagination, section labels, tables of contents, multi-level indexes, footnotes and endnotes, and numbered figures and tables with live references |
+| **Long documents** | Book assembly with chapter refresh and cross-chapter references, automatic story pagination, section labels, tables of contents, multi-level indexes, footnotes and endnotes, and numbered figures and tables |
 | **Typography** | Paragraph and character styles, baseline grids, column balancing, optical margins, copyfit, supported CJK composition, editable LaTeX equations, and variable-font controls |
 | **Font files** | TTF, OTF, WOFF and WOFF2 import, face selection from TTC and OTC collections, document-wide font replacement, and searchable PDF embedding for supported static and variable fonts |
 | **Artwork** | Bézier and freehand tools, editable linear and radial gradients, shape-to-path conversion, text wrap, reusable artwork, and alignment and distribution |

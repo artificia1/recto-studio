@@ -402,7 +402,16 @@ export interface CopyfitResult {
 
 export type ImageFitMode = 'fill' | 'fit' | 'frameToContent' | 'contentToFrame' | 'center' | 'stretch';
 
+export interface ImageAdjustments {
+  grayscale?: boolean;
+  black: number;
+  white: number;
+  gamma: number;
+  curve: { input: number; output: number }[];
+}
+
 export interface ImageElement extends BaseElement {
+  adjustments?: ImageAdjustments;
   focalPoint?: { x: number; y: number };
   decorative?: boolean;
   /** Editable math source; src holds its portable, self-contained SVG rendering. */
@@ -454,7 +463,16 @@ export interface FillGradient {
   stops: { offset: number; color: string }[];
 }
 
-export interface ShapeElement extends BaseElement {
+export type VectorDecoration =
+  | { kind: 'hatch'; color: string; angle: number; spacing: number; weight: number; crossed: boolean }
+  | { kind: 'mesh'; columns: number; rows: number; colors: string[] };
+
+export interface VectorDecorationSettings {
+  decoration?: VectorDecoration;
+  strokePattern?: { dash: number; gap: number };
+}
+
+export interface ShapeElement extends BaseElement, VectorDecorationSettings {
   fillGradient?: FillGradient;
   type: 'shape';
   shapeKind: ShapeKind;
@@ -520,7 +538,7 @@ export interface TextOnPathSettings {
   startOffsetMm: number;
 }
 
-export interface VectorPathElement extends BaseElement {
+export interface VectorPathElement extends BaseElement, VectorDecorationSettings {
   fillGradient?: FillGradient;
   type: 'path';
   nodes: BezierNode[];

@@ -469,6 +469,6 @@ export function exportDocumentToEpub(
 export async function exportDocumentToEpubAsync(state: ProjectState, options: EpubExportOptions = {}) {
   const { fontManager } = await import('./fontManager');
   await fontManager.restoreFonts(state.embeddedFonts);
-  return exportDocumentToEpub(await prepareExportAssets(state, typeof window !== 'undefined'), options);
+  return exportDocumentToEpub(await prepareExportAssets(state, typeof window !== 'undefined', false, true), options);
 }
 import { tableCellSpan } from './engine/tableCells';

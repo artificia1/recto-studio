@@ -1,9 +1,57 @@
 import { describe, it, expect } from 'vitest';
 import { StateManager, stateManager } from '../src/state';
 import { exportDocumentToIdml } from '../src/export/idmlExport';
-import { parseIdmlPackage, parseIdmlTextVariables } from '../src/idmlImport';
+import { parseElementSpreadBounds, parseIdmlPackage, parseIdmlTextVariables, parseSpreadPages, parseTransform } from '../src/idmlImport';
 import { createZipArchive } from '../src/zip';
 import { ShapeElement, TextElement } from '../src/types';
+
+describe('IDML import geometry and paragraph inheritance', () => {
+  it('uses all four corners of a rotated frame and rejects non-finite transforms', () => {
+    const bounds = parseElementSpreadBounds('<TextFrame ItemTransform="0.6 0.8 -0.8 0.6 150 20" GeometricBounds="0 0 100 100" />');
+    expect(bounds).toEqual({ spreadLeft: 70, spreadTop: 20, widthPt: 140, heightPt: 140 });
+    expect(parseTransform('1 0 0 1 Infinity 20')).toEqual([1, 0, 0, 1, 0, 0]);
+  });
+
+  it('keeps mixed self-closing and expanded pages in spread order', () => {
+    const xml = '<Spread><Page Self="left"/><Page Self="right"><Properties/></Page></Spread>';
+    expect(parseSpreadPages(xml, 2, true, 210, 297).map(page => [page.id, page.pageNumber, page.side]))
+      .toEqual([['left', 2, 'left'], ['right', 3, 'right']]);
+  });
+
+  it('applies out-of-order styles by reference and isolates cyclic parents', async () => {
+    const state = await parseIdmlPackage(createZipArchive({
+      'designmap.xml': '<Document><idPkg:Spread src="Spreads/Spread_one.xml" /></Document>',
+      'Spreads/Spread_one.xml': '<Spread Self="sp1"><Page Self="p1"/><TextFrame Self="tf1" ParentStory="story1" GeometricBounds="0 0 200 400"/></Spread>',
+      'Stories/Story_one.xml': '<Story Self="story1"><ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Heading&amp;Review"><CharacterStyleRange><Content>Editorial review</Content></CharacterStyleRange></ParagraphStyleRange></Story>',
+      'Resources/Styles.xml': `<Styles>
+        <ParagraphStyle Self="ParagraphStyle/Heading&amp;Review" Name="Heading/Review" PointSize="12">
+          <Properties><BasedOn type="object">ParagraphStyle/Middle</BasedOn></Properties>
+        </ParagraphStyle>
+        <ParagraphStyle Self="ParagraphStyle/Heading Review" Name="Heading Review" PointSize="22"/>
+        <ParagraphStyle Self="ParagraphStyle/Middle" Name="Middle" BasedOn="ParagraphStyle/Base" />
+        <ParagraphStyle Self="ParagraphStyle/Base" Name="Base" Leading="18" Justification="CenterAlign">
+          <Properties><AppliedFont type="string">Open Sans</AppliedFont></Properties>
+        </ParagraphStyle>
+        <ParagraphStyle Self="ParagraphStyle/Child" Name="Cycle Child" BasedOn="ParagraphStyle/B"/>
+        <ParagraphStyle Self="ParagraphStyle/A" Name="Cycle A" BasedOn="ParagraphStyle/B" AppliedFont="Georgia"/>
+        <ParagraphStyle Self="ParagraphStyle/B" Name="Cycle B" BasedOn="ParagraphStyle/A" Justification="RightAlign"/>
+      </Styles>`,
+    }), 'inherited-styles.idml');
+
+    const style = (name: string) => state.paragraphStyles.find(candidate => candidate.name === name)!;
+    const heading = style('Heading/Review');
+    expect(heading).toMatchObject({ fontSizePt: 12, lineHeight: 1.5, fontFamily: 'Open Sans', alignment: 'center' });
+    expect(style('Heading Review').id).not.toBe(heading.id);
+    expect(style('Cycle A')).toMatchObject({ fontFamily: 'Georgia', alignment: 'left' });
+    expect(style('Cycle B')).toMatchObject({ fontFamily: 'serif', alignment: 'right' });
+    expect(style('Cycle Child').alignment).toBe('right');
+    const frame = state.spreads[0].elements.find(element => element.type === 'text');
+    expect(frame).toMatchObject({
+      paragraphStyleId: heading.id,
+      textContent: { paragraphs: [{ styleId: heading.id, runs: [{ text: 'Editorial review' }] }] },
+    });
+  });
+});
 
 describe('IDML Package Export & Prepress Preflight Intelligence', () => {
   it('exports a valid Adobe InDesign IDML archive with full XML directory structure', () => {

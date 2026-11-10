@@ -34,6 +34,24 @@ test('proposes a manuscript edit, accepts it, undoes it and reviews it from Page
   await expect(page.getByText('Proposed revisions (0 pending)', { exact: true })).toBeVisible();
 });
 
+test('tracks typing as an inline proposal until the change is accepted', async ({ page }) => {
+  await importProject(page);
+  await menuCommand(page, 'Open distraction-free Story Focus typewriter editor (Ctrl+Alt+Y)');
+  const dialog = page.getByRole('dialog', { name: 'Story Editor' });
+  const editor = dialog.getByRole('textbox', { name: 'Story manuscript' });
+  await expect(editor).toHaveValue('Browser workflow sample');
+  await dialog.getByLabel('Track manuscript edits').check();
+  await dialog.getByLabel('Reviewer', { exact: true }).fill('Editor');
+  await editor.fill('Updated workflow sample');
+  await expect(dialog.getByLabel('Tracked changes preview').locator('del')).toHaveText('Browser');
+  await expect(dialog.getByLabel('Tracked changes preview').locator('ins')).toHaveText('Updated');
+  await dialog.getByRole('button', { name: 'Save tracked edit for review' }).click();
+  await expect(editor).toHaveValue('Browser workflow sample');
+  await dialog.getByText('Proposed revisions (1 pending)', { exact: true }).click();
+  await dialog.getByRole('button', { name: 'Accept revision', exact: true }).click();
+  await expect(editor).toHaveValue('Updated workflow sample');
+});
+
 test('fits table content, adds a continuation page, and edits source cells from that page', async ({ page }) => {
   const project = projectFixture();
   Object.assign(project.spreads[0].elements[0], { type: 'table', width: 140, height: 28, rows: 6, cols: 1,

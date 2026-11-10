@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { CanvasElement, ProjectState } from '../types';
 import { stateManager } from '../state';
-import { spreadGrid, workspaceDrop } from '../engine/spatialWorkspace';
+import { spreadGrid, visibleSpreadCells, workspaceDrop } from '../engine/spatialWorkspace';
 import { instantiateMasterItem, resolveMaster } from '../engine/masterInheritance';
 import { publicationText } from '../engine/publicationReferences';
 import { masterTargetPage } from '../engine/pageLabels';
@@ -18,7 +18,15 @@ export default function SpatialWorkspace({ state, onClose }: { state: ProjectSta
   const root = useRef<HTMLDivElement>(null), scroll = useRef<HTMLDivElement>(null), svg = useRef<SVGSVGElement>(null);
   const pointer = useRef<{ x: number; y: number } | null>(null);
   useModalFocus(true, root);
-  const scale = zoom * 96 / 25.4, grid = spreadGrid(state, columns);
+  const scale = zoom * 96 / 25.4;
+  const grid = useMemo(() => spreadGrid(state, columns), [state, columns]);
+  const overscan = 200;
+  const visibleCells = visibleSpreadCells(grid, {
+    x: (viewport.x - overscan) / scale,
+    y: (viewport.y - overscan) / scale,
+    width: (viewport.width + 2 * overscan) / scale,
+    height: (viewport.height + 2 * overscan) / scale,
+  });
   const updateViewport = () => { const box = scroll.current; if (box) setViewport({ x: box.scrollLeft, y: box.scrollTop, width: box.clientWidth, height: box.clientHeight }); };
   useEffect(() => { const observer = new ResizeObserver(updateViewport); if (scroll.current) observer.observe(scroll.current); updateViewport(); return () => observer.disconnect(); }, []);
   const point = (event: PointerEvent) => {
@@ -80,7 +88,7 @@ export default function SpatialWorkspace({ state, onClose }: { state: ProjectSta
           }
           setDrag(null);
         }}>
-        {grid.cells.filter(cell => cell.x * scale < viewport.x + viewport.width + 200 && (cell.x + cell.width) * scale > viewport.x - 200 && cell.y * scale < viewport.y + viewport.height + 200 && (cell.y + cell.height) * scale > viewport.y - 200).map(cell => {
+        {visibleCells.map(cell => {
           const master = resolveMaster(state.masterSpreads, cell.spread.masterSpreadId);
           const inherited = (master?.elements || []).filter(element => !cell.spread.detachedMasterElementIds?.includes(element.id) && !cell.spread.elements.some(local => local.masterSourceId === element.id)).flatMap(element => { const page = masterTargetPage(master!.pages, cell.spread.pages, element.pageId); return page ? [instantiateMasterItem(element, page.id, text => publicationText(state, text, page.pageNumber))] : []; });
           const order = (a: CanvasElement, b: CanvasElement) => (state.layers.find(layer => layer.id === a.layerId)?.order || 0) - (state.layers.find(layer => layer.id === b.layerId)?.order || 0) || a.zIndex - b.zIndex;
