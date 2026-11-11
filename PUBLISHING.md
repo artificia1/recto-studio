@@ -185,6 +185,20 @@ because this partial operation does not establish that the entire file is trappe
 
 ## Accessible PDF/UA-1 editions
 
+Open **Pages → Production & books → Accessibility workspace** to review the
+publication in reading order. Reorder frames with the arrow controls or
+Alt + Up/Down, and use the numbered page map to select a frame. Select items
+across pages to assign them to the same article. Articles follow the order
+of physical pages, and the findings panel flags gaps between article items
+or linked story frames that can make EPUB editions read differently.
+
+Use the frame controls for image descriptions, decorative images, first
+paragraph roles, linked captions, and table header rows. Check the sequence
+in **Linear preview** before exporting. Fixed-layout EPUB supports
+content-sized table frames, including continuations. Reflowable EPUB
+reads the complete story or table at its first frame. Review all three
+formats when the publication relies on cross-page relationships.
+
 The accessible preset writes a structure tree with semantic H1–H6 headings,
 paragraphs, lists (`L`, `LI`, `Lbl`, `LBody`), notes, image descriptions and table
 rows/cells (`Table`, `TR`, `TH`, `TD`, scope and merge spans). Split rows retain
@@ -296,6 +310,49 @@ Select an image or the first frame of a table, then open **Contents, notes &
 references → Numbered caption**. Figures and tables number separately in each
 section, including chapters assembled into a book. Insert a live reference from
 Story Editor, and generate lists of figures or tables from the same Pages panel.
+
+## Translation editions
+
+Open **Pages → Production & books → Translation workspace**. Enter a target
+language tag, then select stories, notes, parent-page text, table cells, or
+image descriptions and captions by group. Recto generates an XLIFF 2.0 file
+with one segment per unit. Hidden layers, inactive editions, and unused parent
+pages require an explicit opt-in. Pasteboard items, editorial notes, and
+nonprinting frames are excluded from the exchange.
+
+Keep the XLIFF source, unit IDs, and inline codes when translating. Formatting
+codes can move with their translated passages. Protected markers carry note,
+index, reference, and page-variable identities. Recto checks that the returned
+unit retains them. The exchange supports the inline codes Recto writes and
+requires each unit to keep its single segment.
+
+Load the returned XLIFF, filter the findings, and select the translations to
+use. A changed source or protected marker must be reconciled before its
+translation can be selected. Use **Download outstanding XLIFF** to send the
+remaining units with current source copy. You can edit valid returned passages
+in the review. Draft targets require an explicit selection.
+
+Use **Terminology and numeric checks** for a glossary, a comparison of
+locale-formatted numeric values, and inconsistent translations of repeated
+plain text. You can save and reopen a tab-separated plain-text glossary.
+Save the bilingual HTML report for reviewers
+who need to read the copy side by side. The HTML contains the source and
+translated text. A separate JSON report summarizes selection, layout,
+font-coverage and preflight findings.
+
+**Preview translated edition** checks the existing frames for overset, note
+movement and missing characters in loaded fonts. Open **Compare composed text
+frames** to inspect the source and translation at the same physical dimensions.
+Save the result as an independent editable `.recto` project. It retains
+unselected copy and uses the selected target language as the document language.
+Translated story paragraphs also carry that language into EPUB so their
+original paragraph styles cannot assign the source language to translated text.
+Automatic pagination runs in the editor after opening and editing the edition.
+
+To reuse approved plain-text units, add selected translations to a memory and
+save the `.rectotm` file from **Prepare XLIFF**. Exact matches are offered for
+review in the same language pair. Conflicting variants require a choice.
+Formatted passages and protected markers remain in the XLIFF workflow.
 
 ## Moving a publication from Scribus
 

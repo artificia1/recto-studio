@@ -12,6 +12,7 @@ import { isDesktop, openDesktopDocument, savePublicationFile } from '../desktop'
 import type { IngestedStory } from '../contentImport';
 import type { TextElement } from '../types';
 import { BookletImpositionModal, CoverSpineModal } from './LazyPrintDialogs';
+import type { ExportAction } from './ExportMenu';
 
 import { lazy, Suspense } from 'preact/compat';
 const AppUpdater = lazy(() => import('./AppUpdater').then(module => ({ default: module.AppUpdater })));
@@ -327,87 +328,17 @@ export function TopBar({
     }
   };
 
-  const handleExportPdfClean = () => runExport(async () => {
-    const { exportDocumentToPdf } = await import('../pdfExport');
-    await exportDocumentToPdf(state, {
-      includeCropMarks: false,
-      includeBleed: false,
-      includeRegistrationMarks: false,
-      includeColorBars: false,
-      exportFormat: 'pages',
-    });
-  });
-
-  const handleExportPdfPress = () => runExport(async () => {
-    const { exportDocumentToPdf } = await import('../pdfExport');
-    await exportDocumentToPdf(state, {
-      strict: true,
-      includeCropMarks: true,
-      includeBleed: true,
-      includeRegistrationMarks: true,
-      includeColorBars: true,
-      exportFormat: 'pages',
-    });
-  });
-
-  const handleExportPdf = () => {
-    handleExportPdfClean();
-  };
-
-  const handleExportEpub = () => runExport(async () => {
-    const { exportDocumentToEpubAsync } = await import('../epubExport');
-    const result = await exportDocumentToEpubAsync(state, { download: !isDesktop(), strict: true });
-    if (isDesktop()) await savePublicationFile(result.filename, result.buffer, 'application/epub+zip');
-  });
-
-  const handleExportFixedEpub = () => runExport(async () => {
-    const { exportFixedEpub } = await import('../export/fixedEpub');
-    const name = state.settings.title.replace(/[^\p{L}\p{N} _-]/gu, '').trim() || 'publication';
-    await savePublicationFile(`${name}-fixed.epub`, await exportFixedEpub(state), 'application/epub+zip');
-  });
-
-  const handleExportFlipbook = () => runExport(async () => {
-    const { exportDocumentToFlipbook } = await import('../flipbookExport');
-    const result = exportDocumentToFlipbook(state, { download: !isDesktop() });
-    if (isDesktop()) await savePublicationFile(result.filename, result.html, 'text/html');
-  });
-
-  const handleExportSpreadPng = () => runExport(async () => {
-    setShowExportMenu(false);
-    const canvas = (window as any).recto?.spreadCanvas;
-    if (canvas && typeof canvas.exportSpreadAsPng === 'function') {
-      const dataUrl = canvas.exportSpreadAsPng(3);
-      if (dataUrl) {
-        const link = document.createElement('a');
-        const spreadNum = state.activeSpreadIndex + 1;
-        const safeTitle = (state.settings.title || 'recto-spread').toLowerCase().replace(/[^a-z0-9_-]/g, '-');
-        if (isDesktop()) {
-          const blob = await (await fetch(dataUrl)).blob();
-          await savePublicationFile(`${safeTitle}-spread-${spreadNum}.png`, blob, 'image/png');
-          return;
-        }
-        link.download = `${safeTitle}-spread-${spreadNum}.png`;
-        link.href = dataUrl;
-        link.click();
+  const handlePublicationExport = (action: ExportAction) => {
+    if (action === 'booklet') return handleOpenImposition();
+    if (action === 'cover') return handleOpenCoverSpine();
+    void runExport(async () => {
+      const { downloadPublication } = await import('../export/publicationDownloads');
+      if (action === 'image' && stateManager.getState().activeSpreadIndex !== state.activeSpreadIndex) {
+        throw new Error('The active spread changed. Export the image again.');
       }
-    }
-  });
-
-  const handlePackageDocument = () => runExport(async () => {
-    const { packageDocument } = await import('../packageExport');
-    const result = await packageDocument(state, { download: !isDesktop() });
-    if (isDesktop()) await savePublicationFile(result.filename, result.buffer, 'application/zip');
-  });
-
-  const handleExportIdml = (validationKit = false) => runExport(async () => {
-    const { exportDocumentToIdml } = await import('../export/idmlExport');
-    const idmlBytes = exportDocumentToIdml(state);
-    const safeTitle = (state.settings.title || 'publication').toLowerCase().replace(/[^a-z0-9_-]/g, '-');
-    if (validationKit) {
-      const { createIdmlValidationKit } = await import('../export/idmlValidationKit');
-      await savePublicationFile(`${safeTitle}-idml-check.zip`, createIdmlValidationKit(`${safeTitle}.idml`, idmlBytes), 'application/zip');
-    } else await savePublicationFile(`${safeTitle}.idml`, idmlBytes, 'application/vnd.adobe.indesign-idml-package');
-  });
+      await downloadPublication(state, action);
+    });
+  };
 
   const openVersionModal = () => {
     const list = stateManager.getSnapshots();
@@ -1097,7 +1028,7 @@ export function TopBar({
           <div className="btn-group-joined">
             <button
               className="action-btn-primary"
-              onClick={handleExportPdfClean}
+              onClick={() => handlePublicationExport('proof')}
               title="Export Clean Digital PDF (Exact Trim Dimensions)"
             >
               Export PDF
@@ -1114,11 +1045,8 @@ export function TopBar({
               ▾
             </button>
           </div>
-          {showExportMenu && <Suspense fallback={null}><ExportMenu onClose={() => setShowExportMenu(false)} actions={{
-            proof: handleExportPdfClean, press: handleExportPdfPress, epub: handleExportEpub, fixed: handleExportFixedEpub,
-            flipbook: handleExportFlipbook, image: handleExportSpreadPng, package: handlePackageDocument,
-            idml: () => handleExportIdml(), kit: () => handleExportIdml(true), booklet: handleOpenImposition, cover: handleOpenCoverSpine,
-          }} /></Suspense>}
+          {showExportMenu && <Suspense fallback={null}><ExportMenu onClose={() => setShowExportMenu(false)}
+            onExport={handlePublicationExport}/></Suspense>}
         </div>
 
         {/* Immersive Fullscreen Mode (Removes Mobile/Tablet Browser Navigation Chrome) */}

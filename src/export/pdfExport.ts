@@ -160,7 +160,10 @@ export async function exportDocumentToPdf(
   // Colour spaces belong inside Resources, never as floating serialization tokens.
   // The final object pass installs spot resources after jsPDF has finished writing.
   const structure = options.tagged || options.accessibility ? await import('./pdfStructure') : undefined;
-  const semantic = options.accessibility ? new (await import('./pdfSemantics')).PdfSemantics(doc, state) : undefined;
+  const semanticsModule = structure ? await import('./pdfSemantics') : undefined;
+  const reading = semanticsModule?.pdfReadingStructure({ ...state, spreads: targetSpreads });
+  const semantic = options.accessibility && semanticsModule && reading
+    ? new semanticsModule.PdfSemantics(doc, state, reading) : undefined;
   const tags: PdfContentTag[] = [];
 
   const pagesToExport: { page: Page; spread: Spread }[] = [];
@@ -253,7 +256,9 @@ export async function exportDocumentToPdf(
         } else {
         const pageNumber = doc.getNumberOfPages();
         const mcid = tags.filter(tag => tag.page === pageNumber).length;
-        const tag = structure.elementPdfTag(state, el, pageNumber, mcid);
+        const order = reading?.order.get(el.id);
+        const basicTag = order === undefined ? undefined : structure.elementPdfTag(state, el, pageNumber, mcid);
+        const tag = basicTag && order !== undefined ? { ...basicTag, order, parentId: reading?.article.get(el.id) } : undefined;
         if (tag) {
           tags.push(tag);
           const actualText = tag.text === undefined ? '' : ` /ActualText <FEFF${Array.from({ length: tag.text.length }, (_, index) => tag.text!.charCodeAt(index).toString(16).padStart(4, '0')).join('')}>`;
@@ -640,7 +645,7 @@ export async function exportDocumentToPdf(
 
   let finalized = (structure || usedSpotColors.size || usedPdfFonts(doc).length || hasPdfGradients(doc)) ? await (structure || await import('./pdfStructure')).finishPdf(
     doc, state, [...usedSpotColors.values()], semantic?.tags || (structure ? tags : undefined), options.compress !== false,
-    semantic?.groups, structure ? pagesToExport.map(({ page }) => page.id) : undefined,
+    semantic ? [...reading!.groups, ...semantic.groups] : reading?.groups, structure ? pagesToExport.map(({ page }) => page.id) : undefined,
   ) : undefined;
   if (options.transparency === 'flatten') {
     const { flattenPdfTransparency } = await import('./transparencyFlatten');

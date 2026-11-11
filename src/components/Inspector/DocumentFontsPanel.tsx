@@ -3,6 +3,8 @@ import { documentFontUsage, elementUsesFont, primaryFont, visitDocumentFonts } f
 import { reflowStoryState, storyHeads } from '../../engine/publicationReferences';
 import { reviewPreflightChange } from '../../engine/preflightReview';
 import { PreflightChangeSummary } from '../PreflightChangeSummary';
+import { captureLayout, compareLayouts } from '../../engine/layoutChanges';
+import { LayoutChangeSummary } from '../LayoutChangeSummary';
 import { fontManager } from '../../fontManager';
 import { stateManager } from '../../state';
 import type { ProjectState } from '../../types';
@@ -11,7 +13,8 @@ import { FONT_FILES, useFontFileImport } from '../common/useFontFileImport';
 export default function DocumentFontsPanel({ state }: { state: ProjectState }) {
   const usage = documentFontUsage(state);
   const [source, setSource] = useState(''), [target, setTarget] = useState(''), [message, setMessage] = useState('');
-  const [preview, setPreview] = useState<{ revision: number; pages: number[]; result: ReturnType<typeof reviewPreflightChange> }>();
+  const [preview, setPreview] = useState<{ revision: number; pages: number[]; result: ReturnType<typeof reviewPreflightChange>;
+    layout: ReturnType<typeof compareLayouts> }>();
   const { importFile, choice, error, busy } = useFontFileImport(family => {
     stateManager.saveImportedFonts(); setTarget(family); setPreview(undefined); setMessage('Font loaded. Review the replacement selection.');
   });
@@ -37,7 +40,7 @@ export default function DocumentFontsPanel({ state }: { state: ProjectState }) {
             if (owner.fontFamily && primaryFont(owner.fontFamily) === primaryFont(source)) owner.fontFamily = target;
           });
           for (const head of storyHeads(snapshot)) reflowStoryState(snapshot, head.id);
-          setPreview({ revision: stateManager.getDocumentRevision(), pages,
+          setPreview({ revision: stateManager.getDocumentRevision(), pages, layout: compareLayouts(captureLayout(original), captureLayout(snapshot)),
             result: reviewPreflightChange(stateManager.runPreflightCheck(), stateManager.runPreflightCheck(snapshot)) });
           setMessage('');
         } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
@@ -52,6 +55,7 @@ export default function DocumentFontsPanel({ state }: { state: ProjectState }) {
       catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
     }}>Replace font throughout document</button></div>
     {preview && <><p>{preview.pages.length ? `Affected document pages: ${preview.pages.join(', ')}.` : 'The font is used in styles or parent artwork.'} Preview uses the current frames.</p>
+      <LayoutChangeSummary result={preview.layout} onNavigate={id => stateManager.zoomToElement(id)}/>
       <PreflightChangeSummary result={preview.result}/></>}
     {message && <p role="status">{message}</p>}
   </details>;

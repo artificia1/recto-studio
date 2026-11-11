@@ -6,6 +6,60 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/'); await expect(page.locator('#spread-canvas')).toBeVisible();
 });
 
+test('authors reading order with the keyboard and previews the accessible sequence', async ({ page }) => {
+  const project = projectFixture();
+  const first = project.spreads[0].elements[0];
+  Object.assign(first, { name: 'Body copy', y: 18 });
+  project.spreads[0].elements.push({ ...first, id: 'feature-title', y: 75, text: 'Feature headline',
+    name: 'Feature headline' } as typeof first);
+  await importProject(page, project);
+  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  await page.getByText('Production & books', { exact: true }).click();
+  await page.getByRole('button', { name: 'Accessibility workspace', exact: true }).click();
+  const workspace = page.getByRole('dialog', { name: 'Accessibility workspace' });
+  const headline = workspace.getByRole('button', { name: 'Feature headline text', exact: true });
+  await headline.press('Alt+ArrowUp');
+  await workspace.getByRole('button', { name: 'Select reading position 1' }).click();
+  await workspace.getByLabel('First paragraph role').selectOption('H1');
+  await workspace.getByRole('checkbox', { name: 'Select Feature headline for article' }).check();
+  await workspace.getByRole('checkbox', { name: 'Select Body copy for article' }).check();
+  await workspace.getByLabel('Article name').fill('Feature');
+  await workspace.getByRole('button', { name: 'Assign selected (2)', exact: true }).click();
+  await workspace.getByRole('button', { name: 'Linear preview' }).click();
+  await expect(workspace.locator('.accessibility-linear li').first()).toContainText('Feature headline');
+  await expect(workspace.locator('.accessibility-linear li').nth(1)).toContainText('Browser workflow sample');
+  await workspace.getByRole('button', { name: 'Close', exact: true }).click();
+  const saved = (await savedProject(page)).spreads[0].elements;
+  expect(saved.find((element: { id: string }) => element.id === 'feature-title')).toMatchObject({
+    readingOrder: 1, readingRole: 'H1', readingArticle: 'Feature',
+  });
+});
+
+test('reviews house style fixes and compares the edited layout', async ({ page }) => {
+  await importProject(page);
+  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  await page.getByText('Layout change inspector', { exact: true }).click();
+  await page.getByRole('button', { name: 'Capture current layout' }).click();
+  await expect(page.getByText('Layout captured.', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Properties', exact: true }).click();
+  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  await page.getByText('House style checker', { exact: true }).click();
+  await page.getByLabel('Preferred wording').fill('Browser → Editorial\nsample → proof');
+  await page.getByRole('button', { name: 'Save rules', exact: true }).click();
+  await expect(page.getByText('House rules saved on this device.')).toBeVisible();
+  await page.getByRole('button', { name: 'Check document', exact: true }).click();
+  await expect(page.getByText('2 findings', { exact: true })).toBeVisible();
+  await page.getByRole('checkbox', { name: 'Replace “Browser” with “Editorial”' }).check();
+  await page.getByRole('button', { name: 'Apply selected fixes', exact: true }).click();
+  await expect(page.getByText('Applied 1 selected fix.')).toBeVisible();
+  expect((await savedProject(page)).spreads[0].elements[0].text).toBe('Editorial workflow sample');
+  await page.getByText('Layout change inspector', { exact: true }).click();
+  await page.getByRole('button', { name: 'Compare current layout' }).click();
+  await expect(page.getByRole('region', { name: 'Layout changes' })).toBeVisible();
+  await page.getByTitle('Undo (Ctrl+Z)', { exact: true }).click();
+  expect((await savedProject(page)).spreads[0].elements[0].text).toBe('Browser workflow sample');
+});
+
 test('proposes a manuscript edit, accepts it, undoes it and reviews it from Pages', async ({ page }) => {
   await importProject(page);
   await menuCommand(page, 'Open distraction-free Story Focus typewriter editor (Ctrl+Alt+Y)');

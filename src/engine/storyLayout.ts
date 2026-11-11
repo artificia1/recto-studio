@@ -40,7 +40,14 @@ export const measureStoryText: StoryMeasure = (text, style) => {
 };
 
 export function resolveParagraphStyle(paragraph: StoryParagraph, styles: ParagraphStyle[]): Partial<ParagraphStyle> {
-  return { ...styles.find(s => s.id === paragraph.styleId), ...paragraph.formatting };
+  const style = { ...styles.find(s => s.id === paragraph.styleId), ...paragraph.formatting };
+  if (paragraph.language) {
+    const language = paragraph.language.toLowerCase();
+    const primary = language.split('-')[0];
+    const supported = (['de', 'fr', 'ja', 'zh', 'ko'] as const).find(item => item === primary);
+    style.language = supported || (language === 'en-us' ? 'en-US' : undefined);
+  }
+  return style;
 }
 
 export function resolveRunStyle(frame: TextElement, paragraph: Partial<ParagraphStyle> | undefined,

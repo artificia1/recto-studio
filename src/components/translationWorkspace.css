@@ -1,0 +1,148 @@
+.translation-workspace {
+  width: min(960px, 96vw);
+  max-height: 90vh;
+}
+
+.translation-toolbar {
+  padding: 0 16px 12px;
+}
+
+.translation-toolbar button[aria-pressed="true"] {
+  border-color: var(--accent-cyan);
+}
+
+.translation-workspace .translation-content {
+  overflow: auto;
+  padding: 12px 20px 20px;
+  margin: 0;
+  border-width: 1px 0;
+  border-radius: 0;
+}
+
+.translation-content > label {
+  max-width: 320px;
+  margin-bottom: 12px;
+}
+
+.translation-scope-list, .translation-units, .translation-font-findings {
+  list-style: none;
+  padding: 0;
+}
+
+.translation-scope-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 7px;
+}
+
+.translation-scope-list li, .translation-units li {
+  border: 1px solid var(--border-color);
+  background: var(--bg-panel);
+  border-radius: 5px;
+  padding: 9px 12px;
+}
+
+.translation-scope-list .publication-check, .translation-unit-header .publication-check {
+  margin: 0;
+  min-width: 0;
+}
+
+.translation-scope-list label span, .translation-unit-header strong {
+  overflow-wrap: anywhere;
+}
+
+.translation-scope-list small {
+  display: block;
+  margin-top: 3px;
+}
+
+.translation-filters, .translation-bilingual {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.translation-units {
+  display: grid;
+  gap: 10px;
+}
+
+.translation-unit-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 9px;
+}
+
+.translation-unit-header small {
+  flex-shrink: 0;
+}
+
+.translation-bilingual > div {
+  background: var(--bg-input);
+  min-width: 0;
+  border-radius: 4px;
+  padding: 9px;
+}
+
+.translation-bilingual p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 3px 0 0;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.translation-finding {
+  border-inline-start: 2px solid var(--accent-cyan);
+  padding-inline-start: 7px;
+}
+
+.translation-status {
+  padding: 0 20px;
+}
+
+.translation-status p {
+  margin: 10px 0;
+  font-size: 12px;
+}
+
+.translation-content section + section, .translation-quality {
+  margin-top: 16px;
+}
+
+.translation-font-findings li {
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 6px;
+}
+
+.translation-frame-side h4 { margin: 0 0 6px; }
+.translation-frame-svg {
+  width: 100%;
+  display: block;
+  margin: 8px 0;
+  border: 1px solid var(--border-color);
+  background: white;
+}
+.translation-frame-overset { border-color: #d96c52; }
+.translation-proof-text { white-space: pre-wrap; }
+.translation-inline-edit {
+  border-top: 1px solid var(--border-color);
+  margin-top: 10px;
+  padding-top: 4px;
+}
+.translation-inline-marker {
+  border-inline-start: 2px solid var(--accent-cyan);
+  padding-inline-start: 7px;
+  overflow-wrap: anywhere;
+}
+
+.translation-unit-header small, .translation-bilingual small, .translation-scope-list small {
+  color: var(--text-secondary);
+}
+
+@media (max-width: 560px) {
+  .translation-filters, .translation-bilingual { grid-template-columns: minmax(0, 1fr); }
+  .translation-unit-header { align-items: flex-start; flex-direction: column; gap: 5px; }
+}

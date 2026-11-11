@@ -3,6 +3,7 @@ import type { ProjectState } from '../../types';
 import { stateManager } from '../../state';
 import { editorialOutline, editorialStories, findPublicationPages } from '../../engine/editorialNavigation';
 import { reviewPinPosition } from '../../engine/reviewPins';
+import EditorialReviewPanel from './EditorialReviewPanel';
 
 export default function EditorialPanel({ state }: { state: ProjectState }) {
   const [query, setQuery] = useState('');
@@ -27,6 +28,7 @@ export default function EditorialPanel({ state }: { state: ProjectState }) {
   const comments = state.comments || [];
   const visible = comments.filter(comment => filter === 'all' || comment.resolved === (filter === 'resolved'));
   return <div className="editorial-panel">
+    <EditorialReviewPanel state={state}/>
     <details className="publication-panel" open>
       <summary>Publication navigator</summary>
       <label>Go to page<input value={jump} placeholder="Printed label or physical number" onInput={event => setJump(event.currentTarget.value)}/></label>

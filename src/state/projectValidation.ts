@@ -112,6 +112,7 @@ const textFormatting = {
 const storyContent: Validator = (value, path) => {
   object({ version: (v, p) => { if (v !== 1) fail(p, 'unsupported story version'); },
     paragraphs: array(object({ id: optional(identifier), styleId: optional(identifier), sourceStyle: optional(text), conditionId: optional(identifier),
+      language: optional(text),
       formatting: optional(object({ ...textFormatting, alignment: optional(alignment), lineHeight: optional(positive), letterSpacingPt: optional(number),
         language: optional(choice('en-US', 'de', 'fr', 'ja', 'zh', 'ko')), cjkLineBreak: optional(boolean), hyphenate: optional(boolean),
         widowLines: optional(count), orphanLines: optional(count), keepTogether: optional(boolean), keepWithNext: optional(boolean) })),
@@ -127,6 +128,7 @@ const elementSchemas: Record<string, Schema> = {
     dataBinding: optional(object({ source: identifier, keyField: identifier, recordKey: text, field: identifier })),
     generated: optional(object({ kind: choice('toc', 'index', 'endnotes', 'authorities', 'figures', 'tables', 'caption'), title: text })),
     captionForId: optional(identifier),
+    readingRole: optional(choice('P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'Caption')),
     text, ...typography, lineHeight: positive, letterSpacingPt: number,
     color: optional(text), alignment, columns: count, columnGutterMm: nonnegative,
     backgroundColor: text, borderColor: text, borderWidthMm: nonnegative, paddingMm: optional(nonnegative),
@@ -137,7 +139,6 @@ const elementSchemas: Record<string, Schema> = {
     grepStyles: optional(array(grepRule)),
   },
   image: {
-    decorative: optional(boolean),
     equation: optional(object({ latex: text, fontSizePt: positive, color: text, displayMode: boolean })),
     src: text, fitMode: choice('fill', 'fit', 'frameToContent', 'contentToFrame', 'center', 'stretch'),
     focalPoint: optional(object({ x: (value, path) => { number(value, path); if ((value as number) < 0 || (value as number) > 1) fail(path, 'must be between 0 and 1'); }, y: (value, path) => { number(value, path); if ((value as number) < 0 || (value as number) > 1) fail(path, 'must be between 0 and 1'); } })),
@@ -203,6 +204,8 @@ const element: Validator = (value, path) => {
     layerId: optional(identifier), ...elementSchemas[type],
     name: optional(text), editorialOnly: optional(boolean), nonprinting: optional(boolean), conditionId: optional(identifier),
     readingOrder: optional(positive),
+    readingArticle: optional(text),
+    decorative: optional(boolean),
     textWrap: optional(object({ mode: choice('none', 'boundingBox', 'contour'), standoffMm: nonnegative })),
     anchor: optional(object({ parentTextId: identifier })),
     shadow: optional(object({ color: text, blurMm: nonnegative, offsetX: number, offsetY: number })),

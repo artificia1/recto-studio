@@ -5,10 +5,34 @@ import { fontManager } from '../fontManager';
 import { pdfFontName } from './pdfFonts';
 import type { PdfContentTag } from './pdfStructure';
 import { tableGrid } from '../engine/tableCells';
+import { isReadingContent, readingCaptions, readingEntries, readingSections, readingTextRole } from '../engine/readingOrder';
 
 export interface PdfStructureGroup { id: string; role: string; parentId?: string; order: number; attributes?: Record<string, string | number> }
 export interface TablePdfSemantics { beginCell(row: number, column: number, header: boolean, rowSpan: number, colSpan: number, text: string): () => void }
 const hex = (text: string) => `FEFF${Array.from({ length: text.length }, (_, i) => text.charCodeAt(i).toString(16).padStart(4, '0')).join('')}`;
+
+export function pdfReadingStructure(state: ProjectState) {
+  const entries = readingEntries(state).filter(entry => isReadingContent(entry.element));
+  const elements = entries.map(entry => entry.element);
+  const pages = new Map(entries.map(entry => [entry.element.id, entry.pageId]));
+  const order = new Map(elements.map((element, index) => [element.id, index * 100]));
+  const article = new Map<string, string>();
+  const groups: PdfStructureGroup[] = [];
+  for (const section of readingSections(elements)) {
+    if (!section.article) continue;
+    const id = `article:${groups.length}`;
+    groups.push({ id, role: 'Sect', order: order.get(section.elements[0].id)! });
+    for (const element of section.elements) article.set(element.id, id);
+  }
+  for (const [target, caption] of readingCaptions(elements)) {
+    if (pages.get(target) !== pages.get(caption) || article.get(target) !== article.get(caption)) continue;
+    const id = `caption-group:${target}`;
+    groups.push({ id, role: 'Div', parentId: article.get(target), order: order.get(target)! });
+    article.set(target, id);
+    article.set(caption, id);
+  }
+  return { order, article, groups };
+}
 
 export class PdfSemantics {
   readonly tags: PdfContentTag[] = [];
@@ -17,7 +41,7 @@ export class PdfSemantics {
   private repeatedHeaders = new Set<string>();
   private counts = new Map<number, number>();
   private artifacts = new Set<string>();
-  constructor(private doc: jsPDF, private state: ProjectState) {}
+  constructor(private doc: jsPDF, private state: ProjectState, private reading: ReturnType<typeof pdfReadingStructure>) {}
   furniture(ids: string[]) { ids.forEach(id => this.artifacts.add(id)); }
   validate() {
     let level = 0;
@@ -30,7 +54,9 @@ export class PdfSemantics {
     }
   }
   private write(value: string) { (this.doc.internal as unknown as { write(value: string): void }).write(value); }
-  private order(element: CanvasElement) { return (this.doc.getNumberOfPages() - 1) * 1e9 + (element.readingOrder ?? element.y * 1000 + element.x); }
+  private order(element: CanvasElement) {
+    return this.reading.order.get(element.id) ?? (this.doc.getNumberOfPages() - 1) * 1e9 + element.y * 1000 + element.x;
+  }
   private group(group: PdfStructureGroup) {
     if (!this.ids.has(group.id)) {
       this.ids.add(group.id); this.groups.push(group);
@@ -52,10 +78,10 @@ export class PdfSemantics {
   image(element: CanvasElement) {
     if (element.type !== 'image' || element.decorative || this.artifacts.has(element.id)) { this.write('/Artifact BMC'); return; }
     if (!element.altText?.trim()) throw new Error('Describe every meaningful image or mark it as decorative before exporting accessible PDF.');
-    this.mark('Figure', undefined, undefined, element.altText, this.order(element));
+    this.mark('Figure', undefined, this.reading.article.get(element.id), element.altText, this.order(element));
   }
   line(frame: TextElement, content: StoryContent, start: number) {
-    if (this.artifacts.has(frame.id)) return { parts: (text: string) => [{ text, parent: '' }], begin: (_text: string, _parent: string) => () => {} };
+    if (frame.decorative || this.artifacts.has(frame.id)) return { parts: (text: string) => [{ text, parent: '' }], begin: (_text: string, _parent: string) => () => {} };
     let offset = 0, index = 0;
     for (; index + 1 < content.paragraphs.length; index++) {
       const length = content.paragraphs[index].runs.reduce((sum, run) => sum + run.text.length, 0);
@@ -64,8 +90,11 @@ export class PdfSemantics {
     const paragraph = content.paragraphs[index], style = resolveParagraphStyle(paragraph, this.state.paragraphStyles);
     const text = paragraph.runs.map(run => run.text).join('');
     const id = `paragraph:${paragraph.id || `${frame.id}:${index}`}`, order = this.order(frame) + index / 10000;
+    const parentId = this.reading.article.get(frame.id);
+    const role = readingTextRole(frame, style.pdfTag || (index === 0 && frame.paragraphStyleId
+      ? this.state.paragraphStyles.find(item => item.id === frame.paragraphStyleId)?.pdfTag : undefined), index);
     let bodyId: string, labelId: string | undefined, labelRemaining = 0;
-    if (style.pdfTag === 'LI') {
+    if (role === 'LI') {
       let head = frame;
       const seen = new Set<string>(), frames = this.state.spreads.flatMap(spread => spread.elements);
       while (head.prevFrameId && !seen.has(head.id)) {
@@ -78,15 +107,14 @@ export class PdfSemantics {
       const originalIndex = paragraph.id ? paragraphs.findIndex(item => item.id === paragraph.id) : index;
       let first = Math.max(0, originalIndex);
       while (first > 0 && resolveParagraphStyle(paragraphs[first - 1], this.state.paragraphStyles).pdfTag === 'LI') first--;
-      const list = this.group({ id: `list:${head.id}:${paragraphs[first].id || first}`, role: 'L', order });
+      const list = this.group({ id: `list:${head.id}:${paragraphs[first].id || first}`, role: 'L', order, parentId });
       const item = this.group({ id: `${id}:item`, role: 'LI', parentId: list, order: index });
       const label = /^(?:[•◦▪‣–-]|\d+[.)]|[A-Za-z][.)])\s+/u.exec(text)?.[0] || '';
       if (label) labelId = this.group({ id: `${id}:label`, role: 'Lbl', parentId: item, order: 0 });
       bodyId = this.group({ id, role: 'LBody', parentId: item, order: 1 });
       labelRemaining = Math.max(0, label.length - (start - offset));
     } else {
-      const role = frame.generated?.kind === 'caption' ? 'Caption' : /^H[1-6]$/.test(style.pdfTag || '') ? style.pdfTag! : style.pdfTag === 'Title' ? 'H1' : ['Caption', 'BlockQuote'].includes(style.pdfTag || '') ? style.pdfTag! : 'P';
-      bodyId = this.group({ id, role, order });
+      bodyId = this.group({ id, role, order, parentId });
     }
     return {
       parts: (value: string) => {
@@ -97,15 +125,20 @@ export class PdfSemantics {
     };
   }
   note(frame: TextElement, noteId: string, text: string) {
-    const parent = this.group({ id: `note:${noteId}`, role: 'Note', order: this.order(frame) + 0.9 });
+    if (frame.decorative || this.artifacts.has(frame.id)) return () => {};
+    const parent = this.group({ id: `note:${noteId}`, role: 'Note', order: this.order(frame) + 0.9,
+      parentId: this.reading.article.get(frame.id) });
     this.write('EMC'); const end = this.mark('Span', text, parent);
     return () => { end(); this.write('/Artifact BMC'); };
   }
   table(element: TableElement, source: TableElement): TablePdfSemantics {
+    if (element.decorative || source.decorative || this.artifacts.has(element.id)) return {
+      beginCell: (_row, _column, _header, _rowSpan, _colSpan, text) => { this.assertFont(element.fontFamily, text); return () => {}; },
+    };
     if (source.rowSizing !== 'content') throw new Error('Choose content-sized table rows before exporting accessible PDF so every cell is fitted and tagged.');
     tableGrid(source.cells, source.headerRowCount, source.footerRowCount || 0);
-    if (this.artifacts.has(element.id)) return { beginCell: (_row, _column, _header, _rowSpan, _colSpan, text) => { this.assertFont(element.fontFamily, text); return () => {}; } };
-    const parent = this.group({ id: `table:${source.id}`, role: 'Table', order: this.order(element) });
+    const parent = this.group({ id: `table:${source.id}`, role: 'Table', order: this.order(source),
+      parentId: this.reading.article.get(source.id) });
     for (let row = 0; row < source.rows; row++) this.group({ id: `${parent}:row:${row}`, role: 'TR', parentId: parent, order: row });
     return { beginCell: (row, column, header, rowSpan, colSpan, text) => {
       this.assertFont(element.fontFamily, text);

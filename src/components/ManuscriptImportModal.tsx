@@ -7,6 +7,9 @@ import { useModalFocus } from '../hooks/useModalFocus';
 import type { ImportedNote } from '../contentImport';
 import { stateManager } from '../state';
 import { assembleManuscriptUpdate, compareManuscripts, manuscriptParagraphText, protectedHeadingIds } from '../engine/manuscriptUpdates';
+import { captureLayout, compareLayouts } from '../engine/layoutChanges';
+import { storyText } from '../engine/storyContent';
+import { LayoutChangeSummary } from './LayoutChangeSummary';
 import './manuscript.css';
 
 export function ManuscriptImportModal({ manuscript, fileName, frame, state, onPlace, onUpdate, onClose }: {
@@ -19,8 +22,9 @@ export function ManuscriptImportModal({ manuscript, fileName, frame, state, onPl
     (manuscript.sourceStyles || []).map(style => [style.name,
       state.paragraphStyles.some(s => s.id === style.suggestedStyleId) ? style.suggestedStyleId : state.paragraphStyles[0]?.id || ''])));
   const [error, setError] = useState('');
-  const [review, setReview] = useState<{ before: StoryContent; changes: ReturnType<typeof compareManuscripts> }>();
+  const [review, setReview] = useState<{ before: StoryContent; changes: ReturnType<typeof compareManuscripts>; revision: number }>();
   const [selected, setSelected] = useState(new Set<number>());
+  const [layout, setLayout] = useState<ReturnType<typeof compareLayouts>>();
   const dialog = useRef<HTMLElement>(null);
   useModalFocus(true, dialog);
   const content = mapManuscriptStyles(manuscript, mapping);
@@ -51,6 +55,7 @@ export function ManuscriptImportModal({ manuscript, fileName, frame, state, onPl
               if (event.currentTarget.checked) next.add(index);
               else next.delete(index);
               setSelected(next);
+              setLayout(undefined);
             }}/>{change.conflict ? 'Replace this section and its affected anchors' : 'Apply this change'} · Paragraph {change.start + 1}</label>
             {change.conflict && <p role="status">This section contains or is targeted by a note, reference, or index marker. Leave it unchecked to keep the current section.</p>}
             <div className="revision-comparison">
@@ -58,11 +63,33 @@ export function ManuscriptImportModal({ manuscript, fileName, frame, state, onPl
               <div><small>Revised</small><pre>{manuscriptParagraphText(change.paragraphs) || '(Deletion)'}</pre></div>
             </div>
           </section>)}
+          {layout && <><p>Preview uses the current frame chain. Automatic pagination runs when you apply the changes.</p>
+            <LayoutChangeSummary result={layout}/></>}
         </div> : <StoryPreview content={content} frame={frame} state={state} />}
       </div>
       <footer className="manuscript-footer"><div><p>{review ? 'Checked changes apply together in one undo step.' : 'Place manuscript replaces the entire story. Review changes to merge selected passages.'}</p>{error && <p role="alert">{error}</p>}</div>
         {review ? <div className="publication-actions">
-          <button className="sm-btn" onClick={() => { setReview(undefined); setError(''); }}>Back to style mapping</button>
+          <button className="sm-btn" onClick={() => { setReview(undefined); setLayout(undefined); setError(''); }}>Back to style mapping</button>
+          <button className="sm-btn" disabled={!selected.size} onClick={() => {
+            try {
+              if (review.revision !== stateManager.getDocumentRevision()) throw new Error('The document changed. Open a fresh manuscript preview.');
+              const result = assembleManuscriptUpdate(review.before, review.changes, selected, manuscript.notes || []);
+              const head = stateManager.getStoryHead(frame.id);
+              if (!head) throw new Error('The story frame is no longer available.');
+              const original = stateManager.getState();
+              const draft = structuredClone(original);
+              const target = draft.spreads.flatMap(spread => spread.elements).find(element => element.id === head.id);
+              if (target?.type !== 'text') throw new Error('The story frame is no longer available.');
+              const noteIds = (story: StoryContent) => new Set(story.paragraphs.flatMap(paragraph => paragraph.runs.map(run => run.noteId)));
+              const before = noteIds(review.before), after = noteIds(result.content);
+              draft.settings.footnotes = [...(draft.settings.footnotes || []).filter(note => !before.has(note.id) || after.has(note.id)),
+                ...result.notes.map(note => ({ ...note, number: 1, anchorVersion: 1 as const, elementId: head.id, pageId: head.pageId }))];
+              target.storyContent = result.content;
+              target.rawStoryText = storyText(result.content);
+              setLayout(compareLayouts(captureLayout(original), captureLayout(draft)));
+              setError('');
+            } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+          }}>Preview layout changes</button>
           <button className="action-btn" disabled={!selected.size} onClick={() => {
             try {
               const result = assembleManuscriptUpdate(review.before, review.changes, selected, manuscript.notes || []);
@@ -74,7 +101,7 @@ export function ManuscriptImportModal({ manuscript, fileName, frame, state, onPl
             const before = structuredClone(stateManager.getStoryContent(frame.id));
             const changes = compareManuscripts(before, content, state.settings.footnotes || [], manuscript.notes || [], protectedHeadingIds(state));
             setSelected(new Set(changes.flatMap((change, index) => change.conflict ? [] : [index])));
-            setReview({ before, changes });
+            setReview({ before, changes, revision: stateManager.getDocumentRevision() });
             setError('');
           }}>Review manuscript changes</button>}
           <button className="action-btn" onClick={() => { try { onPlace(content); } catch (e) { setError(e instanceof Error ? e.message : 'Could not place manuscript.'); } }}>Place manuscript</button>

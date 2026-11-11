@@ -1,29 +1,20 @@
 import type { ProjectState } from '../types';
 import { publicationPreflight } from './publicationPreflight';
-import { layoutFrameNotes, publicationHeadings, publicationSnapshot, textFrames } from './publicationReferences';
-import { layoutStory } from './storyLayout';
-import { plainStory } from './storyContent';
-import { publicationWrapObjects } from './publicationWrap';
+import { publicationHeadings, publicationSnapshot } from './publicationReferences';
+import { captureComposedLayout, compareLayouts } from './layoutChanges';
 
 export function compareChapterImpact(before: ProjectState, after: ProjectState) {
   const summarize = (source: ProjectState) => {
     const snapshot = publicationSnapshot(source);
-    const pages = snapshot.spreads.flatMap(spread => spread.pages);
-    const frameSpreads = new Map(snapshot.spreads.flatMap(spread => spread.elements.map(element => [element.id, spread] as const)));
+    const layout = captureComposedLayout(snapshot);
     const issues = publicationPreflight(snapshot).map(issue => ({
       key: JSON.stringify([issue.code, issue.elementId, issue.message, issue.severity]),
       page: issue.pageNumber, message: issue.message,
     }));
-    for (const frame of textFrames(snapshot)) {
-      if (frame.nextFrameId || frame.pasteboard || !frame.text) continue;
-      const spread = frameSpreads.get(frame.id)!;
-      const layout = layoutStory(frame.textContent || plainStory(frame.text, frame.paragraphStyleId), frame,
-        snapshot.paragraphStyles, snapshot.characterStyles, undefined, layoutFrameNotes(snapshot, frame).height,
-        { obstacles: publicationWrapObjects(snapshot, spread), baselineGrid: snapshot.settings.baselineGrid });
-      if (layout.overset) issues.push({ key: `overset:${frame.id}`, page: pages.find(page => page.id === frame.pageId)?.pageNumber || 1,
-        message: 'Text overflows its final frame.' });
+    for (const { frameId, page } of layout.overset.values()) {
+      issues.push({ key: `overset:${frameId}`, page, message: 'Text overflows its final frame.' });
     }
-    return { issues, headings: publicationHeadings(snapshot) };
+    return { issues, headings: publicationHeadings(snapshot), layout };
   };
   const old = summarize(before), updated = summarize(after);
   const headingKey = (heading: (typeof old.headings)[number]) => heading.paragraphId || heading.elementId;
@@ -49,5 +40,6 @@ export function compareChapterImpact(before: ProjectState, after: ProjectState) 
       return !count;
     });
   };
-  return { headings, introduced: difference(updated.issues, old.issues), resolved: difference(old.issues, updated.issues) };
+  return { headings, introduced: difference(updated.issues, old.issues), resolved: difference(old.issues, updated.issues),
+    layout: compareLayouts(old.layout, updated.layout) };
 }

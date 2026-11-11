@@ -142,11 +142,15 @@ export type StateListener = (state: ProjectState) => void;
 
 export class StateManager {
   private documentRevision = 0;
+  private documentSession = 0;
   private openRequest = 0;
   private readonly hasValidLocalSave: boolean;
 
   public getDocumentRevision(): number {
     return this.documentRevision;
+  }
+  public getDocumentSession(): number {
+    return this.documentSession;
   }
   public readonly autosave = new Autosave(() => this.state);
 
@@ -2462,6 +2466,7 @@ export class StateManager {
 
   public resetToDefault() {
     this.state = JSON.parse(JSON.stringify(INITIAL_STATE));
+    this.documentSession++;
     this.pushHistory();
     this.notify();
   }
@@ -2551,6 +2556,7 @@ export class StateManager {
     };
 
     this.state = blankState;
+    this.documentSession++;
     this.getState();
     this.renumberPages();
     this.history.clear();
@@ -2570,6 +2576,7 @@ export class StateManager {
       this.reflowFormattedStories();
       this.pushHistory();
     } catch (error) { this.state = previous; throw error; }
+    this.documentSession++;
     this.notify();
   }
 
@@ -4184,14 +4191,23 @@ export class StateManager {
     const expression = this.compileFindRegex(query);
     if (!expression) return { replacementsCount: 0, elementsAffected: 0 };
     const found = searchManuscripts(this.state, expression, query.isGrep ? query.changeText : query.changeText.replace(/\$/g, '$$$$'), query);
-    const heads = [...new Set(found.map(match => match.elementId))].map(id => this.assertStoryEditable(id));
-    const edits = heads.map(head => ({ head, content: replaceManuscriptMatches(contentOf(head), found.filter(match => match.elementId === head.id)) }));
+    const heads = [...new Set(found.map(match => match.elementId))];
+    this.applyReviewedStoryEdits(this.documentRevision, heads.map(elementId => ({
+      elementId,
+      content: replaceManuscriptMatches(this.getStoryContent(elementId), found.filter(match => match.elementId === elementId)),
+    })));
+    return { replacementsCount: found.length, elementsAffected: heads.length };
+  }
+
+  public applyReviewedStoryEdits(expectedRevision: number, changes: { elementId: string; content: StoryContent }[]) {
+    if (expectedRevision !== this.documentRevision) throw new Error('The document changed. Review the edits again.');
+    if (!changes.length) return;
+    const edits = changes.map(({ elementId, content }) => ({ head: this.assertStoryEditable(elementId), content }));
     const backup = structuredClone(this.state);
     try {
       for (const { head, content } of edits) { head.storyContent = content; head.rawStoryText = storyText(content); }
-      if (found.length) { this.reflowFormattedStories(); this.pushHistory(); this.notify(); }
+      this.reflowFormattedStories(); this.pushHistory(); this.notify();
     } catch (reason) { this.state = backup; throw reason; }
-    return { replacementsCount: found.length, elementsAffected: heads.length };
   }
 
   // --- Object Styles Engine ---

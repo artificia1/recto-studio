@@ -203,6 +203,7 @@ test('loads a licensed replacement font and replaces document references', async
   expect(family).toBeTruthy();
   await page.getByRole('button', { name: 'Preview font replacement' }).click();
   await expect(page.getByText('Affected document pages: 1.')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Layout changes' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Preflight change preview' })).toBeVisible();
   await page.getByRole('button', { name: 'Replace font throughout document' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Font references replaced.' })).toBeVisible();

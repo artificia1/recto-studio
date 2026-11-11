@@ -270,6 +270,8 @@ export interface BaseElement {
   pasteboard?: boolean;
   blendMode?: 'normal' | 'multiply' | 'screen' | 'overlay';
   readingOrder?: number;
+  readingArticle?: string;
+  decorative?: boolean;
   id: string;
   name?: string;
   type: ElementType;
@@ -323,6 +325,7 @@ export interface StoryRun extends TextFormatting {
 
 export interface StoryParagraph {
   conditionId?: string;
+  language?: string;
   id?: string;
   styleId?: string;
   sourceStyle?: string;
@@ -343,6 +346,7 @@ export interface StoryContent {
 export interface TextDataBinding { source: string; keyField: string; recordKey: string; field: string }
 
 export interface TextElement extends BaseElement {
+  readingRole?: 'P' | 'H1' | 'H2' | 'H3' | 'H4' | 'H5' | 'H6' | 'Caption';
   dataBinding?: TextDataBinding;
   generated?: { kind: 'toc' | 'index' | 'endnotes' | 'authorities' | 'figures' | 'tables' | 'caption'; title: string };
   captionForId?: string;
@@ -413,7 +417,6 @@ export interface ImageAdjustments {
 export interface ImageElement extends BaseElement {
   adjustments?: ImageAdjustments;
   focalPoint?: { x: number; y: number };
-  decorative?: boolean;
   /** Editable math source; src holds its portable, self-contained SVG rendering. */
   equation?: EquationSource;
   type: 'image';

@@ -13,6 +13,8 @@ import { publicationHeadings, publicationId, publicationSnapshot, textFrames } f
 import { publicationPreflight } from './engine/publicationPreflight';
 import { embeddedAsset, fullImageSource, prepareExportAssets } from './export/publicationAssets';
 import { resolveParagraphStyle, resolveRunStyle } from './engine/storyLayout';
+import { readingCaptions, readingEntries, readingSections, readingTextRole } from './engine/readingOrder';
+import { tableGrid } from './engine/tableCells';
 
 export interface EpubExportOptions {
   download?: boolean;
@@ -184,14 +186,20 @@ svg {
   }
 
   const pageItems: PageItem[] = [];
+  const pageArtwork = new Map<string, CanvasElement[]>();
+  for (const { pageId, element } of readingEntries(state)) {
+    const elements = pageArtwork.get(pageId);
+    if (elements) elements.push(element);
+    else pageArtwork.set(pageId, [element]);
+  }
   let pageCounter = 1;
 
   for (const spread of state.spreads) {
     for (const page of spread.pages) {
-      const pageElements = spread.elements.filter((el) => el.pageId === page.id && !el.pasteboard && !el.editorialOnly && state.layers?.find(layer => layer.id === el.layerId)?.visible !== false);
-      if (!pageElements.some(element => element.type !== 'text' || (!element.prevFrameId && element.generated?.kind !== 'endnotes'))) continue;
-      // Sort reading order: top to bottom, then left to right
-      pageElements.sort((a, b) => (a.readingOrder ?? a.y * 1000 + a.x) - (b.readingOrder ?? b.y * 1000 + b.x));
+      const pageElements = (pageArtwork.get(page.id) || []).filter(element =>
+        (element.type !== 'text' && element.type !== 'table') ||
+        (!element.prevFrameId && (element.type === 'table' || element.generated?.kind !== 'endnotes')));
+      if (!pageElements.length) continue;
 
       const filename = `page_${pageCounter}.xhtml`;
       pageItems.push({
@@ -234,8 +242,14 @@ svg {
   // 5. Generate XHTML for each page
   for (const item of pageItems) {
     let bodyContent = '';
+    const captions = readingCaptions(item.elements);
 
-    for (const el of item.elements) {
+    for (const { article, elements } of readingSections(item.elements)) {
+    if (article) bodyContent += `<section aria-label="${escapeXml(article)}">\n`;
+    for (const el of elements) {
+      const hidden = el.decorative ? ' aria-hidden="true"' : '';
+      const caption = captions.get(el.id);
+      const description = caption ? ` aria-describedby="${publicationId('frame', caption)}"` : '';
       if (el.type === 'text') {
         const textEl = el as TextElement;
         if (textEl.generated?.kind === 'endnotes') continue;
@@ -243,11 +257,14 @@ svg {
           // Export the semantic story once, so frame boundaries cannot split paragraphs or duplicate copy.
           if (textEl.prevFrameId) continue;
           const content = textEl.storyContent || textEl.textContent!;
-          bodyContent += `  <div id="${publicationId('frame', textEl.id)}">\n`;
+          bodyContent += `  <div id="${publicationId('frame', textEl.id)}"${hidden}>\n`;
           for (const [paragraphIndex, paragraph] of content.paragraphs.entries()) {
             const style = resolveParagraphStyle(paragraph, state.paragraphStyles);
             const semantic = style?.pdfTag;
-            const tag = textEl.generated && textEl.generated.kind !== 'caption' && paragraphIndex === 0 ? 'h1' : semantic && /^H[1-6]$/.test(semantic) ? semantic.toLowerCase() : semantic === 'Title' ? 'h1' : semantic === 'BlockQuote' ? 'blockquote' : 'p';
+            const role = readingTextRole(textEl, semantic, paragraphIndex);
+            const tag = /^H[1-6]$/.test(role) ? role.toLowerCase()
+              : role === 'BlockQuote' ? 'blockquote'
+              : textEl.generated && textEl.generated.kind !== 'caption' && paragraphIndex === 0 ? 'h1' : 'p';
             const runs = paragraph.runs.map(run => {
               const format = resolveRunStyle(textEl, style, run, state.characterStyles || []);
               let html = escapeXml(run.text).replace(/\n/g, '<br/>');
@@ -256,7 +273,7 @@ svg {
               if (format.underline) html = `<u>${html}</u>`;
               return runMarkup(run, `<span style="font-family:${escapeXml(fontFamilyCss(format.fontFamily.split(',')[0].replace(/['"]/g, '').trim()))}">${html}</span>`, item.filename);
             }).join('');
-            const paragraphLanguage = style.language || language;
+            const paragraphLanguage = paragraph.language || style.language || language;
             if (!/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(paragraphLanguage)) throw new Error('Invalid paragraph language.');
             const count = (value?: number) => Number.isInteger(value) && value! > 0 ? Math.min(value!, 100) : 1;
             const alignment = ['left', 'center', 'right', 'justify'].includes(style.alignment || textEl.alignment) ? style.alignment || textEl.alignment : 'left';
@@ -266,7 +283,7 @@ svg {
           bodyContent += '  </div>\n';
           continue;
         }
-        bodyContent += `  <div id="${publicationId('frame', textEl.id)}">\n`;
+        bodyContent += `  <div id="${publicationId('frame', textEl.id)}"${hidden}>\n`;
         const processed = formatOpenTypeText(textEl.text, textEl.openTypeFeatures);
         const paragraphs = processed.split('\n');
         const alignClass = `text-${textEl.alignment || 'left'}`;
@@ -274,16 +291,19 @@ svg {
 
         const isTitle = textEl.fontSizePt >= 24;
         const isHeader = textEl.fontSizePt >= 14 && textEl.fontSizePt < 24;
+        const style = state.paragraphStyles.find(item => item.id === textEl.paragraphStyleId);
+        const role = readingTextRole(textEl, style?.pdfTag, 0);
+        const heading = /^H[1-6]$/.test(role) ? role.toLowerCase()
+          : textEl.readingRole || textEl.captionForId || style?.pdfTag ? undefined
+          : isTitle ? 'h1' : isHeader ? 'h2' : undefined;
         const hasDropCap = Boolean(textEl.dropCapLines && textEl.dropCapLines >= 2);
 
         for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
           const para = paragraphs[pIdx].trim();
           if (!para) continue;
 
-          if (isTitle && pIdx === 0) {
-            bodyContent += `  <h1 class="${alignClass}" ${familyStyle}>${escapeXml(para)}</h1>\n`;
-          } else if (isHeader && pIdx === 0) {
-            bodyContent += `  <h2 class="${alignClass}" ${familyStyle}>${escapeXml(para)}</h2>\n`;
+          if (heading && pIdx === 0) {
+            bodyContent += `  <${heading} class="${alignClass}" ${familyStyle}>${escapeXml(para)}</${heading}>\n`;
           } else {
             if (hasDropCap && pIdx === 0 && para.length > 1) {
               const firstChar = para.charAt(0);
@@ -297,18 +317,18 @@ svg {
         bodyContent += '  </div>\n';
       } else if (el.type === 'table') {
         const tbl = el as TableElement;
-        bodyContent += '  <table>\n';
-        if (tbl.cells && tbl.cells.length > 0) {
-          const hasHeaders = tbl.headerRowCount > 0;
-          for (let r = 0; r < tbl.cells.length; r++) {
-            const isHeaderRow = hasHeaders && r < tbl.headerRowCount;
+        bodyContent += `  <table${hidden}${description}>\n`;
+        if (tbl.cells?.length) {
+          const grid = tableGrid(tbl.cells, tbl.headerRowCount, tbl.footerRowCount || 0);
+          for (const [r, row] of grid.entries()) {
+            const isHeaderRow = r < tbl.headerRowCount;
             bodyContent += '    <tr>\n';
-            for (let c = 0; c < (tbl.cells[r] || []).length; c++) {
-              const span = tableCellSpan(tbl.cells[r], c); if (!span) continue;
-              const cell = tbl.cells[r][c];
+            for (const [c, owner] of row.entries()) {
+              if (owner.row !== r || owner.column !== c) continue;
+              const { cell, rowSpan, colSpan } = owner;
               const tag = isHeaderRow ? 'th' : 'td';
               const align = cell.align ? ` style="text-align: ${cell.align};"` : '';
-              bodyContent += `      <${tag} colspan="${span}"${align}>${escapeXml(cell.text || '')}</${tag}>\n`;
+              bodyContent += `      <${tag} colspan="${colSpan}" rowspan="${rowSpan}"${isHeaderRow ? ' scope="col"' : ''}${align}>${escapeXml(cell.text || '')}</${tag}>\n`;
             }
             bodyContent += '    </tr>\n';
           }
@@ -328,7 +348,7 @@ svg {
             equationManifest.push(`    <item id="${id}" href="${imageSource}" media-type="${asset.mediaType}"/>`);
             imageCache.set(source, imageSource);
           }
-          bodyContent += `  <figure>\n    <img src="${imageSource}" alt="${escapeXml(img.decorative ? '' : img.altText || img.caption || '')}"${img.decorative ? ' role="presentation"' : ''}/>\n`;
+          bodyContent += `  <figure${hidden}${description}>\n    <img src="${imageSource}" alt="${escapeXml(img.decorative ? '' : img.altText || img.caption || '')}"${img.decorative ? ' role="presentation"' : ''}/>\n`;
           if (img.caption) {
             bodyContent += `    <figcaption class="caption">${escapeXml(img.caption)}</figcaption>\n`;
           }
@@ -338,12 +358,12 @@ svg {
         const pathEl = el as VectorPathElement;
         const d = bezierNodesToSvgPath(pathEl.nodes, pathEl.closed);
         const strokeDash = pathEl.strokeDash === 'dashed' ? ' stroke-dasharray="4,3"' : '';
-        bodyContent += `  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${pathEl.width} ${pathEl.height}" width="${pathEl.width}mm" height="${pathEl.height}mm">\n`;
+        bodyContent += `  <svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" viewBox="0 0 ${pathEl.width} ${pathEl.height}" width="${pathEl.width}mm" height="${pathEl.height}mm">\n`;
         bodyContent += `    <path d="${d}" fill="${escapeXml(pathEl.fillColor || 'none')}" stroke="${escapeXml(pathEl.strokeColor || '#000000')}" stroke-width="${pathEl.strokeWidthMm || 1}" stroke-linecap="${pathEl.strokeCap || 'round'}" stroke-linejoin="${pathEl.strokeJoin || 'round'}"${strokeDash}/>\n`;
         bodyContent += '  </svg>\n';
       } else if (el.type === 'shape') {
         const shape = el as ShapeElement;
-        bodyContent += `  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${shape.width} ${shape.height}" width="${shape.width}mm" height="${shape.height}mm">\n`;
+        bodyContent += `  <svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" viewBox="0 0 ${shape.width} ${shape.height}" width="${shape.width}mm" height="${shape.height}mm">\n`;
         if (shape.shapeKind === 'ellipse') {
           bodyContent += `    <ellipse cx="${shape.width / 2}" cy="${shape.height / 2}" rx="${shape.width / 2}" ry="${shape.height / 2}" fill="${escapeXml(shape.fillColor || 'none')}" stroke="${escapeXml(shape.strokeColor || '#000000')}" stroke-width="${shape.strokeWidthMm || 1}"/>\n`;
         } else if (shape.shapeKind === 'line') {
@@ -353,6 +373,8 @@ svg {
         }
         bodyContent += '  </svg>\n';
       }
+    }
+    if (article) bodyContent += '</section>\n';
     }
 
     const pageXhtml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -471,4 +493,3 @@ export async function exportDocumentToEpubAsync(state: ProjectState, options: Ep
   await fontManager.restoreFonts(state.embeddedFonts);
   return exportDocumentToEpub(await prepareExportAssets(state, typeof window !== 'undefined', false, true), options);
 }
-import { tableCellSpan } from './engine/tableCells';

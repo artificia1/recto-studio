@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { decodePDFRawStream, PDFArray, PDFDict, PDFDocument, PDFName, PDFRawStream } from 'pdf-lib';
 import { exportDocumentToPdf } from '../src/export/pdfExport';
+import { generateFixedEpubPackage } from '../src/export/fixedEpub';
+import { generateEpubPackage } from '../src/epubExport';
 import { accessiblePublication } from './fixtures/accessiblePublication';
 import type { CanvasElement } from '../src/types';
 
@@ -44,6 +46,12 @@ describe('strict accessible publication PDFs', () => {
     expect(items.filter(item => key(item, 'S') === '/Table')).toHaveLength(1);
     expect(items.filter(item => key(item, 'S') === '/TH')).toHaveLength(2);
     expect(items.filter(item => key(item, 'S') === '/TD')).toHaveLength(2);
+    const fixed = generateFixedEpubPackage(manager.getState());
+    expect(fixed['OEBPS/page-2.xhtml']).toContain('<th scope="col"');
+    expect(fixed['OEBPS/page-2.xhtml']).toContain('Long body cell');
+    const reflow = generateEpubPackage(manager.getState(), { strict: true });
+    expect(reflow['OEBPS/page_2.xhtml']).toBeUndefined();
+    expect(reflow['OEBPS/page_1.xhtml']).toContain('Long body cell');
     writeFileSync('test-results/export-validation/accessible-continuation.pdf', new Uint8Array(doc.output('arraybuffer')));
   }, 60000);
 

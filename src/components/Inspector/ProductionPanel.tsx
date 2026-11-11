@@ -16,10 +16,13 @@ import BookReferencesPanel from './BookReferencesPanel';
 import { readBookArchive, type ArchivedChapter } from '../../engine/bookArchive';
 import { bookReferenceTargets, hasBookReferenceTarget, type BookReference } from '../../engine/bookReferences';
 import { compareChapterImpact } from '../../engine/chapterImpact';
-import { buildBookDelivery, defaultBookDelivery, type BookDeliveryRecipe } from '../../engine/bookDelivery';
+import { bookCoverDimensions, buildBookDelivery, defaultBookDelivery, type BookDeliveryRecipe } from '../../engine/bookDelivery';
+import { LayoutChangeSummary } from '../LayoutChangeSummary';
 import BookDeliveryPanel from './BookDeliveryPanel';
 
 const ProofReviewDialog = lazy(() => import('../ProofReviewDialog'));
+const AccessibilityWorkspace = lazy(() => import('../AccessibilityWorkspace'));
+const TranslationWorkspace = lazy(() => import('../TranslationWorkspace'));
 const PublicationBundlePanel = lazy(() => import('./PublicationBundlePanel'));
 const chapterPageCount = (chapter: ArchivedChapter) => chapter.state.spreads.reduce((count, spread) => count + spread.pages.length, 0);
 const parseChapter = (text: string) => parseProject(text, INITIAL_STATE);
@@ -32,11 +35,14 @@ export default function ProductionPanel({ state }: { state: ProjectState }) {
   const [chapters, setChapters] = useState<ArchivedChapter[]>([]);
   const [references, setReferences] = useState<BookReference[]>([]);
   const [delivery, setDelivery] = useState<BookDeliveryRecipe>(defaultBookDelivery);
-  const [replacement, setReplacement] = useState<{ before: ArchivedChapter; after: ArchivedChapter; missing: string[]; impact: ReturnType<typeof compareChapterImpact> }>();
+  const [replacement, setReplacement] = useState<{ before: ArchivedChapter; after: ArchivedChapter; missing: string[];
+    impact: ReturnType<typeof compareChapterImpact>; coverReview: boolean }>();
   const [title, setTitle] = useState('Untitled Book');
   const [preset, setPreset] = useState<PdfPreset>('screen');
   const [busy, setBusy] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [accessibilityOpen, setAccessibilityOpen] = useState(false);
+  const [translationOpen, setTranslationOpen] = useState(false);
   const [bundleOpen, setBundleOpen] = useState(false);
   const [printer, setPrinter] = useState<PrinterProfile>();
   const [message, setMessage] = useState('');
@@ -71,7 +77,14 @@ export default function ProductionPanel({ state }: { state: ProjectState }) {
         const targets = bookReferenceTargets(state);
         const missing = references.filter(ref => ref.chapterId === before.id &&
           !hasBookReferenceTarget(targets, ref.elementId, ref.paragraphId, ref.format)).map(ref => ref.key);
-        setReplacement({ before, after: { ...before, name: file.name, state }, missing, impact: compareChapterImpact(before.state, state) });
+        const updatedBook = bookEngine.repaginateBook(book(), id => id === before.id ? state : load(id));
+        const last = updatedBook.chapters.at(-1)!;
+        const pageCount = last.startPageNumber + last.pageCount - 1;
+        const settings = chapters[0]?.id === before.id ? state.settings : chapters[0].state.settings;
+        const coverReview = !!delivery.approvedDimensions &&
+          bookCoverDimensions(settings, pageCount, delivery).signature !== delivery.approvedDimensions;
+        setReplacement({ before, after: { ...before, name: file.name, state }, missing,
+          impact: compareChapterImpact(before.state, state), coverReview });
       });
     };
     picker.click();
@@ -89,6 +102,14 @@ export default function ProductionPanel({ state }: { state: ProjectState }) {
   };
   return <details className="publication-panel">
     <summary>Production & books</summary>
+    <button className="sm-btn" onClick={() => setAccessibilityOpen(true)}>Accessibility workspace</button>
+    {accessibilityOpen && <Suspense fallback={<p role="status">Loading accessibility tools…</p>}>
+      <AccessibilityWorkspace state={state} onClose={() => setAccessibilityOpen(false)}/>
+    </Suspense>}
+    <button className="sm-btn" onClick={() => setTranslationOpen(true)}>Translation workspace</button>
+    {translationOpen && <Suspense fallback={<p role="status">Loading translation tools…</p>}>
+      <TranslationWorkspace state={state} onClose={() => setTranslationOpen(false)}/>
+    </Suspense>}
     <button className="sm-btn" onClick={() => setBundleOpen(true)} disabled={bundleOpen}>Manage publication layouts</button>
     {bundleOpen && <Suspense fallback={<p>Loading layout tools…</p>}><PublicationBundlePanel/></Suspense>}
     <button className="sm-btn" onClick={() => setReviewOpen(true)}>Compare proofs</button>
@@ -169,6 +190,7 @@ export default function ProductionPanel({ state }: { state: ProjectState }) {
       <p>{replacement.before.name} ({chapterPageCount(replacement.before)} pages) → {replacement.after.name} ({chapterPageCount(replacement.after)} pages)</p>
       {!!replacement.missing.length && <p role="alert">Targets missing in this revision: {replacement.missing.join(', ')}. Reassign these references before exporting.</p>}
       <p>{replacement.impact.headings.length} heading changes · {replacement.impact.introduced.length} new findings · {replacement.impact.resolved.length} resolved findings</p>
+      <LayoutChangeSummary result={replacement.impact.layout} coverReview={replacement.coverReview}/>
       {!!replacement.impact.headings.length && <ul>{replacement.impact.headings.map(({ key, before, after }) => <li key={key}>
         {before ? `${before.title} (page ${before.pageNumber})` : 'New heading'} → {after ? `${after.title} (page ${after.pageNumber})` : 'Removed'}
       </li>)}</ul>}

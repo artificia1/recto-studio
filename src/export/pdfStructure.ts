@@ -8,14 +8,16 @@ import { savePublicationFile } from '../desktop';
 import type { PdfStructureGroup } from './pdfSemantics';
 import { installPdfFonts } from './pdfFontResources';
 import { installPdfGradients } from './pdfGradients';
+import { readingTextRole } from '../engine/readingOrder';
 
 export interface PdfContentTag { page: number; mcid: number; role: string; text?: string; alt?: string; order: number; parentId?: string }
 export function elementPdfTag(state: ProjectState, element: CanvasElement, page: number, mcid: number): PdfContentTag | undefined {
+  if (element.decorative) return undefined;
   if (element.type === 'text') {
     const style = state.paragraphStyles.find(style => style.id === element.paragraphStyleId);
-    const role = /^H[1-6]$/.test(style?.pdfTag || '') ? style!.pdfTag! : 'P';
+    const role = readingTextRole(element, style?.pdfTag, 0);
     const text = element.textContent ? storyText(element.textContent) : element.text;
-    return { page, mcid, role, text, order: element.readingOrder ?? element.y * 1000 + element.x };
+    return { page, mcid, role: role === 'LI' ? 'P' : role, text, order: element.readingOrder ?? element.y * 1000 + element.x };
   }
   if (element.type === 'image' && element.altText?.trim()) return { page, mcid, role: 'Figure', alt: element.altText, order: element.readingOrder ?? element.y * 1000 + element.x };
   return undefined;

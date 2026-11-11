@@ -27,6 +27,20 @@ The spread list can move complete spreads earlier or later; a move that would
 reverse linked text or table frames is refused. Review facing-page arrangement
 and chapter openings after changing the order.
 
+In **Pages → Layout change inspector**, capture a comparison point before
+editing, then compare the current layout. The review lists paragraphs and
+footnotes that moved between frames, newly overset frames, page counts, and
+trim changes. The comparison point lasts until you open another project or
+reload the editor. Font replacement and manuscript update previews compare
+the current frame chain. Chapter refresh also checks approved book cover
+dimensions against the revised assembled page count.
+
+In **Pages → House style checker**, save preferred wording as one
+`current → preferred` rule per line. You can also flag repeated spaces,
+nonbreaking spaces before units, or paragraphs that need a designated style.
+Check the current document, review each finding, and apply selected wording
+and spacing fixes in one undo step. Rules are saved on the current device.
+
 **Pages → Review notes** adds feedback to the active spread, positioned at the
 selected object when available. Edit, resolve, reopen and filter notes there.
 Pins follow spread identity when order changes; deleting a spread removes its

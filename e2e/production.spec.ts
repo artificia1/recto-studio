@@ -71,6 +71,7 @@ test('refreshes a chapter and updates a book reference without changing the sour
   await (await choosing).setFiles(file('methods-revised.recto', revised));
   await expect(production.getByRole('region', { name: 'Chapter refresh preview' })).toContainText('methods-revised.recto (2 pages)');
   await expect(production.getByRole('region', { name: 'Chapter refresh preview' })).toContainText('Methods (page 1) → Methods (page 2)');
+  await expect(production.getByRole('region', { name: 'Layout changes' })).toContainText('Pages 1 → 2');
   await expect(production.getByRole('region', { name: 'Chapter refresh preview' })).toContainText('Text overflows its final frame.');
   await production.getByRole('button', { name: 'Apply chapter refresh' }).click();
   const contents = await download('Export book contents');

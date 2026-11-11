@@ -1,4 +1,37 @@
-# Recto Studio 1.3.2
+# Recto Studio 1.4.0
+
+Translation editions, accessible reading order, and editorial review for books, magazines, and other publications.
+
+## Downloads
+
+- **Windows x64** — NSIS installer and portable ZIP. The installer can bootstrap WebView2. Existing updater-enabled installations can check for the signed update in Recto.
+- **Linux x64** — Debian package and AppImage. Install the Debian package with your package manager or mark the AppImage executable before launching it. Linux updates use these downloads.
+- **Source** — ZIP and tar.gz archives. See DESKTOP.md for native build prerequisites.
+- **Verification** — SHA256SUMS.txt covers the downloadable artifacts. The Windows updater uses the installer signature and latest.json.
+
+## Translation and editorial review
+
+- Exchange selected stories, parent-page text, notes, table cells, and image descriptions through XLIFF 2.0. Review returned translations with inline formatting, notes, references, and publication fields preserved.
+- Check terminology, locale-formatted numbers, and inconsistent repeated copy. Reuse approved plain-text translations, export outstanding units, and share a bilingual review.
+- Compare composed source and target frames, check overset and font coverage, and save an independent editable edition.
+- Capture a layout comparison point to see changes in paragraph placement, footnotes, page count, and trim. Use the same comparison in manuscript and font replacement previews.
+- Save house style rules and apply selected wording and spacing fixes in a single undo step.
+
+## Accessibility and delivery
+
+- Set reading order from the numbered page map or with keyboard controls. Group frames across pages, edit image descriptions and heading roles, link captions, and review table headers.
+- Preview the reading sequence in Recto. Tagged PDF, reflowable EPUB, and fixed-layout EPUB use the authored order within each page. Fixed-layout EPUB supports content-sized tables, including continuations and merged cells.
+- Preview manuscript revisions, continue footnotes across linked frames, and deliver interior and cover PDFs, reflowable EPUB, and a report in one book package. Chapter refresh checks whether revised pagination changes an approved cover.
+- Share stories across editable layout sizes, and apply non-destructive image adjustments, hatching, mesh fills, and patterned strokes.
+
+## Import and performance
+
+- IDML import preserves supported paragraph-style inheritance and uses all four corners to calculate rotated frame bounds.
+- The multi-spread overview reuses its grid and checks nearby rows during scrolling. Toolbar export handlers load when invoked.
+
+---
+
+# Previous release: Recto Studio 1.3.2
 
 Colour-managed publishing, shared manuscripts, improved runaround and academic references for Windows and Linux.
 

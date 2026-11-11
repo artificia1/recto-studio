@@ -49,6 +49,7 @@ Use `V` for Selection, `T` for Type, `P` for Pen, and `W` for Preview.
 | **Tables and catalogs** | Linked table continuations, repeating headers and footers, row splitting and vertical merges, data merge, and conditional editions |
 | **Press and review** | ICC conversion, separations and ink-coverage previews, printer profiles, spot inks, PDF/X candidates, proof comparison and PDF comment import, cover spines, and booklet imposition |
 | **File handoff** | Editable Scribus 1.6 import, IDML import and export for supported features, and an InDesign round-trip check script |
+| **Translation** | XLIFF handoff, bilingual review, reusable translation memory, and editable language editions with layout and font checks |
 | **Delivery** | Print and tagged PDFs, PDF/UA-1 export, EPUB 3, HTML flipbooks, publication packages, and headless batch publishing |
 
 Some workflows have format-specific limits. The guides explain what carries

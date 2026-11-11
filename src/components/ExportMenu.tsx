@@ -1,6 +1,7 @@
 import { Fragment } from 'preact';
+import type { PublicationDownload } from '../export/publicationDownloads';
 
-type ExportAction = 'proof' | 'press' | 'epub' | 'fixed' | 'flipbook' | 'image' | 'package' | 'idml' | 'kit' | 'booklet' | 'cover';
+export type ExportAction = PublicationDownload | 'booklet' | 'cover';
 
 const groups: { action: ExportAction; name: string; description?: string; title?: string }[][] = [
   [
@@ -25,13 +26,13 @@ const groups: { action: ExportAction; name: string; description?: string; title?
   ],
 ];
 
-export default function ExportMenu({ actions, onClose }: { actions: Record<ExportAction, () => void>; onClose: () => void }) {
+export default function ExportMenu({ onExport, onClose }: { onExport: (action: ExportAction) => void; onClose: () => void }) {
   return <div className="top-dropdown-menu export-dropdown-menu">
     {groups.map((group, index) => <Fragment key={group[0].action}>
       {index > 0 && <div className="dropdown-divider"/>}
       {group.map(item => <button key={item.action} aria-label={item.name} className="top-dropdown-item" title={item.title} onClick={() => {
         onClose();
-        actions[item.action]();
+        onExport(item.action);
       }}>
         <div><div className="dropdown-item-title">{item.name}</div>
           {item.description && <div className="dropdown-item-sub">{item.description}</div>}</div>

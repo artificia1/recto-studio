@@ -676,6 +676,8 @@ test('merges a revised Word manuscript while preserving unchanged heading identi
   const dialog = page.getByRole('dialog', { name: 'Import manuscript' });
   await dialog.getByRole('button', { name: 'Review manuscript changes' }).click();
   await expect(dialog.getByLabel('Manuscript changes')).toContainText('Updated body');
+  await dialog.getByRole('button', { name: 'Preview layout changes' }).click();
+  await expect(dialog.getByRole('region', { name: 'Layout changes' })).toBeVisible();
   await dialog.getByRole('button', { name: 'Apply selected changes' }).click();
   await expect(dialog).toBeHidden();
   const saved = await savedProject(page);
