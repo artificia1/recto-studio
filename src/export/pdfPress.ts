@@ -6,7 +6,7 @@ export type PressStandard = 'pdfx1a-2003' | 'pdfx4';
 export const escapeXml = (value: string) => value.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[character]!));
 
 /** Walk nested Form XObjects and tiling patterns as well as the page's own resources. */
-function* pageResources(pdf: PDFDocument) {
+export function* pageResources(pdf: PDFDocument) {
   const pending = pdf.getPages().map(page => page.node.Resources()).filter((value): value is PDFDict => !!value);
   const resourcesSeen = new Set<PDFDict>();
   const streamsSeen = new Set<PDFRawStream>();

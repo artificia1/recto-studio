@@ -14,7 +14,8 @@ const groups: { action: ExportAction; name: string; description?: string; title?
       title: 'Export current spread as high-resolution PNG image' },
   ],
   [
-    { action: 'package', name: 'Package Document for Print...', description: 'Bundle project, PDF, assets, and instructions' },
+    { action: 'package', name: 'Package Document for Print...', description: 'Bundle the output edition, print PDF, assets, and instructions' },
+    { action: 'archive', name: 'Save Editable Project Archive', description: 'Back up all editions, including nonprinting and editorial content' },
     { action: 'idml', name: 'Adobe InDesign Package (.idml)', description: 'Two-way exchange package for agency handoff' },
     { action: 'kit', name: 'InDesign Validation Kit (.zip)', description: 'IDML and a native round-trip check script' },
   ],

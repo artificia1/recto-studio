@@ -1,0 +1,48 @@
+.recovery-dialog {
+  width: min(620px, 94vw);
+  max-height: 88vh;
+}
+
+.recovery-content {
+  padding: 0 18px 18px;
+  overflow-y: auto;
+}
+
+.recovery-content > p {
+  margin: 12px 0;
+  line-height: 1.5;
+}
+
+.recovery-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.recovery-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border, #3d3d3d);
+}
+
+.recovery-entry {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  flex: 1 1 215px;
+}
+
+.recovery-entry > span {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.9em;
+}
+
+.recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}

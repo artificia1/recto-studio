@@ -3,10 +3,20 @@ export function isDesktop(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
+export interface DesktopProjectFile {
+  handle: string;
+  name: string;
+}
+
+export const desktopProjectFiles = new WeakMap<File, DesktopProjectFile>();
+
 export async function openDesktopDocument(): Promise<File | null> {
   const { invoke } = await import('@tauri-apps/api/core');
-  const document = await invoke<{ name: string; bytes: number[] } | null>('desktop_open_document');
-  return document ? new File([new Uint8Array(document.bytes)], document.name) : null;
+  const result = await invoke<{ name: string; bytes: number[]; project?: DesktopProjectFile | null } | null>('desktop_open_document');
+  if (!result) return null;
+  const file = new File([new Uint8Array(result.bytes)], result.name);
+  if (result.project) desktopProjectFiles.set(file, result.project);
+  return file;
 }
 
 export async function savePublicationFile(name: string, data: Blob | Uint8Array | ArrayBuffer | string, mimeType = 'application/octet-stream'): Promise<boolean> {

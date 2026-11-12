@@ -75,10 +75,26 @@ Flipbooks contain HTML/CSS and reader interaction code. External image/font
 references can still require a network connection. Test the exported file in the
 browsers and hosting environment you intend to support.
 
-ZIP handoff packages include the native project, print PDF, resolved original
-image assets, embedded fonts, and instructions. External images must be reachable
-or embedded first; packaging does not establish printer readiness. The internal PDF is generated without
-starting a separate PDF download.
+## Project archives and print packages
+
+Choose **Export → Save Editable Project Archive** to back up one document in a
+`.rectoarchive` file. The ZIP contains an editable project snapshot with all
+editions, nonprinting and editorial content, notes, embedded fonts, and original
+embedded image bytes, including artwork on unused parent pages. Image
+adjustments stay editable.
+
+Embed external images or relink them from local files before saving. If the
+document uses fonts installed on your system, install those fonts separately
+on the destination device. The archive limit is 128 MB in the browser and
+desktop apps.
+
+Restore an archive through **File → Open Project** or drop it into the editor.
+Recto verifies the snapshot's checksum before replacing the open project.
+
+**Package Document for Print** creates a handoff ZIP with an editable `.recto`
+snapshot of the output edition, a print PDF, resolved image originals, embedded
+fonts, and instructions. Embed external images or ensure they are reachable
+when packaging. Check the delivered PDF against the printer's specifications.
 
 ## Reproduce validation
 
@@ -128,6 +144,15 @@ it does not certify PDF/X. A downloadable JSON report lists publication issues,
 font use and headings. Setup → Separations preview samples current artwork,
 allows plate toggling and highlights total ink coverage over the chosen threshold.
 This display proof is not a RIP separation proof. PDF/A is not implemented.
+
+Use **Pages → Production & books → Inspect delivery PDF** to check the finished
+file and save a JSON report with its SHA-256 fingerprint. The report includes
+page boxes, per-edge bleed, font resources, the structure tree indicator, and
+embedded ICC output profiles that Recto can read. With a printer profile
+selected, Recto checks the required bleed and ICC fingerprint against the PDF
+itself. Inspection supports up to 500 pages and 75 MiB. Review rendered
+artwork, effective image resolution, ink coverage, and any required standards
+conformance separately.
 
 Content-sized tables share their wrapped line and row layout between canvas and
 PDF. PDF export stops if body rows cannot fit, repeated headers/footers exceed

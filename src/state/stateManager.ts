@@ -56,6 +56,7 @@ import { generateEan13DataUrl } from '../engine/barcodeEngine';
 import { generateQrDataUrl } from '../engine/qrEngine';
 import { RectoDB } from './persistence';
 import { Autosave } from './autosave';
+import { isDesktop } from '../desktop';
 import { StateHistory } from './history';
 import {
   DEFAULT_PARAGRAPH_STYLES,
@@ -160,6 +161,7 @@ export class StateManager {
     if (recovered && revision === this.documentRevision && request === this.openRequest) {
       try {
         this.loadFromJson(JSON.stringify(recovered));
+        this.autosave.finishDesktopRestore(recovered);
       } catch (error) {
         console.warn('Invalid autosave backup skipped:', error);
       }
@@ -173,8 +175,10 @@ export class StateManager {
 
   constructor() {
     const saved = this.loadFromStorage();
+    const desktop = isDesktop();
     this.hasValidLocalSave = !!saved;
-    this.state = saved || structuredClone(INITIAL_STATE);
+    this.state = (!desktop && saved) || structuredClone(INITIAL_STATE);
+    if (desktop) this.autosave.beginDesktopDocument(undefined, saved);
     this.snapshots = this.loadSnapshotsFromStorage();
     this.renumberPages();
 
@@ -2465,6 +2469,10 @@ export class StateManager {
   }
 
   public resetToDefault() {
+    if (isDesktop()) {
+      this.autosave.beginDesktopDocument();
+      this.history.clear();
+    }
     this.state = JSON.parse(JSON.stringify(INITIAL_STATE));
     this.documentSession++;
     this.pushHistory();
@@ -2555,6 +2563,7 @@ export class StateManager {
       activeLayerId: 'layer-1',
     };
 
+    if (isDesktop()) this.autosave.beginDesktopDocument();
     this.state = blankState;
     this.documentSession++;
     this.getState();
@@ -2570,12 +2579,16 @@ export class StateManager {
 
   private installProject(project: ProjectState) {
     const previous = this.state;
+    const desktop = isDesktop();
+    if (desktop) void this.autosave.flush();
     try {
       this.state = project;
       this.renumberPages();
       this.reflowFormattedStories();
+      if (desktop) this.history.clear();
       this.pushHistory();
     } catch (error) { this.state = previous; throw error; }
+    if (desktop) this.autosave.beginDesktopDocument();
     this.documentSession++;
     this.notify();
   }
@@ -2605,7 +2618,7 @@ export class StateManager {
   public finishUndoGroup() { this.collaborativeHistory?.stopCapturing?.(); }
 
   /** Validate the complete shared publication before replacing any local state. */
-  public applySharedPublication(document: Partial<ProjectState>) {
+  public applySharedPublication(document: Partial<ProjectState>, openingSharedProject = false) {
     const activeId = this.getActiveSpread().id;
     const candidate = parseProject(JSON.stringify({ ...this.state, ...document }), INITIAL_STATE);
     const index = candidate.spreads.findIndex(spread => spread.id === activeId);
@@ -2613,6 +2626,10 @@ export class StateManager {
     const ids = new Set(candidate.spreads[candidate.activeSpreadIndex].elements.map(element => element.id));
     candidate.selectedElementIds = this.state.selectedElementIds.filter(id => ids.has(id));
     candidate.selectedElementId = this.state.selectedElementId && ids.has(this.state.selectedElementId) ? this.state.selectedElementId : null;
+    if (openingSharedProject && isDesktop()) {
+      this.autosave.beginDesktopDocument();
+      this.documentSession++;
+    }
     this.state = candidate;
     this.reflowFormattedStories(); this.refreshPublicationReferences(false); this.notify();
   }
@@ -3302,6 +3319,9 @@ export class StateManager {
   }
 
   public async importProjectFile(file: File): Promise<void> {
+    if (/\.rectoarchive$/i.test(file.name)) {
+      return this.openProject(async () => (await import('../engine/projectArchive')).readProjectArchive(file), true);
+    }
     return this.openProject(() => RectoDB.importProjectFile(file, INITIAL_STATE), true);
   }
 
@@ -3401,7 +3421,12 @@ export class StateManager {
   public rollbackToSnapshot(snapshotId: string): boolean {
     const snap = this.snapshots.find((s) => s.id === snapshotId);
     if (!snap) return false;
-    this.state = JSON.parse(JSON.stringify(snap.state));
+    const project = structuredClone(snap.state);
+    if (isDesktop()) {
+      this.installProject(project);
+      return true;
+    }
+    this.state = project;
     this.pushHistory();
     this.notify();
     return true;

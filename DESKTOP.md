@@ -13,14 +13,23 @@ For portable use, extract the entire portable ZIP to a folder and double-click
 **Recto Studio.exe**. Windows WebView2 must already be installed. Portable refers
 to installation-free launching; autosave stays in your Windows user profile.
 
-Use **File → Open** to choose a publication, and **Save** to write a `.recto` file
-with the Windows save dialog. PDF, EPUB, HTML, PNG, IDML, and package exports also
-use native save dialogs. Importing manuscript or image files uses the existing
-file chooser. The browser edition remains available separately.
+Use **File → Open Project** to choose a publication. **Save** (Ctrl+S) writes
+back to the open `.recto` file. New projects and imports ask where to save their
+first `.recto`. **Save Project As** (Ctrl+Shift+S) chooses a new location. If the
+original file has changed or disappeared since you opened or saved it, use
+**Save Project As** to keep your edits in a separate file.
 
-Local autosave is kept in the application's WebView2 profile and is separate from
-the browser edition's storage. Save a `.recto` file to move work between editions.
-Documents and exports are limited to 128 MB per native Open/Save operation.
+**File → Recover Unsaved Projects** lists local checkpoints from editing sessions,
+including work left in a previous project. Opening a recovery creates a detached
+copy. Use **Save Project As** to choose where to keep it. Autosave stays in the
+desktop app profile. Save a `.recto` file or editable project archive to move work
+between devices.
+
+Restoring a project from Version History or opening a shared publication also
+starts a separate desktop editing session. Choose its file on the first save.
+
+Publication exports use native save dialogs. Documents and exports are limited
+to 128 MB per native Open or Save operation.
 
 This release is not code-signed. Windows may show a publisher or reputation
 warning. Download from the official repository and compare the SHA-256 checksum

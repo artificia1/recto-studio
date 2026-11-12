@@ -8,7 +8,7 @@ import { useState, useEffect, useRef } from 'preact/hooks';
 import { stateManager } from '../state';
 import { PAGE_PRESETS, PagePreset, ProjectState, VersionSnapshot, PeerPresence } from '../types';
 import { collabSession } from '../collab';
-import { isDesktop, openDesktopDocument, savePublicationFile } from '../desktop';
+import { isDesktop } from '../desktop';
 import type { IngestedStory } from '../contentImport';
 import type { TextElement } from '../types';
 import { BookletImpositionModal, CoverSpineModal } from './LazyPrintDialogs';
@@ -19,9 +19,16 @@ const AppUpdater = lazy(() => import('./AppUpdater').then(module => ({ default: 
 const ScribusImportDialog = lazy(() => import('./ScribusImportDialog'));
 const NewProjectMenu = lazy(() => import('./NewProjectMenu'));
 const ExportMenu = lazy(() => import('./ExportMenu'));
+const FileMenu = lazy(() => import('./FileMenu'));
 const CollaborationDialog = lazy(() => import('./CollaborationDialog'));
 const DataMergeDialog = lazy(() => import('./DataMergeDialog'));
 const VersionHistoryDialog = lazy(() => import('./VersionHistoryDialog'));
+const RecoveryDialog = lazy(() => import('./RecoveryDialog'));
+
+function saveProject(saveAs = false) {
+  void import('../desktopProjects').then(({ saveCurrentProject }) => saveCurrentProject(saveAs))
+    .catch(error => alert(`Could not save this project. ${error instanceof Error ? error.message : String(error)}`));
+}
 
 interface TopBarProps {
   state: ProjectState;
@@ -83,8 +90,21 @@ export function TopBar({
   const [csvText, setCsvText] = useState('');
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [showFileMenu, setShowFileMenu] = useState(false);
+  const [showRecovery, setShowRecovery] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const handleSaveShortcut = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || !(event.ctrlKey || event.metaKey) || event.altKey || event.key.toLowerCase() !== 's') return;
+      event.preventDefault();
+      if (event.repeat || event.isComposing) return;
+      if (event.target instanceof HTMLElement && event.target.matches('input, textarea, [contenteditable]')) event.target.blur();
+      saveProject(event.shiftKey);
+    };
+    window.addEventListener('keydown', handleSaveShortcut);
+    return () => window.removeEventListener('keydown', handleSaveShortcut);
+  }, []);
 
   useEffect(() => {
     const handleFsChange = () => {
@@ -208,20 +228,17 @@ export function TopBar({
     }
   };
 
-  const handleSave = () => runExport(async () => {
-    const json = stateManager.exportJson();
-    const name = state.settings.title.toLowerCase().replace(/[^a-z0-9_-]/g, '-') || 'publication';
-    await savePublicationFile(`${name}.recto`, json, 'application/json');
-  });
+  const installFile = async (file: File) => {
+    const name = file.name.toLowerCase();
+    if (name.endsWith('.indd')) onOpenIndd?.(file);
+    else if (name.endsWith('.idml')) await stateManager.loadFromIdml(file);
+    else await stateManager.importProjectFile(file);
+  };
 
   const handleOpenClick = () => {
     if (!isDesktop()) { fileInputRef.current?.click(); return; }
-    void (async () => {
-      try {
-        const file = await openDesktopDocument();
-        if (file) await handleFileChange({ target: { files: [file], value: '' } });
-      } catch (error) { alert(`Could not open this project. ${error instanceof Error ? error.message : String(error)}`); }
-    })();
+    void import('../desktopProjects').then(({ openCurrentDesktopProject }) => openCurrentDesktopProject(installFile))
+      .catch(error => alert(`Could not open this project. ${error instanceof Error ? error.message : String(error)}`));
   };
 
   const handleIdmlClick = () => {
@@ -237,16 +254,7 @@ export function TopBar({
     const file = target.files?.[0];
     if (file) {
       try {
-        const lower = file.name.toLowerCase();
-        if (lower.endsWith('.idml') || lower.endsWith('.indd')) {
-          if (lower.endsWith('.indd')) {
-            onOpenIndd?.(file);
-          } else {
-            await stateManager.loadFromIdml(file);
-          }
-          return;
-        }
-        await stateManager.importProjectFile(file);
+        await installFile(file);
       } catch (err) {
         console.error('Failed to load project file:', err);
         alert(`Could not open this project. ${err instanceof Error ? err.message : 'Please check the file.'}`);
@@ -637,7 +645,7 @@ export function TopBar({
         {/* Quick Save Project */}
         <button
           className="action-btn"
-          onClick={handleSave}
+          onClick={() => saveProject()}
           title="Save .recto project to disk (Ctrl+S)"
         >
           Save
@@ -656,292 +664,27 @@ export function TopBar({
           >
             File ▾
           </button>
-          {showFileMenu && (
-            <div className="top-dropdown-menu file-dropdown-menu">
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowFileMenu(false);
-                  handleCreateBlank(state.settings.preset || 'A4', state.settings.facingPages !== false);
-                }}
-                title="Create a brand new blank document (Ctrl+N)"
-              >
-                <span>New Blank Document...</span>
-                <span className="dropdown-item-shortcut">Ctrl+N</span>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowFileMenu(false);
-                  handleOpenClick();
-                }}
-                title="Load .recto, .idml, or .json project file (Ctrl+O)"
-              >
-                <span>Open Project...</span>
-                <span className="dropdown-item-shortcut">Ctrl+O</span>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowFileMenu(false);
-                  handleSave();
-                }}
-                title="Save current project to .recto package (Ctrl+S)"
-              >
-                <span>Save Project (.recto)</span>
-                <span className="dropdown-item-shortcut">Ctrl+S</span>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowFileMenu(false);
-                  stateManager.addSpread();
-                }}
-                title="Insert New Page Spread"
-              >
-                <span>+ Add Page Spread</span>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowFileMenu(false);
-                  onOpenDocumentSetup?.();
-                }}
-                title="Adjust trim dimensions, facing pages, margins, bleed, and baseline grid (Alt+Ctrl+P)"
-              >
-                <span>Document Setup / Preferences...</span>
-                <span className="dropdown-item-shortcut">Alt+Ctrl+P</span>
-              </button>
-
-              <button className="top-dropdown-item" onClick={() => {
-                setShowFileMenu(false);
-                try {
-                  const count = stateManager.paginateStory(state.selectedElementId || '');
-                  alert(count ? `Added ${count} linked page${count === 1 ? '' : 's'}. You can undo this change.` : 'The story already fits its frames.');
-                } catch (error) {
-                  alert(error instanceof Error ? error.message : String(error));
-                }
-              }}><span>Auto-paginate selected story</span></button>
-              <div className="dropdown-menu-divider" />
-              <button className="top-dropdown-item" onClick={() => { setShowFileMenu(false); setShowScribusImport(true); }}>
-                <div className="dropdown-item-title">Import Scribus Document (.sla)…</div>
-              </button>
-
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowFileMenu(false);
-                  handleInddClick();
-                }}
-                title="Convert INDD through IDML or recover content fragments"
-              >
-                <div>
-                  <div className="dropdown-item-title">Import InDesign Document (.indd)...</div>
-                  <div className="dropdown-item-sub">IDML conversion guide or limited content recovery</div>
-                </div>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowFileMenu(false);
-                  handleIdmlClick();
-                }}
-                title="Open Adobe InDesign XML Package (.idml)"
-              >
-                <div>
-                  <div className="dropdown-item-title">Import InDesign Package (.idml)...</div>
-                  <div className="dropdown-item-sub">Complete vector frames, text styles, swatches & geometry</div>
-                </div>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowFileMenu(false);
-                  handlePlaceClick();
-                }}
-                title="Place markdown, text, or Word document into selected frame (Ctrl+D)"
-              >
-                <span>Place Manuscript Text...</span>
-                <span className="dropdown-item-shortcut">Ctrl+D</span>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowFileMenu(false);
-                  setShowDataMergeModal(true);
-                }}
-                title="Batch populate records via CSV dataset"
-              >
-                <span>Data Merge (CSV / JSON)...</span>
-              </button>
-              {selectedElements.length === 1 && selectedElements[0].type === 'text' && (
-                <button
-                  className="top-dropdown-item"
-                  onClick={() => {
-                    setShowFileMenu(false);
-                    const note = prompt('Enter Footnote Reference Text:', 'Citation or footnote note');
-                    if (note !== null) {
-                      stateManager.insertFootnote(selectedElements[0].id, note);
-                    }
-                  }}
-                  title="Insert Footnote into selected text frame"
-                >
-                  <span>Insert Footnote...</span>
-                </button>
-              )}
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowFileMenu(false);
-                  const activePage = stateManager.getActiveSpread().pages[0];
-                  if (activePage) {
-                    stateManager.generateTableOfContents(activePage.id, '.');
-                  }
-                }}
-                title="Scan document headings and generate automated Table of Contents with dot leaders"
-              >
-                <span>Generate Table of Contents...</span>
-              </button>
-
-              <div className="dropdown-menu-divider" />
-
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowFileMenu(false);
-                  onOpenQr?.();
-                }}
-                title="Generate native vector ISO/IEC 18004 QR code"
-              >
-                <span>Insert Vector QR Code...</span>
-              </button>
-              <button className="top-dropdown-item" onClick={() => { setShowFileMenu(false); onOpenEquation?.(); }}
-                title="Insert an editable LaTeX equation">
-                <span>Insert Equation (LaTeX)…</span>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowFileMenu(false);
-                  onOpenBarcode?.();
-                }}
-                title="Generate vector ISBN-13 / EAN-13 bookland barcode"
-              >
-                <span>Insert ISBN / Barcode...</span>
-              </button>
-
-              <div className="dropdown-menu-divider" />
-
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowFileMenu(false);
-                  onOpenStoryEditor?.();
-                }}
-                title="Open distraction-free Story Focus typewriter editor (Ctrl+Alt+Y)"
-              >
-                <span>Story Focus Editor...</span>
-                <span className="dropdown-item-shortcut">Ctrl+Y</span>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowFileMenu(false);
-                  onOpenScripts?.();
-                }}
-                title="InDesign-style publishing automation & JavaScript scripts (Alt+F11)"
-              >
-                <span>Scripts & Automation...</span>
-                <span className="dropdown-item-shortcut">Alt+F11</span>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowFileMenu(false);
-                  stateManager.insertIndexStory();
-                }}
-                title="Compiles alphabetical multi-level A-Z index"
-              >
-                <span>Generate Book Index Spread</span>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowFileMenu(false);
-                  handleOpenCoverSpine();
-                }}
-                title="Mathematical spine caliper, 3D jacket wrap & barcode zone"
-              >
-                <span>Book Cover & Spine Calculator...</span>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowFileMenu(false);
-                  handleOpenImposition();
-                }}
-                title="Duplex booklet imposition for saddle-stitch and multi-signature print"
-              >
-                <span>Booklet Imposition Studio...</span>
-              </button>
-
-              <div className="dropdown-menu-divider" />
-
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowFileMenu(false);
-                  stateManager.toggleReadingOrder();
-                }}
-                title="Toggle visual reading order inspection badges"
-              >
-                <span>Reading Order Overlay</span>
-                <span className="dropdown-item-shortcut">{state.showReadingOrder ? 'Hide' : 'Show'}</span>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowFileMenu(false);
-                  stateManager.toggleSlugBanner();
-                }}
-                title="Toggle prepress slug information area & CMYK color bars"
-              >
-                <span>Prepress Slug Area & Bars</span>
-                <span className="dropdown-item-shortcut">{state.showSlugBanner ? 'Hide' : 'Show'}</span>
-              </button>
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowFileMenu(false);
-                  stateManager.toggleQuickActionsToolbar();
-                }}
-                title="Toggle floating quick actions toolbar for selected elements"
-              >
-                <span>Touch Quick Actions Bar</span>
-                <span className="dropdown-item-shortcut">{state.showQuickActionsToolbar ? 'Hide' : 'Show'}</span>
-              </button>
-
-              <div className="dropdown-menu-divider" />
-
-              <button
-                className="top-dropdown-item"
-                onClick={() => {
-                  setShowFileMenu(false);
-                  onOpenShortcuts?.();
-                }}
-                title="View complete keyboard shortcut matrix (Press ? or Ctrl+/)"
-              >
-                <span>Keyboard Shortcuts Matrix...</span>
-                <span className="dropdown-item-shortcut">?</span>
-              </button>
-            </div>
-          )}
+          {showFileMenu && <Suspense fallback={null}>
+            <FileMenu state={state} selectedTextId={selectedElements.length === 1 && selectedElements[0].type === 'text' ? selectedElements[0].id : undefined}
+              onClose={() => setShowFileMenu(false)} onSave={saveProject} onRecovery={() => setShowRecovery(true)}
+              handleCreateBlank={handleCreateBlank} handleOpenClick={handleOpenClick} handleIdmlClick={handleIdmlClick}
+              handleInddClick={handleInddClick} handlePlaceClick={handlePlaceClick} onMerge={() => setShowDataMergeModal(true)}
+              onScribus={() => setShowScribusImport(true)} onOpenDocumentSetup={onOpenDocumentSetup} onOpenQr={onOpenQr}
+              onOpenEquation={onOpenEquation} onOpenBarcode={onOpenBarcode} onOpenStoryEditor={onOpenStoryEditor}
+              onOpenScripts={onOpenScripts} onOpenShortcuts={onOpenShortcuts} handleOpenCoverSpine={handleOpenCoverSpine}
+              handleOpenImposition={handleOpenImposition} />
+          </Suspense>}
         </div>
+
+        {showRecovery && <Suspense fallback={null}>
+          <RecoveryDialog onClose={() => setShowRecovery(false)} onRecover={project =>
+            stateManager.importProjectFile(new File([JSON.stringify(project)], 'recovered.recto'))} />
+        </Suspense>}
 
         <input
           type="file"
           ref={fileInputRef}
-          accept=".recto,.papercut,.json,.idml,.indd"
+          accept=".recto,.papercut,.json,.idml,.indd,.rectoarchive"
           style={{ display: 'none' }}
           onChange={handleFileChange}
         />

@@ -53,8 +53,8 @@ try {
     throw new Error(`Native desktop verification failed: ${JSON.stringify(verification)}`);
   }
   await page.reload();
-  await page.getByTitle('Click to rename document').waitFor();
-  if (await page.getByTitle('Click to rename document').inputValue() !== verification.title) throw new Error('Desktop autosave did not recover after reload.');
+  await page.waitForFunction(title => document.querySelector('input[title="Click to rename document"]')?.value === title,
+    verification.title).catch(() => { throw new Error('Desktop autosave did not recover after reload.'); });
   if (expectedVersion.localeCompare('1.2.4', undefined, { numeric: true }) >= 0) {
     await page.getByTitle('File Management, Project IO, and Document Imports').click();
     await page.getByTitle('Insert an editable LaTeX equation', { exact: true }).click();

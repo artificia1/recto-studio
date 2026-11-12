@@ -13,4 +13,8 @@
 .proof-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; max-height: 62vh; overflow: auto; background: #15181d; padding: 10px; }
 .proof-pair figure { margin: 0; min-width: 0; }
 .proof-pair img { width: 100%; height: auto; display: block; margin-top: 6px; background: white; }
+.pdf-delivery-dialog { width: min(760px, 95vw); }
+.pdf-delivery-dialog .proof-inputs { grid-template-columns: minmax(0, 1fr); }
+.pdf-delivery-dialog details { margin: 8px 0; }
+.pdf-delivery-hash { overflow-wrap: anywhere; }
 @media (max-width: 650px) { .proof-inputs, .proof-workspace { grid-template-columns: 1fr; } .proof-workspace ol { max-height: 120px; } }

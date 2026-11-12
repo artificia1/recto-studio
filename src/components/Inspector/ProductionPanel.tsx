@@ -21,6 +21,7 @@ import { LayoutChangeSummary } from '../LayoutChangeSummary';
 import BookDeliveryPanel from './BookDeliveryPanel';
 
 const ProofReviewDialog = lazy(() => import('../ProofReviewDialog'));
+const PdfDeliveryDialog = lazy(() => import('../PdfDeliveryDialog'));
 const AccessibilityWorkspace = lazy(() => import('../AccessibilityWorkspace'));
 const TranslationWorkspace = lazy(() => import('../TranslationWorkspace'));
 const PublicationBundlePanel = lazy(() => import('./PublicationBundlePanel'));
@@ -41,6 +42,7 @@ export default function ProductionPanel({ state }: { state: ProjectState }) {
   const [preset, setPreset] = useState<PdfPreset>('screen');
   const [busy, setBusy] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [deliveryPdfOpen, setDeliveryPdfOpen] = useState(false);
   const [accessibilityOpen, setAccessibilityOpen] = useState(false);
   const [translationOpen, setTranslationOpen] = useState(false);
   const [bundleOpen, setBundleOpen] = useState(false);
@@ -130,6 +132,10 @@ export default function ProductionPanel({ state }: { state: ProjectState }) {
     <label>PDF preset<select value={preset} onChange={event => setPreset(event.currentTarget.value as PdfPreset)}>{Object.entries(PDF_PRESETS).map(([id, item]) => <option key={id} value={id}>{item.label}</option>)}</select></label>
     <p>{PDF_PRESETS[preset].description} PDF presets do not certify PDF/X, PDF/A or PDF/UA conformance.</p>
     <PrinterProfilesPanel state={state} includeBleed={options.includeBleed} selected={printer} onSelect={setPrinter}/>
+    <button className="sm-btn" onClick={() => setDeliveryPdfOpen(true)}>Inspect delivery PDF</button>
+    {deliveryPdfOpen && <Suspense fallback={<p role="status">Loading PDF inspection…</p>}>
+      <PdfDeliveryDialog printer={printer} onClose={() => setDeliveryPdfOpen(false)}/>
+    </Suspense>}
     <details><summary>Process-colour trapping</summary>
       <label className="publication-check"><input type="checkbox" checked={trapping} onChange={event => setTrapping(event.currentTarget.checked)}/>Spread lighter opaque fills into adjacent darker fills</label>
       <label>Trap width (pt)<input aria-label="Trap width in points" type="number" min={0.001} max={2} step={0.001} value={trapWidth} onChange={event => setTrapWidth(Number(event.currentTarget.value))}/></label>

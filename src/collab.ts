@@ -62,12 +62,12 @@ export class CollabSession {
 
   public getProtocolError() { return this.protocolError; }
 
-  private installShared(baseline: SharedProject, id: string, update?: Uint8Array) {
+  private installShared(baseline: SharedProject, id: string, update?: Uint8Array, openingSharedProject = false) {
     const document = new this.sharedModule!.CollaborativeDocument(baseline);
     try {
       if (update) document.apply(update);
       // Initial materialization is checked before replacing the current replica.
-      if (update) this.manager.applySharedPublication(document.snapshot());
+      if (update) this.manager.applySharedPublication(document.snapshot(), openingSharedProject);
     } catch (error) { document.destroy(); throw error; }
     this.shared?.destroy(); this.shared = document;
     this.baseline = structuredClone(baseline); this.baselineId = id;
@@ -407,7 +407,7 @@ export class CollabSession {
           const baseline = this.sharedModule!.sharedProject(msg.baseline as ProjectState);
           if (await baselineDigest(baseline) !== msg.baselineId || generation !== this.generation || request !== this.syncRequest || this.manager.getDocumentRevision() !== this.syncRevision) return;
           this.isApplyingRemoteOp = true;
-          this.installShared(baseline, msg.baselineId, msg.update);
+          this.installShared(baseline, msg.baselineId, msg.update, true);
           this.syncRequest = null;
           void fontManager.restoreFonts(this.manager.getState().embeddedFonts).catch(error => console.warn('Shared fonts could not be restored:', error));
         } catch (error) { this.protocolError = 'The shared publication could not be validated. Your local document was preserved.'; console.warn(this.protocolError, error); }

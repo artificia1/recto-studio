@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
-import { importProject, menuCommand, savedProject, projectFixture } from './fixtures';
+import { importProject, menuCommand, savedProject, projectFileInput, projectFixture } from './fixtures';
 import { createZipArchive, readZip } from '../src/zip';
 import { fontCollectionFixture } from '../tests/fixtures/fontCollection';
 const runtimeErrors = new WeakMap<Page, string[]>();
@@ -173,7 +173,7 @@ test('exports a project and rejects malformed input without replacing it', async
   const saved = await savedProject(page);
   expect(saved.spreads[0].elements[0].text).toBe('Browser workflow sample');
   const dialog = page.waitForEvent('dialog');
-  const upload = page.locator('input[accept=".recto,.papercut,.json,.idml,.indd"]').setInputFiles({
+  const upload = projectFileInput(page).setInputFiles({
     name: 'invalid.recto', mimeType: 'application/json', buffer: Buffer.from('{"settings":{}}'),
   });
   const error = await dialog;
@@ -529,7 +529,7 @@ test('imports an IDML package using the file picker', async ({ page }) => {
     'Spreads/Spread_test.xml': '<Spread><Page Self="p" GeometricBounds="0 0 800 600"/><TextFrame Self="f" ParentStory="s" ItemTransform="1 0 0 1 0 0" GeometricBounds="0 0 200 400"/></Spread>',
     'Stories/Story_test.xml': '<Story Self="s"><ParagraphStyleRange><CharacterStyleRange><Content>IDML browser import</Content></CharacterStyleRange></ParagraphStyleRange></Story>',
   });
-  await page.locator('input[accept=".recto,.papercut,.json,.idml,.indd"]').setInputFiles({
+  await projectFileInput(page).setInputFiles({
     name: 'browser-idml.idml', mimeType: 'application/zip', buffer: Buffer.from(bytes),
   });
   await expect(page.getByTitle('Click to rename document')).toHaveValue('Imported InDesign Project');

@@ -22,10 +22,14 @@ export function projectFixture() {
 }
 
 export async function importProject(page: Page, project = projectFixture()) {
-  await page.locator('input[accept=".recto,.papercut,.json,.idml,.indd"]').setInputFiles({
+  await projectFileInput(page).setInputFiles({
     name: 'browser-test.recto', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)),
   });
   await expect(page.getByTitle('Click to rename document')).toHaveValue(project.settings.title);
+}
+
+export function projectFileInput(page: Page) {
+  return page.locator('input[type="file"][accept^=".recto,"]');
 }
 
 export async function menuCommand(page: Page, title: string) {

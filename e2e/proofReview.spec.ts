@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { PDFDocument, PDFHexString } from 'pdf-lib';
 import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { importProject, savedProject } from './fixtures';
 
 test.beforeEach(async ({ page }) => {
@@ -50,4 +51,31 @@ test('saves printer requirements and applies them to the active PDF export', asy
   const download = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export document PDF', exact: true }).click();
   expect((await (await download).path())!).toBeTruthy();
+});
+
+test('saves a delivery report tied to the actual exported PDF', async ({ page }) => {
+  await page.getByRole('combobox', { name: /PDF preset/ }).selectOption('press');
+  const pdfDownload = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export document PDF', exact: true }).click();
+  const pdf = await readFile((await (await pdfDownload).path())!);
+  const sha256 = createHash('sha256').update(pdf).digest('hex');
+
+  await page.getByRole('button', { name: 'Inspect delivery PDF', exact: true }).click();
+  const inspector = page.getByRole('dialog', { name: 'Inspect delivery PDF' });
+  const input = inspector.getByLabel('Delivery PDF', { exact: true });
+  await input.setInputFiles({ name: 'delivery.pdf', mimeType: 'application/pdf', buffer: pdf });
+  await inspector.getByRole('button', { name: 'Inspect PDF', exact: true }).click();
+  await expect(inspector.getByText(sha256, { exact: true })).toBeVisible();
+  const reportDownload = page.waitForEvent('download');
+  const save = inspector.getByRole('button', { name: 'Save delivery report' });
+  await save.click();
+  const report = JSON.parse(await readFile((await (await reportDownload).path())!, 'utf8'));
+  expect(report.source).toMatchObject({ name: 'delivery.pdf', sha256, sizeBytes: pdf.length });
+  expect(report.pages[0].boxesPt).toHaveProperty('TrimBox');
+  expect(Math.min(...(Object.values(report.pages[0].bleedMm) as number[]))).toBeCloseTo(3);
+
+  await input.setInputFiles({ name: 'bad.pdf', mimeType: 'application/pdf', buffer: pdf.subarray(0, 100) });
+  await inspector.getByRole('button', { name: 'Inspect PDF', exact: true }).click();
+  await expect(inspector.getByRole('status')).toHaveText('Choose a complete PDF file.');
+  await expect(save).toBeDisabled();
 });

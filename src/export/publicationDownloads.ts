@@ -1,7 +1,7 @@
 import type { ProjectState } from '../types';
 import { isDesktop, savePublicationFile } from '../desktop';
 
-export type PublicationDownload = 'proof' | 'press' | 'epub' | 'fixed' | 'flipbook' | 'image' | 'package' | 'idml' | 'kit';
+export type PublicationDownload = 'proof' | 'press' | 'epub' | 'fixed' | 'flipbook' | 'image' | 'package' | 'archive' | 'idml' | 'kit';
 
 export async function downloadPublication(state: ProjectState, action: PublicationDownload) {
   switch (action) {
@@ -58,6 +58,12 @@ export async function downloadPublication(state: ProjectState, action: Publicati
       const { packageDocument } = await import('../packageExport');
       const result = await packageDocument(state, { download: !isDesktop() });
       if (isDesktop()) await savePublicationFile(result.filename, result.buffer, 'application/zip');
+      break;
+    }
+    case 'archive': {
+      const { createProjectArchive } = await import('../engine/projectArchive');
+      const name = state.settings.title.replace(/[^\p{L}\p{N} _-]/gu, '').trim() || 'publication';
+      await savePublicationFile(`${name}.rectoarchive`, await createProjectArchive(state));
       break;
     }
     case 'idml':

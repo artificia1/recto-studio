@@ -1,43 +1,85 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::io::{Read, Write};
+mod project_files;
 
-const MAX_FILE_BYTES: u64 = 128 * 1024 * 1024;
+use project_files::{is_native_project, persist_file, ProjectFile, ProjectFiles, MAX_FILE_BYTES};
+use std::io::Read;
+use std::sync::{Arc, Mutex};
 
-fn persist_export(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
-    let parent = path.parent().ok_or("Invalid save location")?;
-    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-    temporary.write_all(bytes).map_err(|e| e.to_string())?;
-    temporary.as_file().sync_all().map_err(|e| e.to_string())?;
-    temporary.persist(path).map_err(|e| e.to_string())?;
-    Ok(())
-}
+type ProjectRegistry = Arc<Mutex<ProjectFiles>>;
+const EXPORT_EXTENSIONS: &[&str] = &[
+    "recto", "pdf", "epub", "html", "zip", "idml", "png", "svg", "json",
+    "rectoarchive", "rectobook", "rectoset", "rectostyles", "rectotm", "recto-artwork", "xlf", "txt",
+];
 
 #[derive(serde::Serialize)]
 struct OpenedDocument {
     name: String,
     bytes: Vec<u8>,
+    project: Option<ProjectFile>,
 }
 
 #[tauri::command]
-async fn desktop_open_document(window: tauri::Window) -> Result<Option<OpenedDocument>, String> {
+async fn desktop_open_document(window: tauri::Window, projects: tauri::State<'_, ProjectRegistry>) -> Result<Option<OpenedDocument>, String> {
+    let projects = Arc::clone(projects.inner());
     tauri::async_runtime::spawn_blocking(move || {
         let path = rfd::FileDialog::new()
             .set_parent(&window)
             .set_title("Open publication")
-            .add_filter("Publication documents", &["recto", "papercut", "json", "idml", "indd"])
+            .add_filter("Publication documents", &["recto", "papercut", "json", "idml", "indd", "rectoarchive"])
             .pick_file();
         let Some(path) = path else { return Ok(None) };
-        let size = std::fs::metadata(&path).map_err(|e| e.to_string())?.len();
-        if size > MAX_FILE_BYTES { return Err("Please choose a document smaller than 128 MB.".into()); }
+        let metadata = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+        if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
+            return Err("Please choose a document file within the 128 MB limit.".into());
+        }
         let name = path.file_name().ok_or("Invalid file name")?.to_string_lossy().into_owned();
         // Enforce the limit during the read too: a file can grow after metadata().
-        let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+        let file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
         let mut bytes = Vec::new();
         file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
         if bytes.len() as u64 > MAX_FILE_BYTES { return Err("Please choose a document smaller than 128 MB.".into()); }
-        Ok(Some(OpenedDocument { name, bytes }))
+        let project = if is_native_project(&path) {
+            Some(projects.lock().map_err(|e| e.to_string())?.remember(path, &bytes)?)
+        } else {
+            None
+        };
+        Ok(Some(OpenedDocument { name, bytes, project }))
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn desktop_save_project(
+    window: tauri::Window,
+    projects: tauri::State<'_, ProjectRegistry>,
+    handle: Option<String>,
+    suggested_name: String,
+    bytes: Vec<u8>,
+) -> Result<Option<ProjectFile>, String> {
+    if bytes.len() as u64 > MAX_FILE_BYTES {
+        return Err("This project exceeds the 128 MB desktop save limit.".into());
+    }
+    let projects = Arc::clone(projects.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(handle) = handle {
+            return projects.lock().map_err(|e| e.to_string())?.save(&handle, &bytes).map(Some);
+        }
+        let suggested_name = std::path::Path::new(&suggested_name).file_name()
+            .and_then(|name| name.to_str()).unwrap_or("publication.recto");
+        let path = rfd::FileDialog::new()
+            .set_parent(&window)
+            .set_title("Save Recto project as")
+            .set_file_name(suggested_name)
+            .add_filter("Recto project", &["recto"])
+            .save_file();
+        let Some(path) = path else { return Ok(None) };
+        if !is_native_project(&path) {
+            return Err("Save the project with the .recto extension.".into());
+        }
+        let mut projects = projects.lock().map_err(|e| e.to_string())?;
+        persist_file(&path, &bytes, None)?;
+        projects.remember(path, &bytes).map(Some)
     }).await.map_err(|e| e.to_string())?
 }
 
@@ -46,7 +88,7 @@ async fn desktop_save_file(window: tauri::Window, suggested_name: String, bytes:
     if bytes.len() as u64 > MAX_FILE_BYTES { return Err("This export exceeds the 128 MB desktop save limit.".into()); }
     let extension = std::path::Path::new(&suggested_name).extension()
         .and_then(|value| value.to_str()).unwrap_or("").to_lowercase();
-    if !["recto", "pdf", "epub", "html", "zip", "idml", "png", "svg", "json"].contains(&extension.as_str()) {
+    if !EXPORT_EXTENSIONS.contains(&extension.as_str()) {
         return Err("Unsupported export format.".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
@@ -58,22 +100,22 @@ async fn desktop_save_file(window: tauri::Window, suggested_name: String, bytes:
             .save_file();
         let Some(path) = path else { return Ok(false) };
         // Write alongside the destination and replace only after the write succeeds.
-        persist_export(&path, &bytes)?;
+        persist_file(&path, &bytes, None)?;
         Ok(true)
     }).await.map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]
 mod tests {
-    use super::persist_export;
+    use super::persist_file;
 
     #[test]
     fn saves_and_replaces_the_selected_file() {
         let folder = tempfile::tempdir().unwrap();
         let file = folder.path().join("publication.recto");
-        persist_export(&file, b"first version").unwrap();
+        persist_file(&file, b"first version", None).unwrap();
         assert_eq!(std::fs::read(&file).unwrap(), b"first version");
-        persist_export(&file, b"second version").unwrap();
+        persist_file(&file, b"second version", None).unwrap();
         assert_eq!(std::fs::read(&file).unwrap(), b"second version");
         assert_eq!(std::fs::read_dir(folder.path()).unwrap().count(), 1);
     }
@@ -82,15 +124,16 @@ mod tests {
     fn fails_without_creating_a_file_when_the_destination_is_missing() {
         let folder = tempfile::tempdir().unwrap();
         let file = folder.path().join("missing/publication.recto");
-        assert!(persist_export(&file, b"content").is_err());
+        assert!(persist_file(&file, b"content", None).is_err());
         assert!(!file.exists());
     }
 }
 
 fn main() {
     tauri::Builder::default()
+        .manage(ProjectRegistry::default())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![desktop_open_document, desktop_save_file])
+        .invoke_handler(tauri::generate_handler![desktop_open_document, desktop_save_project, desktop_save_file])
         .run(tauri::generate_context!())
         .expect("error while running Recto desktop application");
 }

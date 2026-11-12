@@ -32,9 +32,12 @@ brochures, catalogs, and other short-form work.
 3. **Review and deliver.** Check overset and preflight issues, compare PDF
    proofs, and export a print PDF, EPUB, HTML flipbook, or publication package.
 
-Keep a `.recto` project as your editable source. The browser editor opens
-without an account. Desktop installation, portable builds, and updater behavior
-are documented in the [desktop guide](DESKTOP.md).
+Keep a `.recto` project as your editable source. Use **Export → Save Editable
+Project Archive** to back up all editions, including nonprinting material,
+in one file. [Project archive and print package guide](PUBLISHING.md#project-archives-and-print-packages)
+
+The browser editor opens without an account. For installation, portable builds,
+and updater behavior, see the [desktop guide](DESKTOP.md).
 
 Use `V` for Selection, `T` for Type, `P` for Pen, and `W` for Preview.
 

@@ -136,7 +136,7 @@ ${preflightSummary}
   - Generated with 14mm slug, crop marks, trim/bleed boxes, registration targets, and calibration bars.
   - Obtain printer preflight approval before production. This is not certified PDF/X or PDF/UA output.
 * All placed raster assets are archived in the /Assets subfolder.
-* Native .recto project source is preserved in this package for archival editing and version inspection.
+* The included .recto is an editable snapshot of the output edition. Use Save Editable Project Archive to back up all editions and nonprinting material.
 ================================================================================
 `;
 }

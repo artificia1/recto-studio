@@ -227,7 +227,7 @@ export function App() {
       return;
     }
 
-    if (name.endsWith('.recto') || name.endsWith('.papercut') || name.endsWith('.json')) {
+    if (/\.(recto|rectoarchive|papercut|json)$/.test(name)) {
       try {
         await stateManager.importProjectFile(file);
       } catch (error) {
