@@ -1,0 +1,110 @@
+.placed-assets-heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin: 12px 0 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.placed-assets-heading h3 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.placed-assets-heading [role="status"],
+.asset-empty-result {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.asset-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.asset-filename-search {
+  grid-column: 1 / -1;
+}
+
+.asset-filters label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.asset-filters input,
+.asset-filters select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 27px;
+  padding: 3px 6px;
+  color: var(--text-primary);
+  font: inherit;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+}
+
+.asset-filters button {
+  min-height: 27px;
+}
+
+.asset-filters button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.asset-empty-result {
+  margin: 8px 0;
+}
+
+.asset-missing-status {
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.batch-relink {
+  margin-bottom: 10px;
+}
+
+.batch-relink p {
+  margin-top: 6px;
+  line-height: 1.5;
+}
+
+.batch-relink-review {
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: var(--bg-app);
+}
+
+.batch-relink-review ul {
+  max-height: 170px;
+  margin: 6px 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.batch-relink-review li {
+  display: grid;
+  padding: 5px 0;
+  overflow-wrap: anywhere;
+}
+
+.batch-relink-review li + li { border-top: 1px solid var(--border-color); }
+.batch-relink-review li span { color: var(--text-secondary); }
+.batch-relink-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.batch-relink-actions button:disabled { opacity: 0.55; cursor: default; }

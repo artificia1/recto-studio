@@ -9,7 +9,7 @@ const FORMAT = 'recto-artwork-v1';
 export const ARTWORK_FILE_LIMIT = 2 * 1024 * 1024;
 export interface ReusableArtwork { format: typeof FORMAT; id: string; name: string; elements: CanvasElement[] }
 
-function portable(element: CanvasElement) {
+export function preparePortableArtwork(element: CanvasElement) {
   if (element.anchor || element.conditionId || element.interactiveField || element.spotColor ||
     ((element.type === 'text' || element.type === 'table') && (element.nextFrameId || element.prevFrameId))) {
     throw new Error('Use independent artwork. Detach links, conditions, special inks, and form fields before saving.');
@@ -35,7 +35,7 @@ function portable(element: CanvasElement) {
   if (element.type === 'table') delete element.tableStoryId;
   if (element.type === 'image') {
     if (element.src && !/^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/]+={0,2}$/i.test(element.src)) {
-      throw new Error('Embed linked artwork as PNG, JPEG or WebP before saving the selection.');
+      throw new Error('Embed linked artwork as PNG, JPEG or WebP before saving it.');
     }
     delete element.assetId;
     delete element.proxySrc;
@@ -60,7 +60,7 @@ export function parseReusableArtwork(json: string): ReusableArtwork {
   }
   const spread = { id: 'artwork-spread', spreadIndex: 0, pages: [{ id: 'artwork-page', pageNumber: 1, side: 'single' }], elements: record.elements };
   const state = parseProject(JSON.stringify({ settings: INITIAL_STATE.settings, spreads: [spread], masterSpreads: [] }), INITIAL_STATE);
-  return { format: FORMAT, id: record.id, name: record.name.trim(), elements: state.spreads[0].elements.map(portable) };
+  return { format: FORMAT, id: record.id, name: record.name.trim(), elements: state.spreads[0].elements.map(preparePortableArtwork) };
 }
 
 export function captureArtwork(state: ProjectState, name: string) {

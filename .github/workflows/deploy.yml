@@ -30,6 +30,8 @@ jobs:
         run: npm audit --audit-level=moderate
       - name: Run regression tests
         run: npm test
+      - name: Check cold development dependency scan
+        run: npm exec -- vite optimize --force
       - name: Set up independent export validator
         uses: actions/setup-python@v5
         with:

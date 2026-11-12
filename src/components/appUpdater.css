@@ -1,0 +1,8 @@
+.app-updater-version {
+  margin-top: 4px;
+  color: var(--text-secondary);
+}
+
+.app-updater-dismiss {
+  margin-top: 8px;
+}

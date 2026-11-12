@@ -13,6 +13,7 @@ import { BookletImpositionModal, CoverSpineModal } from './LazyPrintDialogs';
 import { SpreadCanvas } from '../canvas';
 import { stateManager } from '../state';
 import { fontManager } from '../fontManager';
+import { subscribeAppearance } from '../appearance';
 const ManuscriptImportModal = lazy(() => import('./ManuscriptImportModal').then(module => ({ default: module.ManuscriptImportModal })));
 const EquationModal = lazy(() => import('./EquationModal').then(module => ({ default: module.EquationModal })));
 const InddImportModal = lazy(() => import('./InddImportModal').then(module => ({ default: module.InddImportModal })));
@@ -183,7 +184,9 @@ export function App() {
       console.log('SpreadCanvas 2D render engine connected to Preact TSX shell.');
     }
 
+    const unsubscribe = subscribeAppearance(() => spreadCanvasRef.current?.render());
     return () => {
+      unsubscribe();
       if (spreadCanvasRef.current) {
         spreadCanvasRef.current.destroy();
         spreadCanvasRef.current = null;

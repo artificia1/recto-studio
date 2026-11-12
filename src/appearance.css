@@ -1,0 +1,113 @@
+:root {
+  color-scheme: dark;
+  --bg-bar: #1c1c1c;
+  --bg-menu: #202020;
+  --bg-footer: #161616;
+  --bg-modal: #18181c;
+  --scroll-thumb: #52525b;
+  --accent-fill: #0768aa;
+  --accent-foreground: #fff;
+  --accent-surface: color-mix(in srgb, var(--accent-cyan) 17%, var(--bg-panel));
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg-app: #e4e8ed;
+  --bg-panel: #f6f8fb;
+  --bg-input: #fff;
+  --bg-hover: #e5eaf1;
+  --bg-bar: #edf1f6;
+  --bg-menu: #fff;
+  --bg-footer: #edf1f6;
+  --bg-modal: #f6f8fb;
+  --border-color: #c9d1dd;
+  --border-light: #aab6c6;
+  --text-primary: #202938;
+  --text-secondary: #4d5a6d;
+  --text-muted: #586578;
+  --scroll-thumb: #919fb1;
+  --accent-cyan: #0069ab;
+  --accent-magenta: #982583;
+  --accent-red: #b22439;
+}
+
+:root[data-theme="midnight"] {
+  --bg-app: #101521;
+  --bg-panel: #1a2334;
+  --bg-input: #121a28;
+  --bg-hover: #27364f;
+  --bg-bar: #151d2b;
+  --bg-menu: #202b3e;
+  --bg-footer: #101521;
+  --bg-modal: #1a2334;
+  --border-color: #30405b;
+  --border-light: #475d7e;
+  --text-primary: #e9effa;
+  --text-secondary: #a7b6cc;
+  --text-muted: #8190a8;
+  --scroll-thumb: #516783;
+  --accent-cyan: #74bcff;
+}
+
+:root[data-accent="jade"] { --accent-cyan: #46d4af; --accent-fill: #08775e; }
+:root[data-accent="violet"] { --accent-cyan: #baa6ff; --accent-fill: #6745b6; }
+:root[data-accent="amber"] { --accent-cyan: #f0bc67; --accent-fill: #89520c; }
+:root[data-theme="light"][data-accent="jade"] { --accent-cyan: #006b53; }
+:root[data-theme="light"][data-accent="violet"] { --accent-cyan: #6142aa; }
+:root[data-theme="light"][data-accent="amber"] { --accent-cyan: #815008; }
+
+* { scrollbar-color: var(--scroll-thumb) transparent; }
+*::-webkit-scrollbar-thumb { background-color: var(--scroll-thumb); }
+
+.brand-logo, .brand-name, .swatch-swap-btn:hover { color: var(--text-primary); }
+.brand-badge { background: var(--bg-hover); border-color: var(--border-light); color: var(--text-secondary); }
+.control-bar, .inspector-tabs { background-color: var(--bg-bar); }
+.status-bar { background-color: var(--bg-footer); }
+.status-bar select.status-quality-select { background: var(--bg-input); border-color: var(--border-light); color: var(--text-primary); }
+:root[data-theme="light"] .status-preflight-ok { color: #006d60; }
+.top-dropdown-menu, .top-dropdown-menu::-webkit-scrollbar-track { background-color: var(--bg-menu); }
+.top-dropdown-menu { border-color: var(--border-light); scrollbar-color: var(--scroll-thumb) var(--bg-menu); }
+.top-dropdown-item:hover { background-color: var(--accent-fill); }
+.ruler-corner { background-color: var(--bg-hover); }
+.modal-dialog { background-color: var(--bg-modal); color: var(--text-primary); border-color: var(--border-light); }
+.modal-header { background-color: var(--bg-bar); border-bottom-color: var(--border-color); }
+.modal-footer { background-color: var(--bg-bar); border-top-color: var(--border-color); }
+.modal-title, .modal-close-btn:hover, .imposition-summary-row strong, .sheet-nav-indicator { color: var(--text-primary); }
+.modal-subtitle, .modal-close-btn, .modal-footer-left, .imposition-section-title,
+.imposition-field label, .imposition-field-hint, .imposition-summary-row span { color: var(--text-secondary); }
+.imposition-select, .imposition-input, .imposition-summary-card, .imposition-sheet-toolbar {
+  background: var(--bg-input);
+  border-color: var(--border-color);
+  color: var(--text-primary);
+}
+
+.action-btn.active, .control-bar-pill.pill-active, .sheet-side-pill, .app-updater .action-btn[aria-expanded="true"] {
+  background: var(--accent-surface);
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+}
+
+.action-btn-primary, .action-btn-primary.active, .preflight-fix-all-btn {
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+  color: var(--accent-foreground);
+}
+
+:is(button, select, input, summary):focus-visible {
+  outline: 2px solid var(--accent-cyan);
+  outline-offset: 2px;
+}
+
+:root[data-density="compact"] .top-bar {
+  min-height: 36px;
+  padding-block: 4px;
+}
+
+:root[data-density="compact"] .top-bar :is(.action-btn, .action-btn-primary) {
+  height: 25px;
+  padding-inline: 6px;
+}
+
+:root[data-density="compact"] .top-dropdown-item { padding-block: 5px; }
+:root[data-density="compact"] .inspector-tab { padding-block: 7px; }
+:root[data-density="compact"] .control-bar { height: 29px; }

@@ -1,9 +1,12 @@
 import { render } from 'preact';
 import { App } from './components/App';
 import './style.css';
+import './appearance.css';
 import { stateManager } from './state';
 import { fontManager } from './fontManager';
+import { initializeAppearance } from './appearance';
 
+initializeAppearance();
 const mountPoint = document.getElementById('root');
 async function start() {
   await stateManager.recoverAutosave();

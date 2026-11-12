@@ -41,6 +41,14 @@ and updater behavior, see the [desktop guide](DESKTOP.md).
 
 Use `V` for Selection, `T` for Type, `P` for Pen, and `W` for Preview.
 
+Open **Setup → Workspace appearance** to choose a theme, accent, control
+density, and spread pasteboard color. Use Quick Apply (`Ctrl+/`) to change
+themes with the keyboard. Recto remembers these settings on this device.
+
+Use **Links → Bulk relink images** to match replacement files by filename and
+review them before applying. Use **Templates → Saved layouts** to reuse
+standalone artwork and text from a spread.
+
 ## What's in the editor
 
 | Workflow | Shipped tools |
@@ -94,6 +102,7 @@ npm run dev
 npm test
 npm run build
 npm run analyze:bundle
+npm exec -- vite optimize --force
 npx playwright install chromium
 npm run test:e2e
 ```
@@ -104,6 +113,9 @@ browser tests plus independent checks on generated publication files.
 ## Project and support
 
 Created by **Abhinav Sidhu**. Recto Studio is released under the [MIT License](LICENSE).
+
+Thanks to [shega2901](https://github.com/shega2901) for testing real InDesign
+exports and reporting IDML import and development startup bugs.
 
 - **UPI** · `artificiaisme@okhdfcbank` · [Payment QR](public/upi-qr.png)
 - **Solana (SOL or USDC)** · `26Z52ETXSHwQWLZX6BdgVFyDaTPSeKMbxJeY9S7SVmE6` · [Address on Solscan](https://solscan.io/account/26Z52ETXSHwQWLZX6BdgVFyDaTPSeKMbxJeY9S7SVmE6)

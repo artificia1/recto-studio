@@ -477,7 +477,6 @@ export function TopBar({
           >
             ↻
           </button>
-          {isDesktop() && <Suspense fallback={<span role="status">Loading updater…</span>}><AppUpdater /></Suspense>}
           {onOpenShortcuts && (
             <button
               className="icon-btn"
@@ -800,6 +799,7 @@ export function TopBar({
         >
           {isFullscreen ? '✕ Exit' : '⛶ Fullscreen'}
         </button>
+        {isDesktop() && <Suspense fallback={null}><AppUpdater /></Suspense>}
       </div>
 
       {showScribusImport && <Suspense fallback={null}><ScribusImportDialog onClose={() => setShowScribusImport(false)} /></Suspense>}

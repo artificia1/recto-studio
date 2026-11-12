@@ -43,18 +43,30 @@ jobs:
       - name: Prepare installer helpers
         run: node scripts/prepare-bundler-tools.mjs
       - name: Build Windows app and installer
+        id: installer
         shell: pwsh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $bundleDir = 'src-tauri/target/release/bundle/nsis'
+          if (Test-Path -LiteralPath $bundleDir -PathType Container) {
+            # The Rust cache may also contain a previous installer and signature.
+            $bundlePattern = "_$([regex]::Escape($version))_.*-setup\.exe(\.sig)?$"
+            Get-ChildItem -LiteralPath $bundleDir -File | Where-Object { $_.Name -match $bundlePattern } |
+              ForEach-Object { Remove-Item -LiteralPath $_.FullName -ErrorAction Stop }
+          }
           if ($env:TAURI_SIGNING_PRIVATE_KEY) {
             npm run tauri:build -- --bundles nsis -- --locked
+            if ($LASTEXITCODE -ne 0) { throw 'Windows build failed.' }
+            'signed=true' >> $env:GITHUB_OUTPUT
           } else {
             '{"bundle":{"createUpdaterArtifacts":false}}' | Set-Content -Encoding ascii updater-local-signing.json
             npm run tauri:build -- --config updater-local-signing.json --bundles nsis -- --locked
+            if ($LASTEXITCODE -ne 0) { throw 'Windows build failed.' }
+            'signed=false' >> $env:GITHUB_OUTPUT
           }
-          if ($LASTEXITCODE -ne 0) { throw 'Windows build failed.' }
       - name: Verify native file I/O
         working-directory: src-tauri
         run: cargo test --release --locked
@@ -62,6 +74,8 @@ jobs:
         run: node scripts/desktop-smoke.mjs src-tauri/target/release/recto-studio.exe
       - name: Package downloadable files
         shell: pwsh
+        env:
+          SIGNED_BUILD: ${{ steps.installer.outputs.signed }}
         run: |
           $version = (Get-Content package.json | ConvertFrom-Json).version
           New-Item -ItemType Directory -Path release-artifacts,release-artifacts/portable -Force | Out-Null
@@ -72,13 +86,17 @@ jobs:
           $installers = @(Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Where-Object { $_.Name -match "_$([regex]::Escape($version))_.*-setup\.exe$" })
           if ($installers.Count -ne 1) { throw "Expected exactly one installer for version $version; found $($installers.Count)." }
           $installer = $installers[0]
-          Copy-Item $installer.FullName "release-artifacts/Recto-Studio-$version-Windows-x64-setup.exe"
+          $publishedInstaller = "release-artifacts/Recto-Studio-$version-Windows-x64-setup.exe"
+          Copy-Item $installer.FullName $publishedInstaller
           $signature = "$($installer.FullName).sig"
-          if (Test-Path $signature) {
-            Copy-Item $signature "release-artifacts/Recto-Studio-$version-Windows-x64-setup.exe.sig"
-            node scripts/updater-manifest.mjs $signature
+          if ($env:SIGNED_BUILD -eq 'true') {
+            if (!(Test-Path -LiteralPath $signature -PathType Leaf)) { throw 'Signed build did not produce an installer signature.' }
+            $publishedSignature = "$publishedInstaller.sig"
+            Copy-Item $signature $publishedSignature
+            node scripts/updater-manifest.mjs $publishedSignature
             if ($LASTEXITCODE -ne 0) { throw 'Could not create updater manifest.' }
           } else {
+            if (Test-Path -LiteralPath $signature) { throw 'Unsigned build unexpectedly produced an installer signature.' }
             Write-Output 'Draft requires local installer signing and latest.json before publication.'
           }
           $hashes = Get-ChildItem release-artifacts -File | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)" }
@@ -86,14 +104,25 @@ jobs:
           "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
       - name: Create draft release
         shell: pwsh
+        env:
+          SIGNED_BUILD: ${{ steps.installer.outputs.signed }}
         run: |
-          gh release view "v$env:RELEASE_VERSION" --repo $env:GITHUB_REPOSITORY 2>$null
+          $tag = "v$env:RELEASE_VERSION"
+          $releaseJson = gh release view $tag --repo $env:GITHUB_REPOSITORY --json isDraft,assets 2>$null
           if ($LASTEXITCODE -ne 0) {
-            gh release create "v$env:RELEASE_VERSION" --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --draft --title "Recto Studio $env:RELEASE_VERSION" --notes-file RELEASE_NOTES.md
+            gh release create $tag --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --draft --title "Recto Studio $env:RELEASE_VERSION" --notes-file RELEASE_NOTES.md
             if ($LASTEXITCODE -ne 0) { throw 'Could not create release.' }
+            $releaseJson = gh release view $tag --repo $env:GITHUB_REPOSITORY --json isDraft,assets
+            if ($LASTEXITCODE -ne 0) { throw 'Could not verify the new draft release.' }
+          }
+          $release = $releaseJson | ConvertFrom-Json
+          if (!$release.isDraft) { throw "Release $tag is already public. Bump the version before uploading a new Windows build." }
+          if ($env:SIGNED_BUILD -ne 'true' -and ($release.assets.name -contains 'latest.json' -or
+              $release.assets.name -contains "Recto-Studio-$env:RELEASE_VERSION-Windows-x64-setup.exe.sig")) {
+            throw 'This draft already has signed updater files. Keep the existing installer or rebuild with its signing key.'
           }
           $assets = Get-ChildItem release-artifacts -File | ForEach-Object { $_.FullName }
-          gh release upload "v$env:RELEASE_VERSION" @assets --repo $env:GITHUB_REPOSITORY --clobber
+          gh release upload $tag @assets --repo $env:GITHUB_REPOSITORY --clobber
           if ($LASTEXITCODE -ne 0) { throw 'Could not upload release assets.' }
       - name: Save build diagnostics
         if: always()

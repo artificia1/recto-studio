@@ -9,6 +9,7 @@ import { layoutFrameNotes, publicationText } from './engine/publicationReference
 import { reviewPinPosition } from './engine/reviewPins';
 import { handleCanvasKeyDown } from './engine/interaction/keyboard';
 import { masterTargetPage } from './engine/pageLabels';
+import { getAppearance, pasteboardColors } from './appearance';
 import {
   ProjectState,
   Spread,
@@ -2901,7 +2902,7 @@ export class SpreadCanvas {
     const canvasH = rect.height > 0 ? rect.height : (this.canvas.height || spreadHeightPx);
     let ctx = proof?.context || this.ctx;
 
-    ctx.fillStyle = state.previewMode ? '#ffffff' : '#1e1e1e';
+    ctx.fillStyle = state.previewMode ? '#ffffff' : pasteboardColors[getAppearance().pasteboard];
     ctx.fillRect(0, 0, canvasW, canvasH);
 
     const origin = this.getSpreadScreenOrigin(state);

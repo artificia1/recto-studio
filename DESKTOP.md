@@ -57,14 +57,19 @@ private keys. The local development key is stored in the ignored `.release.local
 directory. Alternatively, leave the key local: the workflow builds a draft
 without updater metadata; download its installer, sign it locally with
 `tauri signer sign --private-key-path <key-file> --app-version <version> <installer>`,
-then upload its public `.sig` and matching `latest.json` before publication.
-Never publish an updater release without these verified files.
+then put the installer and its `.sig` in `release-artifacts`. Run
+`node scripts/updater-manifest.mjs <installer.sig>` with the full path to the
+signature and upload the signature and generated `latest.json` to the draft.
 
-Increase the application version before building a new release. The workflow
-uploads the signed installer, its signature, and `latest.json` to a draft release.
-Publishing that release makes it available through the in-app checker. Test a
-real older-to-newer installation before the first updater-enabled public release.
-Updater signatures are separate from Windows publisher code signing.
+Increase the application version before building a new release. The Windows
+workflow uploads to a draft and verifies that the signature covers the exact
+installer bytes and release version using the public key built into the app.
+Publishing the verified draft makes it available through the in-app checker.
+Use `node scripts/desktop-updater-check.mjs <older-exe> <installed-version> <offered-version>`
+to exercise the native update offer and signature-verified download in a fresh
+WebView2 profile. Test installation on a separate Windows profile before
+releasing a change to the installer. Updater signatures are separate from
+Windows publisher code signing. [Tauri updater documentation](https://v2.tauri.app/plugin/updater/)
 
 The application does not yet register document file associations.
 

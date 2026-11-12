@@ -7,6 +7,7 @@
 import { useState, useRef, useEffect } from 'preact/hooks';
 import { ProjectState } from '../types';
 import { stateManager } from '../state';
+import { appearanceThemes, getAppearance, setAppearance } from '../appearance';
 
 interface QuickApplyProps {
   isOpen: boolean;
@@ -47,6 +48,9 @@ export function QuickApply({
       return () => clearTimeout(timer);
     }
   }, [isOpen]);
+  useEffect(() => {
+    if (isOpen) listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+  }, [isOpen, selectedIndex]);
   if (!isOpen) return null;
 
   // Build searchable items catalogue
@@ -310,14 +314,31 @@ export function QuickApply({
   );
 
   // Filter items
-  const cleanQ = query.trim().toLowerCase();
-  const filtered = cleanQ
-    ? allItems.filter(
-        (it) =>
-          it.title.toLowerCase().includes(cleanQ) ||
-          (it.subtitle && it.subtitle.toLowerCase().includes(cleanQ))
-      )
-    : allItems;
+  for (const { value, label } of appearanceThemes) {
+    allItems.push({
+      id: `theme-${value}`,
+      kind: 'cmd',
+      title: `Use ${label} theme`,
+      subtitle: 'Workspace appearance',
+      action: () => setAppearance({ ...getAppearance(), theme: value }),
+    });
+  }
+  allItems.push({
+    id: 'compact-controls',
+    kind: 'cmd',
+    title: 'Toggle compact controls',
+    subtitle: 'Workspace appearance',
+    action: () => {
+      const current = getAppearance();
+      setAppearance({ ...current, compact: !current.compact });
+    },
+  });
+
+  const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const filtered = terms.length ? allItems.filter(item => {
+    const search = `${item.title} ${item.subtitle ?? ''}`.toLowerCase();
+    return terms.every(term => search.includes(term));
+  }) : allItems;
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
@@ -364,10 +385,13 @@ export function QuickApply({
     >
       <div
         className="quick-apply-box"
+        role="dialog"
+        aria-label="Quick Apply"
+        aria-modal="true"
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: '#1c1c20',
-          border: '1px solid #383842',
+          background: 'var(--bg-menu)',
+          border: '1px solid var(--border-light)',
           borderRadius: '8px',
           width: '500px',
           maxWidth: '92vw',
@@ -375,7 +399,7 @@ export function QuickApply({
           overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
-          fontFamily: 'Inter, system-ui, sans-serif',
+          fontFamily: 'var(--font-ui)',
         }}
       >
         {/* Search Input Bar */}
@@ -384,18 +408,24 @@ export function QuickApply({
             display: 'flex',
             alignItems: 'center',
             padding: '12px 16px',
-            borderBottom: '1px solid #2d2d35',
-            background: '#222228',
+            borderBottom: '1px solid var(--border-color)',
+            background: 'var(--bg-bar)',
             gap: '10px',
           }}
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0d99ff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
             <circle cx="11" cy="11" r="8"></circle>
             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
           </svg>
           <input
             ref={inputRef}
             type="text"
+            role="combobox"
+            aria-label="Search styles and commands"
+            aria-autocomplete="list"
+            aria-expanded="true"
+            aria-controls="quick-apply-results"
+            aria-activedescendant={filtered[selectedIndex] ? `quick-apply-${filtered[selectedIndex].id}` : undefined}
             value={query}
             onInput={(e) => {
               setQuery((e.target as HTMLInputElement).value);
@@ -408,7 +438,7 @@ export function QuickApply({
               background: 'transparent',
               border: 'none',
               outline: 'none',
-              color: '#fff',
+              color: 'var(--text-primary)',
               fontSize: '13px',
               fontFamily: 'inherit',
             }}
@@ -416,8 +446,8 @@ export function QuickApply({
           <span
             style={{
               fontSize: '10px',
-              color: '#777',
-              border: '1px solid #3a3a44',
+              color: 'var(--text-secondary)',
+              border: '1px solid var(--border-light)',
               borderRadius: '3px',
               padding: '1px 5px',
             }}
@@ -429,6 +459,9 @@ export function QuickApply({
         {/* Results List */}
         <div
           ref={listRef}
+          role="listbox"
+          aria-label="Search results"
+          id="quick-apply-results"
           style={{
             maxHeight: '340px',
             overflowY: 'auto',
@@ -436,7 +469,7 @@ export function QuickApply({
           }}
         >
           {filtered.length === 0 ? (
-            <div style={{ padding: '20px', textAlign: 'center', color: '#777', fontSize: '12px' }}>
+            <div role="status" style={{ padding: '20px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '12px' }}>
               No styles or commands matching "{query}"
             </div>
           ) : (
@@ -448,18 +481,15 @@ export function QuickApply({
                   : item.kind === 'style-char'
                   ? 'rgba(16, 185, 129, 0.18)'
                   : 'rgba(230, 0, 126, 0.18)';
-              const badgeColor =
-                item.kind === 'style-para'
-                  ? '#38bdf8'
-                  : item.kind === 'style-char'
-                  ? '#34d399'
-                  : '#ff40a1';
               const badgeLabel =
                 item.kind === 'style-para' ? 'P' : item.kind === 'style-char' ? 'C' : 'CMD';
 
               return (
                 <div
                   key={item.id}
+                  id={`quick-apply-${item.id}`}
+                  role="option"
+                  aria-selected={isSelected}
                   onClick={() => executeItem(item)}
                   onMouseEnter={() => setSelectedIndex(idx)}
                   style={{
@@ -468,8 +498,8 @@ export function QuickApply({
                     justifyContent: 'space-between',
                     padding: '8px 12px',
                     borderRadius: '5px',
-                    background: isSelected ? 'rgba(13, 153, 255, 0.14)' : 'transparent',
-                    border: isSelected ? '1px solid rgba(13, 153, 255, 0.35)' : '1px solid transparent',
+                    background: isSelected ? 'var(--accent-surface)' : 'transparent',
+                    border: isSelected ? '1px solid var(--accent-cyan)' : '1px solid transparent',
                     cursor: 'pointer',
                     transition: 'all 0.1s ease',
                   }}
@@ -482,7 +512,7 @@ export function QuickApply({
                         padding: '2px 5px',
                         borderRadius: '3px',
                         background: badgeBg,
-                        color: badgeColor,
+                        color: 'var(--text-primary)',
                         minWidth: '28px',
                         textAlign: 'center',
                       }}
@@ -490,11 +520,11 @@ export function QuickApply({
                       {badgeLabel}
                     </span>
                     <div>
-                      <div style={{ color: isSelected ? '#fff' : '#e2e2e8', fontWeight: 500, fontSize: '12px' }}>
+                      <div style={{ color: 'var(--text-primary)', fontWeight: 500, fontSize: '12px' }}>
                         {item.title}
                       </div>
                       {item.subtitle && (
-                        <div style={{ color: '#888894', fontSize: '10px', marginTop: '1px' }}>
+                        <div style={{ color: 'var(--text-secondary)', fontSize: '10px', marginTop: '1px' }}>
                           {item.subtitle}
                         </div>
                       )}
@@ -505,9 +535,9 @@ export function QuickApply({
                     <span
                       style={{
                         fontSize: '10px',
-                        color: '#888',
-                        background: '#151518',
-                        border: '1px solid #33333c',
+                        color: 'var(--text-secondary)',
+                        background: 'var(--bg-input)',
+                        border: '1px solid var(--border-color)',
                         borderRadius: '3px',
                         padding: '2px 5px',
                       }}
@@ -525,10 +555,10 @@ export function QuickApply({
         <div
           style={{
             padding: '7px 14px',
-            borderTop: '1px solid #282830',
-            background: '#17171a',
+            borderTop: '1px solid var(--border-color)',
+            background: 'var(--bg-bar)',
             fontSize: '10px',
-            color: '#666',
+            color: 'var(--text-secondary)',
             display: 'flex',
             justifyContent: 'space-between',
           }}

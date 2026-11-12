@@ -26,14 +26,14 @@
 .story-editor-text { flex: 1; min-width: 0; resize: none; padding: 24px; border: 0; outline-offset: -3px; color: var(--text-primary, #eee); background: var(--bg-input, #252529); font: 16px/1.7 Georgia, serif; }
 .story-format-bar button[aria-pressed="true"] { outline: 1px solid var(--accent-cyan, #aaa); }
 @media (max-width: 760px) { .manuscript-body { flex-direction: column; overflow-y: auto; } .manuscript-options { width: auto; flex-shrink: 0; max-height: 220px; border-right: 0; } .manuscript-preview { flex: auto; min-height: 250px; padding: 24px; overflow: visible; } .story-editor-text { flex: auto; min-height: 250px; } }
-.story-revisions { margin: 6px 20px; padding: 8px 12px; border: 1px solid #44444d; border-radius: 4px; font-size: 12px; flex-shrink: 0; max-height: 35vh; overflow: auto; }
+.story-revisions { margin: 6px 20px; padding: 8px 12px; border: 1px solid var(--border-light); border-radius: 4px; font-size: 12px; flex-shrink: 0; max-height: 35vh; overflow: auto; }
 .story-revisions summary { cursor: pointer; font-weight: 600; }
 .story-revisions p { margin: 8px 0; line-height: 1.5; }
 .story-revisions label { display: grid; gap: 4px; margin: 8px 0; }
-.story-revisions input:not([type=checkbox]), .story-revisions textarea { width: 100%; box-sizing: border-box; padding: 6px; color: inherit; background: #23232a; border: 1px solid #484850; border-radius: 3px; }
+.story-revisions input:not([type=checkbox]), .story-revisions textarea { width: 100%; box-sizing: border-box; padding: 6px; color: inherit; background: var(--bg-input); border: 1px solid var(--border-light); border-radius: 3px; }
 .story-revisions ul { list-style: none; padding: 0; }
-.story-revisions li { border-top: 1px solid #44444d; padding: 10px 0; }
-.story-revisions pre { font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 100px; overflow: auto; padding: 6px; background: #23232a; margin: 4px 0; }
+.story-revisions li { border-top: 1px solid var(--border-light); padding: 10px 0; }
+.story-revisions pre { font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 100px; overflow: auto; padding: 6px; background: var(--bg-input); margin: 4px 0; }
 .story-revisions .revision-check { display: flex; flex-direction: row; gap: 6px; align-items: center; justify-content: flex-start; }
 .story-revisions .publication-actions { justify-content: flex-start; }
 .story-revisions .sm-btn { flex: 0 0 auto; width: auto; padding: 5px 12px; }

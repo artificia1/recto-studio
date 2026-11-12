@@ -1,0 +1,25 @@
+.template-search {
+  display: grid;
+  gap: 5px;
+  margin: 12px 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.template-search input {
+  width: 100%;
+  padding: 6px 8px;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+}
+
+.saved-layout-card {
+  overflow-wrap: anywhere;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+}
+
+.saved-layout-card p { margin-top: 5px; }

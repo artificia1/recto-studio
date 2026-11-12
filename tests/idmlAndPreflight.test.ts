@@ -352,8 +352,9 @@ describe('IDML Text Variable Resolution — edge cases', () => {
       'Stories/Story_story1.xml': storyXml,
     });
     const state = await parseIdmlPackage(bytes, 'variable-test.idml');
-    const textEl = state.spreads[0]?.elements.find((el) => el.type === 'text') as TextElement | undefined;
-    return textEl?.text ?? '';
+    const textEl = state.spreads[0]?.elements.find((el) => el.type === 'text');
+    if (!textEl) throw new Error('The imported story frame is missing.');
+    return textEl.text;
   }
 
   it('records a self-closing <Contents/> as an explicitly empty value, not as unresolved', () => {
@@ -432,6 +433,19 @@ describe('IDML Text Variable Resolution — edge cases', () => {
     );
     expect(text).toContain('PAGE-7');
     expect(text).not.toContain('known-value');
+  });
+
+  it('keeps cached values in order for missing references and layout-dependent variables', async () => {
+    const text = await importStoryText(
+      '<TextVariable Self="dv_page" Name="Page" VariableType="XrefPageNumberType" />',
+      `<CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]">
+        <Content>Section </Content>
+        <TextVariableInstance Self="tvi1" ResultText="A &amp; B" />
+        <Br />
+        <TextVariableInstance Self="tvi2" ResultText="7" AssociatedTextVariable="dv_page" />
+      </CharacterStyleRange>`,
+    );
+    expect(text).toBe('Section A & B\n7');
   });
 
   it('preserves the order of mixed Content, Br and variable tokens', async () => {

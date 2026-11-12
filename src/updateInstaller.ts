@@ -1,19 +1,24 @@
-import type { DownloadEvent, Update } from '@tauri-apps/plugin-updater';
-import type { Autosave } from './state/autosave';
+import type { Update } from '@tauri-apps/plugin-updater';
+import type { Autosave, SaveStatus } from './state/autosave';
 
-/** Saving after download includes edits made while the package was in transit. */
+/** Save the latest publication before handing control to the native installer. */
 export async function installSavedUpdate(
-  update: Pick<Update, 'download' | 'install'>,
+  update: Pick<Update, 'install'>,
   autosave: Pick<Autosave, 'flush' | 'subscribe'>,
-  onProgress: (event: DownloadEvent) => void,
-  onSaving: () => void,
+  onInstalling: () => void,
 ) {
-  await update.download(onProgress, { timeout: 120000 });
-  onSaving();
-  await autosave.flush();
-  let saved = false;
-  const unsubscribe = autosave.subscribe(value => { saved = value === 'saved'; });
-  unsubscribe();
-  if (!saved) throw new Error('Autosave could not finish. Save your publication and try again.');
+  const current: { status: SaveStatus } = { status: 'pending' };
+  const unsubscribe = autosave.subscribe(status => { current.status = status; });
+  try {
+    await autosave.flush();
+    // An edit or another save can arrive while the first checkpoint is being written.
+    if (current.status === 'pending' || current.status === 'saving') await autosave.flush();
+    if (current.status !== 'saved') {
+      throw new Error('Autosave could not finish. Save your publication and try again.');
+    }
+  } finally {
+    unsubscribe();
+  }
+  onInstalling();
   await update.install({ restartAfterInstall: true });
 }

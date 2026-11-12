@@ -1,16 +1,20 @@
 import { useRef, useState } from 'preact/hooks';
 import { stateManager } from '../../state';
-import { ProjectState, AssetLink } from '../../types';
+import type { ProjectState } from '../../types';
 import { lazy, Suspense } from 'preact/compat';
 import { reviewPreflightChange } from '../../engine/preflightReview';
 import { PreflightChangeSummary } from '../PreflightChangeSummary';
 import type { readPlacedImage } from '../../engine/placedImage';
+import BatchRelinkPanel from './BatchRelinkPanel';
+import './linksTab.css';
 const DataBindingsPanel = lazy(() => import('./DataBindingsPanel'));
 const DocumentFontsPanel = lazy(() => import('./DocumentFontsPanel'));
 
 interface LinksTabProps {
   state: ProjectState;
 }
+
+type AssetFilter = 'all' | 'missing' | 'warning';
 
 export function LinksTab({ state }: LinksTabProps) {
   const links = stateManager.getAssetLinks();
@@ -19,10 +23,16 @@ export function LinksTab({ state }: LinksTabProps) {
   const relinkRequest = useRef(0);
   const [message, setMessage] = useState('');
   const [embedding, setEmbedding] = useState(false);
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<AssetFilter>('all');
   const [preview, setPreview] = useState<{ id: string; revision: number; image: Awaited<ReturnType<typeof readPlacedImage>>;
     result: ReturnType<typeof reviewPreflightChange> }>();
 
-  const lowResCount = links.filter((l) => l.isLowRes).length;
+  const filenameQuery = search.trim().toLowerCase();
+  const matchingLinks = links.filter(link =>
+    (filter === 'all' || link.status === filter) && link.name.toLowerCase().includes(filenameQuery));
+  const missingCount = links.filter(link => link.status === 'missing').length;
+  const lowResCount = links.filter(link => link.status === 'warning').length;
 
   const handleGoTo = (elementId: string) => {
     stateManager.zoomToElement(elementId);
@@ -100,39 +110,29 @@ export function LinksTab({ state }: LinksTabProps) {
         onChange={handleFileChange}
       />
 
-      {/* Header bar */}
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '12px',
-          paddingBottom: '8px',
-          borderBottom: '1px solid var(--border-color)',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span style={{ fontWeight: 700, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-            Placed Assets ({links.length})
-          </span>
-          {lowResCount > 0 && (
-            <span
-              style={{
-                background: 'rgba(239, 68, 68, 0.15)',
-                color: '#ef4444',
-                border: '1px solid #ef4444',
-                fontSize: '9px',
-                fontWeight: 700,
-                padding: '1px 5px',
-                borderRadius: '3px',
-              }}
-              title={`${lowResCount} image(s) below 250 DPI print resolution threshold`}
-            >
-              {lowResCount} Low-Res
-            </span>
-          )}
-        </div>
+      <div className="placed-assets-heading">
+        <h3>Placed assets</h3>
+        <span role="status">{matchingLinks.length} of {links.length} shown</span>
       </div>
+      {links.length > 0 && <BatchRelinkPanel />}
+      {links.length > 0 && <div className="asset-filters">
+        <label className="asset-filename-search">
+          Search filenames
+          <input type="search" value={search} onInput={event => setSearch(event.currentTarget.value)} />
+        </label>
+        <label>
+          Status
+          <select value={filter} onChange={event => setFilter(event.currentTarget.value as AssetFilter)}>
+            <option value="all">All assets ({links.length})</option>
+            <option value="missing">Missing source ({missingCount})</option>
+            <option value="warning">Low resolution ({lowResCount})</option>
+          </select>
+        </label>
+        <button type="button" className="sm-btn" disabled={!search && filter === 'all'} onClick={() => {
+          setSearch('');
+          setFilter('all');
+        }}>Clear filters</button>
+      </div>}
 
       {links.length === 0 ? (
         <div
@@ -149,11 +149,13 @@ export function LinksTab({ state }: LinksTabProps) {
           <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
             No Placed Links
           </div>
-          <div>Drag & drop photos onto pages or image frames to populate asset intelligence.</div>
+          <div>Place an image on a page to see its link here.</div>
         </div>
+      ) : matchingLinks.length === 0 ? (
+        <p className="asset-empty-result">No assets match your search and status filter.</p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {links.map((link) => {
+          {matchingLinks.map((link) => {
             const isSelected = state.selectedElementId === link.elementId;
             return (
               <div
@@ -190,6 +192,7 @@ export function LinksTab({ state }: LinksTabProps) {
                       <img
                         src={link.src}
                         alt={link.name}
+                        loading="lazy"
                         style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                       />
                     ) : (
@@ -236,18 +239,20 @@ export function LinksTab({ state }: LinksTabProps) {
                       </span>
                     </div>
 
-                    <div style={{ fontSize: '10px', color: 'var(--text-secondary)', display: 'flex', gap: '6px' }}>
+                    {link.status !== 'missing' && <div style={{ fontSize: '10px', color: 'var(--text-secondary)', display: 'flex', gap: '6px' }}>
                       <span>{link.format}</span>
                       <span>·</span>
                       <span>{link.sizeFormatted}</span>
                       <span>·</span>
                       <span>{link.pixelWidth}×{link.pixelHeight}px</span>
-                    </div>
+                    </div>}
                   </div>
                 </div>
 
                 {/* Resolution & DPI Details */}
-                <div
+                {link.status === 'missing' ? (
+                  <div className="asset-missing-status">Missing image source</div>
+                ) : <div
                   style={{
                     background: '#141414',
                     borderRadius: '4px',
@@ -285,20 +290,10 @@ export function LinksTab({ state }: LinksTabProps) {
                         gap: '2px',
                       }}
                     >
-                      [Low-Res]
+                      Low resolution
                     </span>
-                  ) : (
-                    <span
-                      style={{
-                        color: '#10b981',
-                        fontSize: '9px',
-                        fontWeight: 700,
-                      }}
-                    >
-                      [300 DPI Print]
-                    </span>
-                  )}
-                </div>
+                  ) : null}
+                </div>}
 
                 {/* Scaled Frame Size */}
                 <div style={{ fontSize: '9px', color: '#888', display: 'flex', justifyContent: 'space-between' }}>

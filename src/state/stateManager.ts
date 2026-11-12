@@ -81,6 +81,12 @@ export {
   INITIAL_STATE,
 } from './defaults';
 
+interface ImageRelink {
+  elementId: string;
+  src: string;
+  metadata?: { name?: string; fileSize?: number; format?: string; width?: number; height?: number; proxySrc?: string };
+}
+
 const SUPERSCRIPTS: Record<string, string> = {
   '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
   '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹',
@@ -1093,43 +1099,49 @@ export class StateManager {
     return changed;
   }
 
-  public relinkAsset(
-    elementId: string,
-    newSrc: string,
-    metadata?: { name?: string; fileSize?: number; format?: string; width?: number; height?: number; proxySrc?: string }
-  ): boolean {
-    for (let sIdx = 0; sIdx < this.state.spreads.length; sIdx++) {
-      const spread = this.state.spreads[sIdx];
-      const elIdx = spread.elements.findIndex((e) => e.id === elementId);
-      if (elIdx !== -1 && spread.elements[elIdx].type === 'image') {
-        const target = spread.elements[elIdx];
-        if (target.locked || this.state.layers.find(layer => layer.id === target.layerId)?.locked) return false;
-        const updates: Partial<ImageElement> = {
-          src: newSrc, assetId: undefined, proxySrc: metadata?.proxySrc,
-          equation: undefined, alphaContour: undefined, isPsd: undefined, psdLayers: undefined, activePsdLayerIds: undefined,
-          fileSize: metadata?.fileSize, format: metadata?.format, originalWidth: metadata?.width, originalHeight: metadata?.height, actualDpi: undefined,
-          ...(metadata?.name ? { name: metadata.name, caption: metadata.name } : {}),
-        };
+  public relinkAsset(elementId: string, src: string, metadata?: ImageRelink['metadata']): boolean {
+    return this.relinkAssets([{ elementId, src, metadata }]) === 1;
+  }
 
-        if (metadata?.width && metadata?.height) {
-          this.registerImageDimensions(
-            newSrc,
-            metadata.width,
-            metadata.height,
-            metadata.fileSize,
-            metadata.format,
-            metadata.name
-          );
-        }
-
-        spread.elements[elIdx] = { ...spread.elements[elIdx], ...updates } as ImageElement;
-        this.pushHistory();
-        this.notify();
-        this.onMutation?.({ type: 'update', elementId, updates });
-        return true;
+  /** Validate all targets before replacing image sources in one undo step. */
+  public relinkAssets(replacements: readonly ImageRelink[], expectedRevision = this.documentRevision): number {
+    if (expectedRevision !== this.documentRevision) throw new Error('The document changed. Preview the replacements again.');
+    const pending = new Map(replacements.map(replacement => [replacement.elementId, replacement]));
+    if (!pending.size || pending.size !== replacements.length) return 0;
+    const changes: { spread: Spread; index: number; target: ImageElement; replacement: ImageRelink }[] = [];
+    for (const spread of this.state.spreads) {
+      for (const [index, target] of spread.elements.entries()) {
+        const replacement = pending.get(target.id);
+        if (!replacement) continue;
+        if (target.type !== 'image' || target.locked
+          || this.state.layers.find(layer => layer.id === (target.layerId ?? 'layer-1'))?.locked) return 0;
+        changes.push({ spread, index, target, replacement });
+        pending.delete(target.id);
       }
+      if (!pending.size) break;
     }
-    return false;
+    if (pending.size) return 0;
+
+    const mutations = changes.map(({ spread, index, target, replacement: { elementId, src, metadata } }) => {
+      const updates: Partial<ImageElement> = {
+        src, assetId: undefined, proxySrc: metadata?.proxySrc,
+        equation: undefined, alphaContour: undefined, isPsd: undefined, psdLayers: undefined, activePsdLayerIds: undefined,
+        fileSize: metadata?.fileSize, format: metadata?.format, originalWidth: metadata?.width, originalHeight: metadata?.height, actualDpi: undefined,
+        ...(metadata?.name ? {
+          name: metadata.name,
+          caption: target.caption && target.caption !== target.name ? target.caption : metadata.name,
+        } : {}),
+      };
+      if (metadata?.width && metadata.height) {
+        this.registerImageDimensions(src, metadata.width, metadata.height, metadata.fileSize, metadata.format, metadata.name);
+      }
+      spread.elements[index] = { ...target, ...updates };
+      return { type: 'update' as const, elementId, updates };
+    });
+    this.pushHistory();
+    this.notify();
+    for (const mutation of mutations) this.onMutation?.(mutation);
+    return changes.length;
   }
 
   public zoomToElement(elementId: string): boolean {
