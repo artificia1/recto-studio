@@ -3,7 +3,10 @@ import { TEMPLATES } from '../../templates';
 import type { ProjectState, Spread } from '../../types';
 import { useEffect, useState } from 'preact/hooks';
 import { createPublicationStarter, PUBLICATION_STARTERS, type PublicationStarter } from '../../engine/publicationStarters';
-import { captureSpreadLayout, instantiateSpreadLayout, readSavedSpreadLayouts, SAVED_LAYOUTS_KEY, writeSavedSpreadLayouts } from '../../engine/savedSpreadLayout';
+import { captureSpreadLayout, exportSavedSpreadLayout, importSavedSpreadLayout, instantiateSpreadLayout,
+  readSavedSpreadLayouts, SAVED_LAYOUT_FILE_LIMIT, SAVED_LAYOUTS_KEY, writeSavedSpreadLayouts,
+  type SavedSpreadLayout } from '../../engine/savedSpreadLayout';
+import { savePublicationFile } from '../../desktop';
 import { SheetPlanningPanel } from './SheetPlanningPanel';
 import { OrnamentPanel } from './OrnamentPanel';
 import { ArtworkLibraryPanel } from './ArtworkLibraryPanel';
@@ -19,6 +22,8 @@ export function TemplatesTab({ state }: TemplatesTabProps) {
   const [query, setQuery] = useState('');
   const [layoutName, setLayoutName] = useState('');
   const [savedLayouts, setSavedLayouts] = useState(readSavedSpreadLayouts);
+  const [rename, setRename] = useState<{ id: string; name: string }>();
+  const [importing, setImporting] = useState(false);
   const [starter, setStarter] = useState<PublicationStarter>('fiction');
   const [title, setTitle] = useState('Chapter One');
   const search = query.trim().normalize('NFKC').toLowerCase();
@@ -37,6 +42,38 @@ export function TemplatesTab({ state }: TemplatesTabProps) {
 
   const act = (action: () => void, success: string) => {
     try { action(); setMessage(success); } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
+  };
+  const store = (layouts: SavedSpreadLayout[]) => {
+    writeSavedSpreadLayouts(layouts);
+    setSavedLayouts(layouts);
+  };
+  const importLayout = async (event: Event) => {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    setImporting(true);
+    try {
+      if (file.size > SAVED_LAYOUT_FILE_LIMIT) throw new Error('Choose a layout file smaller than 3 MB.');
+      const layout = importSavedSpreadLayout(await file.text());
+      store([layout, ...readSavedSpreadLayouts()]);
+      setQuery('');
+      setMessage('Layout imported into Saved layouts.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setImporting(false);
+    }
+  };
+  const exportLayout = async (layout: SavedSpreadLayout) => {
+    try {
+      const name = layout.name.replace(/[^\p{L}\p{N} _-]/gu, '').trim() || 'spread';
+      if (await savePublicationFile(`${name}.rectolayout`, exportSavedSpreadLayout(layout), 'application/json')) {
+        setMessage('Layout file saved.');
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
   };
   const apply = (create: () => Spread, mode: 'append' | 'replace', size?: { width: number; height: number }) => {
     if (mode === 'replace' && stateManager.getActiveSpread().elements.length &&
@@ -73,28 +110,51 @@ export function TemplatesTab({ state }: TemplatesTabProps) {
           event.preventDefault();
           act(() => {
             const entry = captureSpreadLayout(stateManager.getState(), layoutName);
-            const updated = [entry, ...readSavedSpreadLayouts()];
-            writeSavedSpreadLayouts(updated);
-            setSavedLayouts(updated);
+            store([entry, ...readSavedSpreadLayouts()]);
             setLayoutName('');
           }, 'Spread layout saved.');
         }}>
           <label>Layout name<input value={layoutName} maxLength={100} onInput={event => setLayoutName(event.currentTarget.value)} /></label>
           <div className="publication-actions"><button type="submit" className="sm-btn" disabled={!layoutName.trim()}>Save active spread</button></div>
         </form>
+        <label className="template-import">Import layout file
+          <input type="file" accept=".rectolayout" disabled={importing} onChange={importLayout} />
+        </label>
         {savedLayouts.length > 0 && visibleSaved.length === 0 && <p>No saved layouts match your search.</p>}
         <div className="saved-layout-list">
           {visibleSaved.map(layout => <article className="saved-layout-card" key={layout.id}>
-            <strong>{layout.name}</strong>
+            {rename?.id === layout.id ? <form onSubmit={event => {
+              event.preventDefault();
+              act(() => {
+                const name = rename.name.trim();
+                if (!name || name.length > 100) throw new Error('Enter a layout name of 1–100 characters.');
+                const layouts = readSavedSpreadLayouts();
+                if (!layouts.some(item => item.id === layout.id)) throw new Error('This layout has already been removed.');
+                store(layouts.map(item => item.id === layout.id ? { ...item, name } : item));
+                setRename(undefined);
+                setQuery('');
+              }, 'Saved layout renamed.');
+            }}>
+              <label>New layout name<input value={rename.name} maxLength={100}
+                onInput={event => setRename({ id: layout.id, name: event.currentTarget.value })} /></label>
+              <div className="publication-actions">
+                <button type="submit" className="sm-btn" disabled={!rename.name.trim()}>Save name</button>
+                <button type="button" className="sm-btn" onClick={() => setRename(undefined)}>Cancel rename</button>
+              </div>
+            </form> : <strong>{layout.name}</strong>}
             <p>{layout.spread.pages.length} {layout.spread.pages.length === 1 ? 'page' : 'pages'} · {Number(layout.size.width.toFixed(2))} × {Number(layout.size.height.toFixed(2))} mm</p>
             <div className="publication-actions">
               <button type="button" className="sm-btn" onClick={() => apply(() => instantiateSpreadLayout(layout), 'append', layout.size)}>Add spread</button>
               <button type="button" className="sm-btn" onClick={() => apply(() => instantiateSpreadLayout(layout), 'replace', layout.size)}>Replace spread</button>
-              <button type="button" className="sm-btn" onClick={() => act(() => {
-                const updated = readSavedSpreadLayouts().filter(item => item.id !== layout.id);
-                writeSavedSpreadLayouts(updated);
-                setSavedLayouts(updated);
-              }, 'Saved layout removed.')}>Remove</button>
+            </div>
+            <div className="publication-actions">
+              <button type="button" className="sm-btn" onClick={() => setRename({ id: layout.id, name: layout.name })}>Rename</button>
+              <button type="button" className="sm-btn" onClick={() => void exportLayout(layout)}>Export file</button>
+              <button type="button" className="sm-btn danger-btn" onClick={() => {
+                if (window.confirm(`Remove “${layout.name}” from Saved layouts?`)) {
+                  act(() => store(readSavedSpreadLayouts().filter(item => item.id !== layout.id)), 'Saved layout removed.');
+                }
+              }}>Remove</button>
             </div>
           </article>)}
         </div>

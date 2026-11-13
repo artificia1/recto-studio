@@ -47,7 +47,8 @@ themes with the keyboard. Recto remembers these settings on this device.
 
 Use **Links → Bulk relink images** to match replacement files by filename and
 review them before applying. Use **Templates → Saved layouts** to reuse
-standalone artwork and text from a spread.
+standalone artwork and text from a spread. Export a `.rectolayout` file to move
+the layout to another device.
 
 ## What's in the editor
 

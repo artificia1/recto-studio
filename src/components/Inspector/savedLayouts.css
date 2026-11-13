@@ -23,3 +23,11 @@
 }
 
 .saved-layout-card p { margin-top: 5px; }
+
+.template-import {
+  margin-top: 12px;
+}
+
+.template-import input {
+  max-width: 100%;
+}

@@ -29,7 +29,7 @@ export async function importProject(page: Page, project = projectFixture()) {
 }
 
 export function projectFileInput(page: Page) {
-  return page.locator('input[type="file"][accept^=".recto,"]');
+  return page.locator('.top-bar input[type="file"][accept^=".recto,"]');
 }
 
 export async function menuCommand(page: Page, title: string) {

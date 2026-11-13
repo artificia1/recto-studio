@@ -6,6 +6,8 @@ import { preparePortableArtwork } from './reusableArtwork';
 export const SAVED_LAYOUTS_KEY = 'recto-spread-layouts-v1';
 const MAX_LAYOUTS = 24;
 const MAX_STORAGE_CHARS = 3 * 1024 * 1024;
+const FILE_FORMAT = 'recto-spread-layout';
+export const SAVED_LAYOUT_FILE_LIMIT = MAX_STORAGE_CHARS;
 
 export interface SavedSpreadLayout {
   id: string;
@@ -56,17 +58,38 @@ export function instantiateSpreadLayout(layout: SavedSpreadLayout): Spread {
   return source;
 }
 
+export function exportSavedSpreadLayout(layout: SavedSpreadLayout): string {
+  return JSON.stringify({ format: FILE_FORMAT, version: 1, layout });
+}
+
+export function importSavedSpreadLayout(json: string): SavedSpreadLayout {
+  if (json.length > MAX_STORAGE_CHARS) throw new Error('Choose a layout file smaller than 3 MB.');
+  const file = JSON.parse(json);
+  if (file?.format !== FILE_FORMAT || file.version !== 1 || !isSavedLayout(file.layout)) {
+    throw new Error('Choose a supported Recto layout file.');
+  }
+  const layout: SavedSpreadLayout = file.layout;
+  // Validate and detach document-specific links using the same checks as insertion.
+  const spread = instantiateSpreadLayout(layout);
+  return { ...layout, id: crypto.randomUUID(), name: layout.name.trim(), spread };
+}
+
+function isSavedLayout(item: unknown): item is SavedSpreadLayout {
+  if (!item || typeof item !== 'object') return false;
+  const layout = item as SavedSpreadLayout;
+  return typeof layout.id === 'string' && typeof layout.name === 'string' && !!layout.name.trim() &&
+    layout.name.trim().length <= 100 && Number.isFinite(layout.size?.width) && layout.size.width > 0 &&
+    Number.isFinite(layout.size?.height) && layout.size.height > 0 && Array.isArray(layout.spread?.pages) &&
+    layout.spread.pages.length > 0 && Array.isArray(layout.spread?.elements) && layout.spread.elements.length > 0;
+}
+
 export function readSavedSpreadLayouts(): SavedSpreadLayout[] {
   try {
     const raw = localStorage.getItem(SAVED_LAYOUTS_KEY);
     if (!raw || raw.length > MAX_STORAGE_CHARS) return [];
     const entries: unknown = JSON.parse(raw);
     if (!Array.isArray(entries)) return [];
-    return entries.slice(0, MAX_LAYOUTS).filter((item): item is SavedSpreadLayout =>
-      item && typeof item.id === 'string' && typeof item.name === 'string' &&
-      Number.isFinite(item.size?.width) && item.size.width > 0 &&
-      Number.isFinite(item.size?.height) && item.size.height > 0 && Array.isArray(item.spread?.pages) &&
-      Array.isArray(item.spread?.elements));
+    return entries.slice(0, MAX_LAYOUTS).filter(isSavedLayout);
   } catch { return []; }
 }
 

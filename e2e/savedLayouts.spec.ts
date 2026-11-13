@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
 import { importProject, savedProject } from './fixtures';
 
 test('saves a spread layout, finds it after reload and inserts a new editable copy', async ({ page }) => {
@@ -26,4 +27,25 @@ test('saves a spread layout, finds it after reload and inserts a new editable co
   expect(inserted.pageId).toBe(document.spreads[1].pages[0].id);
   await page.getByTitle('Undo (Ctrl+Z)', { exact: true }).click();
   expect((await savedProject(page)).spreads).toHaveLength(1);
+
+  await card.getByRole('button', { name: 'Rename', exact: true }).click();
+  await card.getByLabel('New layout name').fill('Print layout');
+  await card.getByRole('button', { name: 'Save name' }).click();
+  const renamed = page.getByRole('article').filter({ hasText: 'Print layout' });
+  const download = page.waitForEvent('download');
+  await renamed.getByRole('button', { name: 'Export file' }).click();
+  const layout = await download;
+  expect(layout.suggestedFilename()).toBe('Print layout.rectolayout');
+  const buffer = await readFile((await layout.path())!);
+  page.once('dialog', dialog => dialog.accept());
+  await renamed.getByRole('button', { name: 'Remove', exact: true }).click();
+  await expect(renamed).toHaveCount(0);
+
+  const picker = page.getByLabel('Import layout file');
+  await picker.setInputFiles({ name: layout.suggestedFilename(), mimeType: 'application/json', buffer });
+  await expect(renamed).toBeVisible();
+  await expect(page.getByText('Layout imported into Saved layouts.')).toBeVisible();
+  await picker.setInputFiles({ name: 'invalid.rectolayout', mimeType: 'application/json', buffer: Buffer.from('{}') });
+  await expect(page.getByText('Choose a supported Recto layout file.')).toBeVisible();
+  await expect(renamed).toHaveCount(1);
 });

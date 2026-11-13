@@ -101,7 +101,7 @@ test('desktop updater checks the native plugin and preserves edits through a ver
   await expect(status).toHaveText('Could not start the installer. Installer busy');
   await install.click();
   await expect(status).toHaveText('Update installed. Reopen Recto Studio to continue.');
-  expect(await nativeState()).toEqual({
+  await expect.poll(nativeState).toEqual({
     downloads: 2,
     installs: [
       { updateRid: 4, bytesRid: 42, restartAfterInstall: true },

@@ -3,6 +3,7 @@ import { ProjectState, DisplayQuality } from '../types';
 import { lazy, Suspense } from 'preact/compat';
 import { stateManager } from '../state';
 import type { SaveStatus } from '../state/autosave';
+import { version } from '../../package.json';
 
 const PreflightDrawer = lazy(() => import('./PreflightDrawer'));
 
@@ -146,7 +147,7 @@ export function StatusBar({ state }: StatusBarProps) {
         <span className="status-divider status-meta-telemetry">|</span>
         <span className="status-item status-meta-telemetry">100% Offline • 0 KB Telemetry</span>
         <span className="status-divider">|</span>
-        <span className="status-item status-version">Recto Studio v1.4.0</span>
+        <span className="status-item status-version">Recto Studio v{version}</span>
       </div>
 
       {drawerOpen && <Suspense fallback={null}><PreflightDrawer issues={issues} drawerRef={drawerRef} onClose={() => setDrawerOpen(false)} /></Suspense>}

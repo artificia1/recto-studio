@@ -60,10 +60,16 @@ jobs:
           cp -- "${debs[0]}" "release-artifacts/Recto-Studio-$version-Linux-x64.deb"
           cp -- "${appimages[0]}" "release-artifacts/Recto-Studio-$version-Linux-x64.AppImage"
           (cd release-artifacts && sha256sum *.deb *.AppImage > SHA256SUMS-linux.txt)
-          if ! gh release view "v$version" --repo "$GITHUB_REPOSITORY"; then
-            gh release create "v$version" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --title "Recto Studio $version" --notes-file RELEASE_NOTES.md || gh release view "v$version" --repo "$GITHUB_REPOSITORY"
+          tag="v$version"
+          if ! draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft'); then
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --title "Recto Studio $version" --notes-file RELEASE_NOTES.md
+            draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')
           fi
-          gh release upload "v$version" release-artifacts/* --repo "$GITHUB_REPOSITORY" --clobber
+          if [[ "$draft" != true ]]; then
+            echo "Release $tag is already public. Bump the version before uploading a new Linux build." >&2
+            exit 1
+          fi
+          gh release upload "$tag" release-artifacts/* --repo "$GITHUB_REPOSITORY" --clobber
       - name: Retain packages for manual testing
         if: always()
         uses: actions/upload-artifact@v4

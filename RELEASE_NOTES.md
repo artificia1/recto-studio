@@ -1,4 +1,36 @@
-# Recto Studio 1.4.0
+# Recto Studio 1.4.1
+
+Desktop recovery, reusable layouts, faster image relinking, and final PDF inspection.
+
+## Downloads
+
+- **Windows x64** — NSIS setup EXE and portable ZIP. The installer can bootstrap WebView2. Existing updater-enabled installations can use **Check for updates** in Recto.
+- **Linux x64** — Debian package and AppImage. Install the Debian package with your package manager, or mark the AppImage executable and launch it. Linux updates use these downloads.
+- **Source** — GitHub provides ZIP and tar.gz archives of the tagged source.
+- **Checksums** — `SHA256SUMS.txt` covers Windows assets. `SHA256SUMS-linux.txt` covers the Debian package and AppImage. The Windows updater uses the installer signature and `latest.json`.
+
+## Desktop and project files
+
+- **Save** writes back to the opened project. **Save As** creates a separate copy, and Recto checks for changes made to the file by another app before overwriting it.
+- **File → Recover Unsaved Projects** restores per-project recovery checkpoints. Recto also resumes the latest project when you reopen the app.
+- Save editable project archives with embedded assets for handoff or backup. Archive import verifies integrity before opening the project.
+- The Windows toolbar wraps to keep the paper-size selector and updater visible. The updater displays download and verification progress and keeps a verified download available when installation can be retried.
+
+## Workspace and artwork
+
+- Choose Graphite, Paper, Midnight, or System under **Setup → Workspace appearance**. Set an accent, compact controls, and pasteboard color. Use Quick Apply to switch themes from the keyboard.
+- Save and rename reusable spread layouts in Templates. Export or import a layout file to carry it to another device, or find an existing layout with search.
+- Find placed artwork by filename and filter missing or low-resolution sources. Preview bulk relinking by filename, skip conflicts and locked frames, and undo an applied batch in one step.
+
+## Publication checks
+
+- **Pages → Production & books → Inspect delivery PDF** checks the exported file's page boxes, bleed, fonts, tagging, and ICC profile. Save a JSON report linked to the PDF by its SHA-256 digest.
+- Added regression tests for IDML story variables, empty variable-only stories, paragraph returns, and standalone text frames.
+- Fixed development startup by excluding the native SVG rasterizer from Vite's browser dependency scan. CI now checks the cold scan.
+
+---
+
+# Previous release: Recto Studio 1.4.0
 
 Translation editions, accessible reading order, and editorial review for books, magazines, and other publications.
 
