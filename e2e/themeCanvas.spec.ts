@@ -11,6 +11,17 @@ for (const theme of ['dark', 'light', 'oled'] as const) {
     await expect(page.locator('html')).toHaveAttribute('data-buttons', 'minimal');
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
     await expect(page.locator('#spread-canvas')).toBeVisible();
+    const ruler = page.locator('#ruler-top');
+    await expect.poll(() => ruler.evaluate(element => {
+      const corner = document.querySelector('.ruler-corner')!;
+      const color = getComputedStyle(corner).backgroundColor;
+      const context = (element as HTMLCanvasElement).getContext('2d')!;
+      const pixels = context.getImageData(0, 0, 16, 1).data;
+      for (let i = 0; i < pixels.length; i += 4) {
+        if (pixels[i + 3] === 255 && `rgb(${pixels[i]}, ${pixels[i + 1]}, ${pixels[i + 2]})` === color) return true;
+      }
+      return false;
+    })).toBe(true);
 
     const trigger = page.getByRole('button', { name: 'All spreads', exact: true });
     await expect(trigger).toBeVisible();
