@@ -1,4 +1,28 @@
-# Recto Studio 1.4.1
+# Recto Studio 1.4.2
+
+A more compact editor and an Appearance popup with live previews.
+
+## Downloads
+
+- **Windows x64** — NSIS setup EXE and portable ZIP. Existing installations can use **Check for updates**.
+- **Linux x64** — Debian package and AppImage. Install the Debian package with your package manager or mark the AppImage executable before launching it.
+- **Source** — ZIP and tar.gz archives of the tagged source.
+- **Checksums** — `SHA256SUMS.txt` covers Windows assets. `SHA256SUMS-linux.txt` covers the Linux packages. The Windows updater uses the signed installer and `latest.json`.
+
+## Appearance and editor controls
+
+- Open **Appearance** from the toolbar to change the theme, button style, and accent color while the editor stays open behind the popup. Themes include Dark, Light, Midnight, OLED, and System. Choose Classic, Minimal, or Glass buttons.
+- Pick any accent color with the color picker or enter a hex value. Appearance preferences stay on this device.
+- A denser header keeps the paper size and publishing commands on one row at typical desktop widths. At narrower widths, the controls wrap and menus stay inside the window.
+- The Properties inspector shows a document overview when no object is selected. The footer keeps save and preflight status, display quality, and ink controls together.
+
+## Website
+
+- The web build can use an optional visit counter when the site operator configures an endpoint. Desktop builds and local previews skip counting.
+
+---
+
+# Previous release: Recto Studio 1.4.1
 
 Desktop recovery, reusable layouts, faster image relinking, and final PDF inspection.
 

@@ -41,9 +41,13 @@ and updater behavior, see the [desktop guide](DESKTOP.md).
 
 Use `V` for Selection, `T` for Type, `P` for Pen, and `W` for Preview.
 
-Open **Setup → Workspace appearance** to choose a theme, accent, control
-density, and spread pasteboard color. Use Quick Apply (`Ctrl+/`) to change
-themes with the keyboard. Recto remembers these settings on this device.
+Use the toolbar’s **Appearance** button to open the workspace popup. Choose
+Dark, Light, Midnight, OLED, or System, set a preset or custom accent color, and
+pick Classic, Minimal, or Glass controls. Recto saves these preferences on this
+device. Quick Apply (`Ctrl+/`) can switch themes from the keyboard.
+
+The hosted editor supports optional aggregate visit and unique-browser counts.
+See the [visit counter setup](visit-counter/README.md) for the data and deployment details.
 
 Use **Links → Bulk relink images** to match replacement files by filename and
 review them before applying. Use **Templates → Saved layouts** to reuse

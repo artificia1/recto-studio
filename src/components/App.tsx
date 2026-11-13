@@ -181,7 +181,6 @@ export function App() {
       (window as any).papercut = (window as any).recto;
 
       spreadCanvasRef.current.render();
-      console.log('SpreadCanvas 2D render engine connected to Preact TSX shell.');
     }
 
     const unsubscribe = subscribeAppearance(() => spreadCanvasRef.current?.render());

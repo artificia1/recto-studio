@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { stateManager, numberToSuperscript } from '../../state';
 import { fontManager } from '../../fontManager';
-import { PAGE_PRESETS, ProjectState, CanvasElement, TextElement, ImageElement, ShapeElement, TableElement, ParagraphStyle, VectorPathElement } from '../../types';
+import { ProjectState, CanvasElement, TextElement, ImageElement, ShapeElement, TableElement, ParagraphStyle, VectorPathElement } from '../../types';
 import { MathInput } from '../common/MathInput';
 import { getAllFreeToneColors } from '../../engine/spotColors';
 import { shapeToPath } from '../../engine/vectorPath';
+import { DocumentOverview } from './DocumentOverview';
 import { lazy, Suspense } from 'preact/compat';
 const TableInspector = lazy(() => import('./TableInspector'));
 const TextInspector = lazy(() => import('./TextInspector'));
@@ -15,9 +16,10 @@ const VectorDecorationPanel = lazy(() => import('./VectorDecorationPanel'));
 
 interface PropertiesTabProps {
   state: ProjectState;
+  onOpenPageSetup: () => void;
 }
 
-export function PropertiesTab({ state }: PropertiesTabProps) {
+export function PropertiesTab({ state, onOpenPageSetup }: PropertiesTabProps) {
   const [spacing, setSpacing] = useState(4.5);
   const [arrangeError, setArrangeError] = useState('');
   const runArrangement = (action: () => void) => {
@@ -28,43 +30,8 @@ export function PropertiesTab({ state }: PropertiesTabProps) {
     ? state.selectedElementIds
     : (state.selectedElementId ? [state.selectedElementId] : []);
   const selectedElements = spread.elements.filter((el) => selectedIds.includes(el.id));
-
-
-
   if (selectedElements.length === 0) {
-    return (
-      <div className="empty-inspector">
-        <div className="empty-icon"></div>
-        <div className="empty-title">No Element Selected</div>
-        <p className="empty-desc">
-          Click any text frame, image, or shape on the spread to inspect its typography and geometry. Press <kbd>T</kbd> to draw text or <kbd>F</kbd> for an image frame. Drag across the spread to marquee-select multiple objects.
-        </p>
-
-        <div className="doc-summary-card">
-          <div className="card-title">DOCUMENT SUMMARY</div>
-          <div className="summary-row">
-            <span>Page Preset:</span>
-            <b>{PAGE_PRESETS[state.settings.preset]?.name || 'Custom'}</b>
-          </div>
-          <div className="summary-row">
-            <span>Trim Dimensions:</span>
-            <b>{state.settings.widthMm} × {state.settings.heightMm} mm</b>
-          </div>
-          <div className="summary-row">
-            <span>Facing Pages:</span>
-            <b>{state.settings.facingPages ? 'Yes (Spreads)' : 'No'}</b>
-          </div>
-          <div className="summary-row">
-            <span>Bleed Allowance:</span>
-            <b>{state.settings.bleedMm} mm</b>
-          </div>
-          <div className="summary-row">
-            <span>Column Grid:</span>
-            <b>{state.settings.columnCount} cols ({state.settings.columnGutterMm}mm gutter)</b>
-          </div>
-        </div>
-      </div>
-    );
+    return <DocumentOverview state={state} onOpenPageSetup={onOpenPageSetup} />;
   }
 
   // Multi-element selection mode

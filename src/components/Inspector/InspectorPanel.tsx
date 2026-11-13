@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
 import { lazy, Suspense } from 'preact/compat';
 const PropertiesTab = lazy(() => import('./PropertiesTab').then(module => ({ default: module.PropertiesTab })));
 const PagesTab = lazy(() => import('./PagesTab').then(module => ({ default: module.PagesTab })));
@@ -20,6 +20,7 @@ interface InspectorPanelProps {
 export function InspectorPanel({ state, activeTab: propActiveTab, onTabChange, isOpen, onClose }: InspectorPanelProps) {
   const [internalTab, setInternalTab] = useState<'properties' | 'styles' | 'pages' | 'layers' | 'links' | 'templates' | 'setup'>('properties');
   const activeTab = propActiveTab !== undefined ? propActiveTab : internalTab;
+  const setupTab = useRef<HTMLButtonElement>(null);
 
   const handleTabClick = (tabId: 'properties' | 'styles' | 'pages' | 'layers' | 'links' | 'templates' | 'setup') => {
     setInternalTab(tabId);
@@ -58,6 +59,8 @@ export function InspectorPanel({ state, activeTab: propActiveTab, onTabChange, i
             className={`inspector-tab ${activeTab === tab.id ? 'active' : ''}`}
             onClick={() => handleTabClick(tab.id)}
             title={tab.label}
+            aria-pressed={activeTab === tab.id}
+            ref={tab.id === 'setup' ? setupTab : undefined}
           >
             {tab.label}
           </button>
@@ -65,7 +68,12 @@ export function InspectorPanel({ state, activeTab: propActiveTab, onTabChange, i
       </div>
 
       <div className="inspector-content">
-        {activeTab === 'properties' && <Suspense fallback={<p role="status">Loading properties…</p>}><PropertiesTab state={state} /></Suspense>}
+        {activeTab === 'properties' && <Suspense fallback={<p role="status">Loading properties…</p>}>
+          <PropertiesTab state={state} onOpenPageSetup={() => {
+            setupTab.current?.focus();
+            handleTabClick('setup');
+          }} />
+        </Suspense>}
         {activeTab === 'styles' && <Suspense fallback={<p role="status">Loading styles…</p>}><StylesTab state={state} /></Suspense>}
         {activeTab === 'pages' && <Suspense fallback={<p role="status">Loading pages…</p>}><PagesTab state={state} /></Suspense>}
         {activeTab === 'layers' && <Suspense fallback={<p role="status">Loading layers…</p>}><LayersTab state={state} /></Suspense>}

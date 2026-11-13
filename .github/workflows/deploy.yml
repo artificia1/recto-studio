@@ -52,6 +52,8 @@ jobs:
           python scripts/install-verapdf.py
           python scripts/validate-accessible-pdf.py
       - name: Build Production Bundle
+        env:
+          VITE_VISIT_COUNTER_URL: ${{ vars.VITE_VISIT_COUNTER_URL }}
         run: npm run build
       - name: Check startup bundle budget
         run: npm run analyze:bundle

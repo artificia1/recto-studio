@@ -8,14 +8,16 @@ test('workspace appearance follows saved preferences without changing the projec
   const project = await savedProject(page);
   const root = page.locator('html');
   const toolbar = page.locator('.top-bar');
-  const settings = page.locator('.appearance-panel');
-  const openSettings = async () => {
-    await page.getByRole('button', { name: 'Setup', exact: true }).click();
-    await settings.getByText('Workspace appearance', { exact: true }).click();
-  };
+  const settings = page.getByRole('dialog', { name: 'Appearance' });
+  const appearanceButton = toolbar.getByRole('button', { name: 'Appearance', exact: true });
+  const editorUrl = page.url();
+  const openSettings = () => appearanceButton.click();
 
   await openSettings();
-  await settings.getByRole('button', { name: 'Paper' }).click();
+  await expect(settings).toBeVisible();
+  await expect(page).toHaveURL(editorUrl);
+  await expect(page.locator('#spread-canvas')).toBeVisible();
+  await settings.getByRole('button', { name: 'Light Soft white' }).click();
   await settings.getByRole('button', { name: 'Jade' }).click();
   await settings.getByLabel('Spread pasteboard').selectOption('gray');
   await settings.getByRole('checkbox', { name: 'Compact controls' }).check();
@@ -23,6 +25,9 @@ test('workspace appearance follows saved preferences without changing the projec
   await expect(root).toHaveAttribute('data-accent', 'jade');
   await expect(root).toHaveAttribute('data-density', 'compact');
   await expect(toolbar.getByTitle('Save .recto project to disk (Ctrl+S)')).toHaveCSS('height', '25px');
+  await settings.getByRole('button', { name: 'Close Appearance' }).press('Escape');
+  await expect(settings).toBeHidden();
+  await expect(appearanceButton).toBeFocused();
   const themed = await savedProject(page);
   expect(themed.settings).toEqual(project.settings);
   expect(themed.spreads).toEqual(project.spreads);
@@ -32,20 +37,21 @@ test('workspace appearance follows saved preferences without changing the projec
   await expect(root).toHaveAttribute('data-accent', 'jade');
   await expect(root).toHaveAttribute('data-density', 'compact');
   await openSettings();
-  await expect(settings.getByRole('button', { name: 'Paper' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(settings.getByRole('button', { name: 'Light Soft white' })).toHaveAttribute('aria-pressed', 'true');
   await expect(settings.getByLabel('Spread pasteboard')).toHaveValue('gray');
 
   await page.emulateMedia({ colorScheme: 'light' });
-  await settings.getByRole('button', { name: 'System' }).click();
+  await settings.getByRole('button', { name: 'System Follows your device' }).click();
   await expect(root).toHaveAttribute('data-theme', 'light');
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect(root).toHaveAttribute('data-theme', 'dark');
-  await settings.getByRole('button', { name: 'Midnight' }).click();
+  await settings.getByRole('button', { name: 'Midnight Deep navy' }).click();
   await expect(toolbar).toHaveCSS('background-color', 'rgb(26, 35, 52)');
-  await settings.getByRole('button', { name: 'Reset' }).click();
+  await settings.getByRole('button', { name: 'Reset to defaults' }).click();
   await expect(root).toHaveAttribute('data-theme', 'dark');
   await expect(root).toHaveAttribute('data-accent', 'blue');
   await expect(root).toHaveAttribute('data-density', 'default');
+  await settings.getByRole('button', { name: 'Close Appearance' }).click();
 
   await page.keyboard.press('Control+/');
   const palette = page.getByRole('dialog', { name: 'Quick Apply' });
@@ -57,5 +63,39 @@ test('workspace appearance follows saved preferences without changing the projec
   await search.press('Enter');
   await expect(palette).toBeHidden();
   await expect(root).toHaveAttribute('data-theme', 'midnight');
-  await expect(settings.getByRole('button', { name: 'Midnight' })).toHaveAttribute('aria-pressed', 'true');
+  await openSettings();
+  await expect(settings.getByRole('button', { name: 'Midnight Deep navy' })).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('OLED and custom colors persist with the chosen button style on a narrow screen', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 700 });
+  await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.abort());
+  await page.goto('/');
+  const root = page.locator('html');
+  const appearance = page.getByRole('button', { name: 'Appearance', exact: true });
+  await appearance.click();
+  const popup = page.getByRole('dialog', { name: 'Appearance' });
+  await expect(popup).toBeInViewport({ ratio: 1 });
+  await popup.getByRole('button', { name: 'OLED True black' }).click();
+  await popup.getByRole('button', { name: /Glass Tinted controls/ }).click();
+  const hex = popup.getByRole('textbox', { name: 'Custom hex' });
+  await hex.fill('#c0ffee');
+  await expect(root).toHaveAttribute('data-accent', 'custom');
+  await expect(root).toHaveAttribute('data-theme', 'oled');
+  await expect(root).toHaveAttribute('data-buttons', 'glass');
+  await expect(page.locator('.top-bar')).toHaveCSS('background-color', 'rgb(0, 0, 0)');
+  await expect(appearance).toHaveCSS('background-image', /linear-gradient/);
+  await hex.fill('#bad');
+  await expect(hex).toHaveAttribute('aria-invalid', 'true');
+  await expect(root).toHaveCSS('--custom-accent', '#c0ffee');
+
+  await page.reload();
+  await expect(root).toHaveAttribute('data-buttons', 'glass');
+  await appearance.click();
+  await expect(hex).toHaveValue('#c0ffee');
+  await popup.getByRole('button', { name: /Minimal Quiet controls/ }).click();
+  await expect(appearance).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await popup.getByRole('button', { name: 'Reset to defaults' }).click();
+  await expect(root).toHaveAttribute('data-buttons', 'classic');
+  await expect(root).toHaveAttribute('data-accent', 'blue');
 });

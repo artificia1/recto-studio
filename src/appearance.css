@@ -10,6 +10,39 @@
   --accent-surface: color-mix(in srgb, var(--accent-cyan) 17%, var(--bg-panel));
 }
 
+[data-buttons="classic"] {
+  --button-face: var(--bg-input);
+  --button-border: var(--border-color);
+  --button-shadow: none;
+  --button-hover: var(--bg-hover);
+  --primary-face: var(--accent-fill);
+  --primary-border: var(--accent-fill);
+  --primary-color: var(--accent-foreground);
+  --primary-shadow: none;
+}
+
+[data-buttons="minimal"] {
+  --button-face: transparent;
+  --button-border: var(--border-color);
+  --button-shadow: none;
+  --button-hover: var(--bg-hover);
+  --primary-face: var(--accent-surface);
+  --primary-border: var(--accent-cyan);
+  --primary-color: var(--accent-cyan);
+  --primary-shadow: none;
+}
+
+[data-buttons="glass"] {
+  --button-face: linear-gradient(155deg, color-mix(in srgb, var(--accent-cyan) 14%, var(--bg-hover)), var(--bg-input));
+  --button-border: color-mix(in srgb, var(--accent-cyan) 20%, var(--border-light));
+  --button-shadow: inset 0 1px color-mix(in srgb, var(--text-primary) 12%, transparent);
+  --button-hover: var(--accent-surface);
+  --primary-face: linear-gradient(155deg, var(--accent-fill), color-mix(in srgb, var(--accent-fill) 82%, #0b0e13));
+  --primary-border: var(--accent-fill);
+  --primary-color: var(--accent-foreground);
+  --primary-shadow: inset 0 1px #fff4;
+}
+
 :root[data-theme="light"] {
   color-scheme: light;
   --bg-app: #e4e8ed;
@@ -49,12 +82,39 @@
   --accent-cyan: #74bcff;
 }
 
+:root[data-theme="oled"] {
+  --bg-app: #000;
+  --bg-panel: #000;
+  --bg-input: #0b0b0d;
+  --bg-hover: #17171b;
+  --bg-bar: #000;
+  --bg-menu: #0c0c10;
+  --bg-footer: #000;
+  --bg-modal: #050506;
+  --border-color: #28282c;
+  --border-light: #404047;
+  --text-primary: #f3f3f5;
+  --text-secondary: #b0b0bb;
+  --text-muted: #90909d;
+  --scroll-thumb: #52525e;
+  --accent-cyan: #65bfff;
+}
+
 :root[data-accent="jade"] { --accent-cyan: #46d4af; --accent-fill: #08775e; }
 :root[data-accent="violet"] { --accent-cyan: #baa6ff; --accent-fill: #6745b6; }
 :root[data-accent="amber"] { --accent-cyan: #f0bc67; --accent-fill: #89520c; }
 :root[data-theme="light"][data-accent="jade"] { --accent-cyan: #006b53; }
 :root[data-theme="light"][data-accent="violet"] { --accent-cyan: #6142aa; }
 :root[data-theme="light"][data-accent="amber"] { --accent-cyan: #815008; }
+
+:root[data-accent="custom"] {
+  --accent-cyan: color-mix(in srgb, var(--custom-accent) 65%, white);
+  --accent-fill: color-mix(in srgb, var(--custom-accent) 40%, #111217);
+}
+
+:root[data-theme="light"][data-accent="custom"] {
+  --accent-cyan: color-mix(in srgb, var(--custom-accent) 40%, #111217);
+}
 
 * { scrollbar-color: var(--scroll-thumb) transparent; }
 *::-webkit-scrollbar-thumb { background-color: var(--scroll-thumb); }
@@ -88,10 +148,20 @@
 }
 
 .action-btn-primary, .action-btn-primary.active, .preflight-fix-all-btn {
-  background: var(--accent-fill);
-  border-color: var(--accent-fill);
-  color: var(--accent-foreground);
+  background: var(--primary-face, var(--accent-fill));
+  border-color: var(--primary-border, var(--accent-fill));
+  color: var(--primary-color, var(--accent-foreground));
+  box-shadow: var(--primary-shadow, none);
 }
+
+:is(.action-btn, .sm-btn):not(.active, .danger-btn) {
+  background: var(--button-face, var(--bg-input));
+  border-color: var(--button-border, var(--border-color));
+  box-shadow: var(--button-shadow, none);
+}
+
+:is(.action-btn, .sm-btn):not(.active, .danger-btn):hover { background: var(--button-hover, var(--bg-hover)); }
+.top-btn-appearance { gap: 6px; }
 
 :is(button, select, input, summary):focus-visible {
   outline: 2px solid var(--accent-cyan);

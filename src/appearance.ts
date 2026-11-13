@@ -2,10 +2,12 @@ export const appearanceThemes = [
   { value: 'dark', label: 'Graphite' },
   { value: 'light', label: 'Paper' },
   { value: 'midnight', label: 'Midnight' },
+  { value: 'oled', label: 'OLED' },
   { value: 'system', label: 'System' },
 ] as const;
 export type Theme = typeof appearanceThemes[number]['value'];
-export type Accent = 'blue' | 'jade' | 'violet' | 'amber';
+export type Accent = 'blue' | 'jade' | 'violet' | 'amber' | 'custom';
+export type ButtonStyle = 'classic' | 'minimal' | 'glass';
 export const pasteboardColors = { charcoal: '#1e1e1e', gray: '#666970', light: '#dce1e8' } as const;
 export type PasteboardTone = keyof typeof pasteboardColors;
 
@@ -14,11 +16,17 @@ export interface Appearance {
   accent: Accent;
   compact: boolean;
   pasteboard: PasteboardTone;
+  buttonStyle: ButtonStyle;
+  customAccent: string;
 }
 
 const storageKey = 'recto_appearance';
-export const defaultAppearance: Appearance = { theme: 'dark', accent: 'blue', compact: false, pasteboard: 'charcoal' };
-const accents: readonly Accent[] = ['blue', 'jade', 'violet', 'amber'];
+export const defaultAppearance: Appearance = {
+  theme: 'dark', accent: 'blue', compact: false, pasteboard: 'charcoal', buttonStyle: 'classic', customAccent: '#0d99ff',
+};
+const accents: readonly Accent[] = ['blue', 'jade', 'violet', 'amber', 'custom'];
+const buttonStyles: readonly ButtonStyle[] = ['classic', 'minimal', 'glass'];
+const hexColor = /^#[\da-f]{6}$/i;
 let preference = defaultAppearance;
 const listeners = new Set<(value: Appearance) => void>();
 
@@ -38,6 +46,8 @@ function renderAppearance() {
     : preference.theme;
   root.dataset.accent = preference.accent;
   root.dataset.density = preference.compact ? 'compact' : 'default';
+  root.dataset.buttons = preference.buttonStyle;
+  root.style.setProperty('--custom-accent', preference.customAccent);
 }
 
 export function setAppearance(next: Appearance) {
@@ -57,6 +67,8 @@ export function initializeAppearance() {
       compact: saved.compact === true,
       pasteboard: saved.pasteboard && Object.hasOwn(pasteboardColors, saved.pasteboard)
         ? saved.pasteboard : defaultAppearance.pasteboard,
+      buttonStyle: saved.buttonStyle && buttonStyles.includes(saved.buttonStyle) ? saved.buttonStyle : defaultAppearance.buttonStyle,
+      customAccent: saved.customAccent && hexColor.test(saved.customAccent) ? saved.customAccent : defaultAppearance.customAccent,
     };
   } catch { /* Invalid preferences use the default workspace. */ }
   renderAppearance();

@@ -4,7 +4,6 @@ import { MathInput } from '../common/MathInput';
 import { lazy, Suspense } from 'preact/compat';
 const ColorManagementPanel = lazy(() => import('./ColorManagementPanel'));
 const SeparationsPanel = lazy(() => import('./SeparationsPanel'));
-const AppearancePanel = lazy(() => import('./AppearancePanel'));
 
 interface SetupTabProps {
   state: ProjectState;
@@ -43,7 +42,9 @@ export function SetupTab({ state }: SetupTabProps) {
   return (
     <div className="setup-view">
       <div className="section-header">DOCUMENT SETUP & PREFERENCES</div>
-      <Suspense fallback={null}><AppearancePanel /></Suspense>
+      <button type="button" className="sm-btn" onClick={() => window.dispatchEvent(new Event('recto:appearance'))}>
+        Workspace appearance…
+      </button>
       <Suspense fallback={<p role="status">Loading colour settings…</p>}><ColorManagementPanel state={state} /></Suspense>
       <Suspense fallback={<p role="status">Loading ink preview…</p>}><SeparationsPanel state={state} /></Suspense>
 

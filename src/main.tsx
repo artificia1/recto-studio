@@ -5,6 +5,7 @@ import './appearance.css';
 import { stateManager } from './state';
 import { fontManager } from './fontManager';
 import { initializeAppearance } from './appearance';
+import { isDesktop } from './desktop';
 
 initializeAppearance();
 const mountPoint = document.getElementById('root');
@@ -21,7 +22,10 @@ async function start() {
   });
   if (mountPoint) {
     render(<App />, mountPoint);
-    console.log('Recto Publishing Studio (TypeScript + Preact TSX) loaded.');
+    const counter = import.meta.env.VITE_VISIT_COUNTER_URL;
+    if (counter && !isDesktop() && location.origin === 'https://artificia1.github.io' && location.pathname.startsWith('/recto-studio/')) {
+      void import('./siteVisits').then(({ recordWebsiteVisit }) => recordWebsiteVisit(counter)).catch(() => {});
+    }
   }
 }
 void start();

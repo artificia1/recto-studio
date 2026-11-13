@@ -1,0 +1,15 @@
+name = "recto-visit-counter"
+main = "worker.mjs"
+compatibility_date = "2026-04-01"
+workers_dev = true
+
+[observability]
+enabled = false
+
+[vars]
+SITE_ORIGIN = "https://artificia1.github.io"
+
+[[d1_databases]]
+binding = "COUNTER_DB"
+database_name = "recto-visits"
+database_id = "00000000-0000-0000-0000-000000000000"

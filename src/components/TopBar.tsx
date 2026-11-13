@@ -24,6 +24,8 @@ const CollaborationDialog = lazy(() => import('./CollaborationDialog'));
 const DataMergeDialog = lazy(() => import('./DataMergeDialog'));
 const VersionHistoryDialog = lazy(() => import('./VersionHistoryDialog'));
 const RecoveryDialog = lazy(() => import('./RecoveryDialog'));
+const AppearancePage = lazy(() => import('./AppearancePage'));
+const TopAlignmentControls = lazy(() => import('./TopAlignmentControls'));
 
 function saveProject(saveAs = false) {
   void import('../desktopProjects').then(({ saveCurrentProject }) => saveCurrentProject(saveAs))
@@ -91,8 +93,15 @@ export function TopBar({
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [showFileMenu, setShowFileMenu] = useState(false);
   const [showRecovery, setShowRecovery] = useState(false);
+  const [showAppearance, setShowAppearance] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const open = () => setShowAppearance(true);
+    window.addEventListener('recto:appearance', open);
+    return () => window.removeEventListener('recto:appearance', open);
+  }, []);
 
   useEffect(() => {
     const handleSaveShortcut = (event: KeyboardEvent) => {
@@ -440,13 +449,7 @@ export function TopBar({
     <header className="top-bar">
       <div className="brand-section">
         <div className="brand-logo" title="Recto Studio · Designed by Abhinav Sidhu">
-          <svg className="brand-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect x="1.5" y="2.5" width="5.5" height="11" rx="0.5" stroke="#71717a" strokeWidth="1" />
-            <rect x="9" y="2.5" width="5.5" height="11" rx="0.5" fill="#e4e4e7" stroke="#e4e4e7" strokeWidth="1" />
-            <line x1="10.5" y1="5.5" x2="13" y2="5.5" stroke="#18181b" strokeWidth="0.8" />
-            <line x1="10.5" y1="7.5" x2="13" y2="7.5" stroke="#18181b" strokeWidth="0.8" />
-            <line x1="10.5" y1="9.5" x2="12" y2="9.5" stroke="#18181b" strokeWidth="0.8" />
-          </svg>
+          <img className="brand-icon" src="./logo.svg" width="16" height="16" alt="" />
           <span className="brand-name">RECTO</span>
           <span className="brand-badge">STUDIO</span>
         </div>
@@ -542,77 +545,9 @@ export function TopBar({
           <option value="2">200%</option>
         </select>
 
-        {hasSelection && (
-          <div className="control-group top-bar-align-group">
-            <button
-              className="icon-btn"
-              onClick={() => stateManager.alignElements('left')}
-              title="Align Left (2+ elements)"
-            >
-              ⇤
-            </button>
-            <button
-              className="icon-btn"
-              onClick={() => stateManager.alignElements('center')}
-              title="Align Horizontal Center (2+ elements)"
-            >
-              ↔
-            </button>
-            <button
-              className="icon-btn"
-              onClick={() => stateManager.alignElements('right')}
-              title="Align Right (2+ elements)"
-            >
-              ⇥
-            </button>
-            <button
-              className="icon-btn"
-              onClick={() => stateManager.alignElements('top')}
-              title="Align Top (2+ elements)"
-            >
-              ↥
-            </button>
-            <button
-              className="icon-btn"
-              onClick={() => stateManager.alignElements('middle')}
-              title="Align Vertical Middle (2+ elements)"
-            >
-              ↕
-            </button>
-            <button
-              className="icon-btn"
-              onClick={() => stateManager.alignElements('bottom')}
-              title="Align Bottom (2+ elements)"
-            >
-              ↧
-            </button>
-            {selectedElements.length >= 3 && (
-              <>
-                <button
-                  className="icon-btn"
-                  onClick={() => stateManager.distributeElements('horizontal')}
-                  title="Distribute Horizontally (3+ elements)"
-                >
-                  ⫴
-                </button>
-                <button
-                  className="icon-btn"
-                  onClick={() => stateManager.distributeElements('vertical')}
-                  title="Distribute Vertically (3+ elements)"
-                >
-                  ⩕
-                </button>
-              </>
-            )}
-            <button
-              className={`icon-btn lock-toggle-btn ${allLocked ? 'locked' : ''}`}
-              onClick={() => stateManager.toggleLock(selectedIds)}
-              title={allLocked ? 'Unlock Selected Elements (Ctrl+L)' : 'Lock Selected Elements (Ctrl+L)'}
-            >
-              {allLocked ? 'Unlock' : 'Lock'}
-            </button>
-          </div>
-        )}
+        {hasSelection && <Suspense fallback={null}>
+          <TopAlignmentControls count={selectedElements.length} selectedIds={selectedIds} allLocked={allLocked} />
+        </Suspense>}
       </div>
 
       <div className="top-actions">
@@ -624,7 +559,7 @@ export function TopBar({
               onClick={() => handleCreateBlank(state.settings.preset || 'A4', state.settings.facingPages !== false)}
               title="Create New Blank Document (0 canvas elements)"
             >
-              + New Blank
+              New
             </button>
             <button
               className={`action-btn dropdown-arrow-btn ${showNewMenu ? 'active' : ''}`}
@@ -714,8 +649,12 @@ export function TopBar({
             className="action-btn top-btn-quick-apply"
             onClick={onOpenQuickApply}
             title="Quick Apply Styles & Commands (Ctrl+/ or Ctrl+Enter)"
+            aria-label="Quick Apply"
           >
-            Quick Apply
+            <svg className="top-action-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+              <path d="M6 3h7M6 8h7M6 13h7M3 3h1M3 8h1M3 13h1" stroke-linecap="round" />
+            </svg>
+            <span className="top-action-label">Quick Apply</span>
           </button>
         )}
 
@@ -724,8 +663,12 @@ export function TopBar({
             className="action-btn top-btn-find"
             onClick={onOpenFindChange}
             title="Find / Change (GREP) (Ctrl+F)"
+            aria-label="Find"
           >
-            Find
+            <svg className="top-action-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+              <circle cx="6.8" cy="6.8" r="3.8" /><path d="m10 10 3.4 3.4" stroke-linecap="round" />
+            </svg>
+            <span className="top-action-label">Find</span>
           </button>
         )}
 
@@ -796,12 +739,25 @@ export function TopBar({
           className={`action-btn top-btn-fullscreen ${isFullscreen ? 'active' : ''}`}
           onClick={handleToggleFullscreen}
           title={isFullscreen ? 'Exit Immersive Fullscreen' : 'Enter Immersive Fullscreen (Hide Browser Top & Bottom Bars)'}
+          aria-label={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+          aria-pressed={isFullscreen}
         >
-          {isFullscreen ? '✕ Exit' : '⛶ Fullscreen'}
+          <svg className="top-action-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+            <path d={isFullscreen ? 'M2 6h4V2m8 4h-4V2m-8 8h4v4m8-4h-4v4' : 'M6 2H2v4m8-4h4v4M2 10v4h4m4 0h4v-4'} stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <span className="top-action-label">{isFullscreen ? 'Exit' : 'Fullscreen'}</span>
+        </button>
+        <button type="button" className="action-btn top-btn-appearance" aria-label="Appearance"
+          title="Workspace appearance" aria-haspopup="dialog" onClick={() => setShowAppearance(true)}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+            <path d="M12 3a9 9 0 1 0 0 18h1.4a1.6 1.6 0 0 0 1.1-2.8 1.4 1.4 0 0 1 1-2.4H18A3 3 0 0 0 21 13v-1a9 9 0 0 0-9-9Z"/>
+            <path stroke-linecap="round" stroke-width="2.5" d="M8 10h.01M12 7h.01M16 10h.01M7 14h.01"/>
+          </svg><span className="top-action-label">Appearance</span>
         </button>
         {isDesktop() && <Suspense fallback={null}><AppUpdater /></Suspense>}
       </div>
 
+      {showAppearance && <Suspense fallback={null}><AppearancePage onClose={() => setShowAppearance(false)} /></Suspense>}
       {showScribusImport && <Suspense fallback={null}><ScribusImportDialog onClose={() => setShowScribusImport(false)} /></Suspense>}
       {showDataMergeModal && <Suspense fallback={null}><DataMergeDialog
         csvText={csvText} setCsvText={setCsvText} onClose={() => setShowDataMergeModal(false)} /></Suspense>}
