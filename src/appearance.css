@@ -28,7 +28,7 @@
   --button-hover: var(--bg-hover);
   --primary-face: var(--accent-surface);
   --primary-border: var(--accent-cyan);
-  --primary-color: var(--accent-cyan);
+  --primary-color: var(--text-primary);
   --primary-shadow: none;
 }
 
@@ -125,9 +125,6 @@
 .status-bar { background-color: var(--bg-footer); }
 .status-bar select.status-quality-select { background: var(--bg-input); border-color: var(--border-light); color: var(--text-primary); }
 :root[data-theme="light"] .status-preflight-ok { color: #006d60; }
-.top-dropdown-menu, .top-dropdown-menu::-webkit-scrollbar-track { background-color: var(--bg-menu); }
-.top-dropdown-menu { border-color: var(--border-light); scrollbar-color: var(--scroll-thumb) var(--bg-menu); }
-.top-dropdown-item:hover { background-color: var(--accent-fill); }
 .ruler-corner { background-color: var(--bg-hover); }
 .modal-dialog { background-color: var(--bg-modal); color: var(--text-primary); border-color: var(--border-light); }
 .modal-header { background-color: var(--bg-bar); border-bottom-color: var(--border-color); }

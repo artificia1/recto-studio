@@ -75,13 +75,15 @@ export default function DataMergeDialog({ csvText, setCsvText, onClose }: DataMe
         }}
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: '#202020',
-          border: '1px solid #444',
+          background: 'var(--bg-modal)',
+          border: '1px solid var(--border-light)',
           borderRadius: '8px',
-          width: '540px',
-          maxWidth: '90vw',
-          padding: '20px',
-          color: '#fff',
+          width: 'min(540px, 92vw)',
+          maxHeight: '92dvh',
+          boxSizing: 'border-box',
+          padding: 'clamp(12px, 3vw, 20px)',
+          overflowY: 'auto',
+          color: 'var(--text-primary)',
           boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
         }}
       >
@@ -94,19 +96,18 @@ export default function DataMergeDialog({ csvText, setCsvText, onClose }: DataMe
           }}
         >
           <h3 id="data-merge-title" style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>CSV / JSON Data Merge</h3>
-          {(previewError || mergeError) && <p role="alert">{previewError || mergeError}</p>}
           <button className="icon-btn" aria-label="Close data merge" onClick={onClose}>
             ✕
           </button>
         </div>
 
-        <p style={{ fontSize: '12px', color: '#aaa', marginTop: 0, marginBottom: '12px' }}>
+        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: 0, marginBottom: '12px' }}>
           Use placeholders like <code>{'{{Title}}'}</code>, <code>{'{{Price}}'}</code>, <code>{'{{Author}}'}</code> in
           your text frames or table cells. Import or paste CSV data below to generate publication spreads.
         </p>
 
         <div style={{ marginBottom: '12px' }}>
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
             <button
               className="sm-btn"
               onClick={() => csvInputRef.current?.click()}
@@ -134,12 +135,13 @@ export default function DataMergeDialog({ csvText, setCsvText, onClose }: DataMe
           <textarea
             rows={6}
             value={csvText}
+            aria-label="CSV or JSON data"
             placeholder="Paste CSV data here with header row..."
             style={{
               width: '100%',
-              background: '#151515',
-              color: '#e0e0e0',
-              border: '1px solid #333',
+              background: 'var(--bg-input)',
+              color: 'var(--text-primary)',
+              border: '1px solid var(--border-light)',
               borderRadius: '4px',
               fontFamily: 'monospace',
               fontSize: '11px',
@@ -151,27 +153,31 @@ export default function DataMergeDialog({ csvText, setCsvText, onClose }: DataMe
           />
         </div>
 
+        {(previewError || mergeError) && (
+          <p role="alert" style={{ color: 'var(--accent-red)', overflowWrap: 'anywhere' }}>{previewError || mergeError}</p>
+        )}
+
         {parsedPreview && (
           <div
             style={{
-              background: '#181818',
-              border: '1px solid #333',
+              background: 'var(--bg-panel)',
+              border: '1px solid var(--border-color)',
               borderRadius: '4px',
               padding: '8px 12px',
               marginBottom: '14px',
               fontSize: '11px',
             }}
           >
-            <div style={{ color: '#10b981', fontWeight: 600, marginBottom: '4px' }}>
+            <div style={{ fontWeight: 600, marginBottom: '4px' }}>
               Detected {parsedPreview.records.length} records, {parsedPreview.headers.length} columns:
             </div>
-            <div style={{ color: '#93c5fd', fontFamily: 'monospace' }}>
+            <div style={{ color: 'var(--text-secondary)', fontFamily: 'monospace', overflowWrap: 'anywhere' }}>
               {parsedPreview.headers.map((h) => `{{${h}}}`).join('  ')}
             </div>
           </div>
         )}
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: '8px' }}>
           <button className="action-btn" onClick={onClose}>
             Cancel
           </button>

@@ -1,0 +1,314 @@
+.editor-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  background: rgb(0 0 0 / 55%);
+  backdrop-filter: blur(2px);
+}
+
+.find-change-backdrop {
+  z-index: 1200;
+}
+
+.editor-dialog {
+  width: min(100%, 500px);
+  max-height: calc(100dvh - 24px);
+  overflow: auto;
+  gap: 16px;
+  padding: 18px;
+  color: var(--text-primary);
+  background: var(--bg-modal);
+  border-color: var(--border-light);
+  box-shadow: 0 14px 42px rgb(0 0 0 / 35%);
+  font-size: 12px;
+}
+
+.find-change-dialog {
+  width: min(100%, 520px);
+}
+
+.editor-dialog-header,
+.editor-dialog-field-heading,
+.collaboration-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.editor-dialog-header {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.editor-dialog-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.editor-dialog-header p,
+.editor-dialog-hint {
+  margin: 3px 0 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.editor-dialog-close,
+.collaboration-password-field button {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.editor-dialog-close {
+  min-width: 28px;
+  min-height: 28px;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.editor-dialog-close:hover,
+.collaboration-password-field button:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.find-change-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+
+.editor-dialog-tag {
+  --tag-color: var(--accent-cyan);
+  border-radius: 4px;
+  padding: 2px 6px;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--tag-color) 13%, var(--bg-modal));
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.editor-dialog-tag[data-grep="true"] {
+  --tag-color: var(--accent-magenta);
+}
+
+.editor-dialog-fields,
+.editor-dialog-field {
+  display: grid;
+  min-width: 0;
+}
+
+.editor-dialog-fields {
+  gap: 12px;
+}
+
+.editor-dialog-field {
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.editor-dialog :is(input[type="text"], input[type="password"], select) {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 30px;
+  padding: 5px 8px;
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  font: inherit;
+}
+
+.editor-dialog select option {
+  color: var(--text-primary);
+  background-color: var(--bg-input);
+}
+
+.editor-dialog input::placeholder {
+  color: var(--text-secondary);
+  opacity: 1;
+}
+
+.editor-dialog :is(input, select, button):focus-visible {
+  outline: 2px solid var(--accent-cyan);
+  outline-offset: 2px;
+}
+
+.editor-dialog :is(input[type="text"], input[type="password"], button):disabled {
+  cursor: not-allowed;
+  color: var(--text-secondary);
+  background: var(--bg-bar);
+  box-shadow: none;
+  opacity: 1;
+}
+
+.editor-dialog input.find-change-grep-field {
+  font-family: var(--font-mono, monospace);
+}
+
+.find-change-options {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  color: var(--text-secondary);
+  background: var(--bg-bar);
+  font-size: 11px;
+}
+
+.find-change-options-group,
+.find-change-options label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+}
+
+.find-change-options input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--accent-fill);
+}
+
+.find-change-options label:has(:disabled) {
+  color: var(--text-muted);
+}
+
+.find-change-style-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.editor-dialog-message {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 4px;
+  color: var(--text-primary);
+  background: var(--bg-bar);
+  font-size: 11px;
+}
+
+.editor-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.collaboration-dialog .editor-dialog-actions {
+  justify-content: space-between;
+}
+
+.collaboration-password-field,
+.collaboration-identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.collaboration-password-field {
+  position: relative;
+}
+
+.collaboration-dialog .collaboration-password-field input {
+  width: 100%;
+  padding-right: 52px;
+}
+
+.collaboration-password-field button {
+  position: absolute;
+  right: 4px;
+  padding: 4px 6px;
+  font: inherit;
+}
+
+.collaboration-identity input {
+  flex: 1 1 auto;
+}
+
+.collaboration-user-color,
+.collaboration-peer-color,
+.collaboration-status-dot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.collaboration-user-color {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border-light);
+}
+
+.collaboration-status {
+  flex-wrap: wrap;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: var(--bg-bar);
+}
+
+.collaboration-status-dot {
+  background: var(--text-muted);
+}
+
+.collaboration-status-dot[data-connected="true"] {
+  background: var(--accent-cyan);
+}
+
+.editor-dialog .collaboration-disconnect,
+.collaboration-error {
+  color: var(--accent-red);
+}
+
+.collaboration-peers h3 {
+  margin: 0 0 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.collaboration-peers ul {
+  display: grid;
+  gap: 5px;
+  max-height: 120px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.collaboration-peers li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--bg-bar);
+  overflow-wrap: anywhere;
+}
+
+.collaboration-peer-spread {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}

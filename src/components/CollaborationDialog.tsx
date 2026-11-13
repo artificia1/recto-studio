@@ -1,6 +1,9 @@
+import { useRef } from 'preact/hooks';
 import type { Dispatch, StateUpdater } from 'preact/hooks';
 import { collabSession } from '../collab';
 import type { PeerPresence } from '../types';
+import { useModalFocus } from '../hooks/useModalFocus';
+import './editorDialogs.css';
 
 interface CollaborationDialogProps {
   collabRoom: string;
@@ -25,306 +28,153 @@ export default function CollaborationDialog({
   collabUserName, setCollabUserName, collabPeers, isConnected, copiedLink, currentSpreadNum,
   handleToggleCollab, handleCopyShareLink, onClose,
 }: CollaborationDialogProps) {
+  const dialogRef = useRef<HTMLElement>(null);
+  useModalFocus(true, dialogRef);
+  const passwordProtected = Boolean(collabPassword.trim());
+  const protocolError = collabSession.getProtocolError();
+
   return (
-    <div
-      className="modal-overlay"
-      onClick={onClose}
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(0, 0, 0, 0.7)',
-        zIndex: 1000,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      <div
-        className="modal-card"
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: '#202020',
-          border: '1px solid #444',
-          borderRadius: '8px',
-          width: '500px',
-          maxWidth: '92vw',
-          padding: '20px',
-          color: '#fff',
-          boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+    <div className="editor-dialog-backdrop" onClick={onClose}>
+      <section
+        ref={dialogRef}
+        className="modal-dialog editor-dialog collaboration-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="collaboration-title"
+        onClick={event => event.stopPropagation()}
+        onKeyDown={event => {
+          event.stopPropagation();
+          if (event.key === 'Escape') onClose();
         }}
       >
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: '16px',
-            borderBottom: '1px solid #333',
-            paddingBottom: '12px',
-          }}
-        >
+        <header className="editor-dialog-header">
           <div>
-            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>Real-Time P2P WebRTC Collaboration</h3>
-            <span style={{ fontSize: '11px', color: '#888' }}>
-              Peer-to-peer live co-editing across different machines and networks
-            </span>
+            <h2 id="collaboration-title">Real-Time P2P WebRTC Collaboration</h2>
+            <p>Peer-to-peer live co-editing across different machines and networks</p>
           </div>
-          <button
-            className="icon-btn"
-            onClick={onClose}
-            style={{ fontSize: '16px', color: '#888' }}
-          >
-            ✕
-          </button>
-        </div>
+          <button type="button" className="editor-dialog-close" aria-label="Close Collaboration" onClick={onClose}>×</button>
+        </header>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px' }}>
-          <div>
-            <label style={{ display: 'block', fontSize: '11px', color: '#aaa', marginBottom: '4px' }}>
-              Session Room ID:
-            </label>
+        <div className="editor-dialog-fields">
+          <label className="editor-dialog-field">
+            Session Room ID
             <input
               type="text"
               value={collabRoom}
               disabled={isConnected}
-              onInput={(e) => setCollabRoom((e.target as HTMLInputElement).value)}
-              style={{
-                width: '100%',
-                background: isConnected ? '#181818' : '#242424',
-                color: '#fff',
-                border: '1px solid #444',
-                borderRadius: '4px',
-                padding: '6px 10px',
-                fontSize: '12px',
-                boxSizing: 'border-box',
-              }}
+              onInput={event => setCollabRoom(event.currentTarget.value)}
             />
-          </div>
+          </label>
 
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-              <label style={{ fontSize: '11px', color: '#aaa' }}>
-                Room Password (Required to Secure Access):
-              </label>
-              {collabPassword.trim() && (
-                <span style={{ fontSize: '10px', color: '#10b981', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                  [Protected Session]
-                </span>
-              )}
+          <div className="editor-dialog-field">
+            <div className="editor-dialog-field-heading">
+              <label htmlFor="collaboration-password">Room Password</label>
+              {passwordProtected && <span className="editor-dialog-tag">Protected Session</span>}
             </div>
-            <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+            <div className="collaboration-password-field">
               <input
+                id="collaboration-password"
                 type={showPassword ? 'text' : 'password'}
-                placeholder="Set password to block random users from joining..."
+                placeholder="Set a password"
                 value={collabPassword}
                 disabled={isConnected}
-                onInput={(e) => setCollabPassword((e.target as HTMLInputElement).value)}
-                style={{
-                  width: '100%',
-                  background: isConnected ? '#181818' : '#242424',
-                  color: '#fff',
-                  border: '1px solid #444',
-                  borderRadius: '4px',
-                  padding: '6px 52px 6px 10px',
-                  fontSize: '12px',
-                  boxSizing: 'border-box',
-                }}
+                aria-describedby="collaboration-password-hint"
+                onInput={event => setCollabPassword(event.currentTarget.value)}
               />
               <button
                 type="button"
-                onClick={() => setShowPassword((p) => !p)}
-                style={{
-                  position: 'absolute',
-                  right: '6px',
-                  background: 'transparent',
-                  border: 'none',
-                  color: '#9ca3af',
-                  cursor: 'pointer',
-                  fontSize: '11px',
-                  padding: '2px 6px',
-                }}
+                onClick={() => setShowPassword(previous => !previous)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
                 title={showPassword ? 'Hide password' : 'Show password'}
               >
                 {showPassword ? 'Hide' : 'Show'}
               </button>
             </div>
-            <span style={{ fontSize: '10px', color: '#777', marginTop: '3px', display: 'block' }}>
-              {collabPassword.trim()
-                ? 'Only peers entering this exact password can connect, synchronize, and edit.'
-                : 'Set a password to lock this session, or leave blank for open collaboration.'}
-            </span>
+            <p id="collaboration-password-hint" className="editor-dialog-hint">
+              {passwordProtected
+                ? 'Peers need this password to connect, synchronize, and edit.'
+                : 'Set a password to lock this session, or leave it blank for open collaboration.'}
+            </p>
           </div>
 
-          <div>
-            <label style={{ display: 'block', fontSize: '11px', color: '#aaa', marginBottom: '4px' }}>
-              Your Designer Handle:
-            </label>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <label className="editor-dialog-field">
+            Your Designer Handle
+            <span className="collaboration-identity">
               <input
                 type="text"
                 value={collabUserName}
-                onInput={(e) => {
-                  const name = (e.target as HTMLInputElement).value;
+                onInput={event => {
+                  const name = event.currentTarget.value;
                   setCollabUserName(name);
                   collabSession.setUserName(name);
                 }}
-                style={{
-                  flex: 1,
-                  background: '#242424',
-                  color: '#fff',
-                  border: '1px solid #444',
-                  borderRadius: '4px',
-                  padding: '6px 10px',
-                  fontSize: '12px',
-                }}
               />
-              <div
-                style={{
-                  width: '24px',
-                  height: '24px',
-                  borderRadius: '50%',
-                  background: collabSession.getUserColor(),
-                  border: '2px solid #fff',
-                }}
+              <span
+                className="collaboration-user-color"
+                style={{ backgroundColor: collabSession.getUserColor() }}
                 title="Your cursor & badge color"
               />
-            </div>
-          </div>
+            </span>
+          </label>
         </div>
 
-        {/* Connection Status & Toggle */}
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            padding: '12px',
-            background: '#181818',
-            borderRadius: '6px',
-            border: '1px solid #333',
-            marginBottom: '16px',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <div
-              style={{
-                width: '10px',
-                height: '10px',
-                borderRadius: '50%',
-                background: isConnected ? '#10b981' : '#6b7280',
-                boxShadow: isConnected ? '0 0 8px #10b981' : 'none',
-              }}
-            />
-            <span style={{ fontSize: '12px', fontWeight: 600 }}>
+        <div className="collaboration-status">
+          <div className="collaboration-identity" role="status">
+            <span className="collaboration-status-dot" data-connected={isConnected} aria-hidden="true" />
+            <span>
               {isConnected
                 ? `Connected to '${collabSession.getSessionId()}' ${collabSession.isPasswordProtected() ? '(Protected)' : '(Public)'} · Yjs collaboration`
                 : 'Disconnected'}
             </span>
           </div>
           <button
-            className={isConnected ? 'action-btn' : 'action-btn-primary'}
+            type="button"
+            className={isConnected ? 'action-btn collaboration-disconnect' : 'action-btn-primary'}
             onClick={handleToggleCollab}
-            style={{
-              color: isConnected ? '#ef4444' : undefined,
-              borderColor: isConnected ? '#7f1d1d' : undefined,
-            }}
           >
             {isConnected ? 'Disconnect' : 'Connect Session'}
           </button>
         </div>
-        {collabSession.getProtocolError() && <p role="alert">{collabSession.getProtocolError()}</p>}
+        {protocolError && <p className="editor-dialog-message collaboration-error" role="alert">{protocolError}</p>}
 
-        {/* Active Peers List */}
         {isConnected && (
-          <div style={{ marginBottom: '16px' }}>
-            <div style={{ fontSize: '11px', color: '#aaa', marginBottom: '6px' }}>
-              Active Collaborators ({collabPeers.length + 1}):
-            </div>
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '6px',
-                maxHeight: '120px',
-                overflowY: 'auto',
-              }}
-            >
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '6px 10px',
-                  background: '#242424',
-                  borderRadius: '4px',
-                  fontSize: '11px',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <div
-                    style={{
-                      width: '10px',
-                      height: '10px',
-                      borderRadius: '50%',
-                      background: collabSession.getUserColor(),
-                    }}
-                  />
-                  <span>{collabUserName} (You)</span>
-                </div>
-                <span style={{ color: '#10b981', fontSize: '10px' }}>Spread {currentSpreadNum}</span>
-              </div>
-
-              {collabPeers.map((peer) => (
-                <div
-                  key={peer.peerId}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '6px 10px',
-                    background: '#242424',
-                    borderRadius: '4px',
-                    fontSize: '11px',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <div
-                      style={{
-                        width: '10px',
-                        height: '10px',
-                        borderRadius: '50%',
-                        background: peer.color,
-                      }}
-                    />
-                    <span>{peer.name}</span>
-                  </div>
-                  <span style={{ color: '#93c5fd', fontSize: '10px' }}>
-                    Spread {peer.spreadIndex + 1}
+          <section className="collaboration-peers" aria-labelledby="collaboration-peers-title">
+            <h3 id="collaboration-peers-title">Active Collaborators ({collabPeers.length + 1})</h3>
+            <ul>
+              <li>
+                <span className="collaboration-identity">
+                  <span className="collaboration-peer-color" style={{ backgroundColor: collabSession.getUserColor() }} />
+                  {collabUserName} (You)
+                </span>
+                <span className="collaboration-peer-spread">Spread {currentSpreadNum}</span>
+              </li>
+              {collabPeers.map(peer => (
+                <li key={peer.peerId}>
+                  <span className="collaboration-identity">
+                    <span className="collaboration-peer-color" style={{ backgroundColor: peer.color }} />
+                    {peer.name}
                   </span>
-                </div>
+                  <span className="collaboration-peer-spread">Spread {peer.spreadIndex + 1}</span>
+                </li>
               ))}
-            </div>
-          </div>
+            </ul>
+          </section>
         )}
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <footer className="editor-dialog-actions">
           <button
+            type="button"
             className="action-btn"
             onClick={handleCopyShareLink}
             title="Copy shareable room link to clipboard"
           >
             {copiedLink
-              ? (collabPassword.trim() ? 'Copied Secure Link!' : 'Copied Link!')
-              : (collabPassword.trim() ? 'Copy Secure Share Link' : 'Copy Share Link')}
+              ? (passwordProtected ? 'Copied Secure Link!' : 'Copied Link!')
+              : (passwordProtected ? 'Copy Secure Share Link' : 'Copy Share Link')}
           </button>
-          <button className="action-btn" onClick={onClose}>
-            Close
-          </button>
-        </div>
-      </div>
+          <button type="button" className="action-btn" onClick={onClose}>Close</button>
+        </footer>
+      </section>
     </div>
   );
 }

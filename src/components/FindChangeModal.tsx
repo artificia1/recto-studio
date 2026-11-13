@@ -6,6 +6,8 @@
 
 import { useState, useRef, useEffect } from 'preact/hooks';
 import { stateManager, FindChangeQuery, FindResult } from '../state';
+import { useModalFocus } from '../hooks/useModalFocus';
+import './editorDialogs.css';
 
 interface FindChangeModalProps {
   isOpen: boolean;
@@ -36,6 +38,8 @@ export function FindChangeModal({ isOpen, onClose }: FindChangeModalProps) {
   const [statusMessage, setStatusMessage] = useState<string>('');
 
   const findInputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  useModalFocus(isOpen, dialogRef);
 
   useEffect(() => {
     if (isOpen) {
@@ -127,309 +131,126 @@ export function FindChangeModal({ isOpen, onClose }: FindChangeModalProps) {
   };
 
   return (
-    <div
-      className="modal-overlay"
-      onClick={onClose}
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(0, 0, 0, 0.45)',
-        zIndex: 1200,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backdropFilter: 'blur(2px)',
-      }}
-    >
-      <div
-        className="modal-card"
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: '#222226',
-          border: '1px solid #3d3d42',
-          borderRadius: '8px',
-          width: '520px',
-          maxWidth: '92vw',
-          padding: '18px 22px',
-          color: '#e6e6e6',
-          boxShadow: '0 12px 35px rgba(0,0,0,0.65)',
-          fontFamily: 'Inter, system-ui, sans-serif',
-          fontSize: '12px',
+    <div className="editor-dialog-backdrop find-change-backdrop" onClick={onClose}>
+      <section
+        ref={dialogRef}
+        className="modal-dialog editor-dialog find-change-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="find-change-title"
+        onClick={event => event.stopPropagation()}
+        onKeyDown={event => {
+          event.stopPropagation();
+          if (event.key === 'Escape') onClose();
         }}
       >
-        {/* Header */}
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: '16px',
-            borderBottom: '1px solid #333',
-            paddingBottom: '10px',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '15px', fontWeight: 600, color: '#fff' }}>
-              Find / Change
-            </span>
-            <span
-              style={{
-                fontSize: '10px',
-                padding: '2px 6px',
-                borderRadius: '3px',
-                background: isGrep ? 'rgba(230, 0, 126, 0.2)' : 'rgba(13, 153, 255, 0.2)',
-                color: isGrep ? '#ff40a1' : '#0d99ff',
-                fontWeight: 600,
-                textTransform: 'uppercase',
-              }}
-            >
-              {isGrep ? 'GREP Mode' : 'Text Mode'}
-            </span>
+        <header className="editor-dialog-header">
+          <div className="find-change-title">
+            <h2 id="find-change-title">Find / Change</h2>
+            <span className="editor-dialog-tag" data-grep={isGrep}>{isGrep ? 'GREP Mode' : 'Text Mode'}</span>
           </div>
-          <button
-            onClick={onClose}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: '#888',
-              fontSize: '16px',
-              cursor: 'pointer',
-              padding: '2px 6px',
-              borderRadius: '4px',
-            }}
-          >
-            ✕
-          </button>
-        </div>
+          <button type="button" className="editor-dialog-close" aria-label="Close Find / Change" onClick={onClose}>×</button>
+        </header>
 
-        {/* Inputs */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-              <label style={{ fontSize: '11px', color: '#aaa', fontWeight: 500 }}>Find what:</label>
-              <select
-                onChange={handleGrepPresetSelect}
-                style={{
-                  background: '#161618',
-                  border: '1px solid #38383e',
-                  color: '#0d99ff',
-                  fontSize: '10px',
-                  borderRadius: '3px',
-                  padding: '1px 4px',
-                  cursor: 'pointer',
-                }}
-              >
-                {GREP_PRESETS.map((p) => (
-                  <option key={p.label} value={p.pattern}>
-                    {p.label}
-                  </option>
+        <div className="editor-dialog-fields">
+          <div className="editor-dialog-field">
+            <div className="editor-dialog-field-heading">
+              <label htmlFor="find-change-text">Find what</label>
+              <select aria-label="GREP expression presets" onChange={handleGrepPresetSelect}>
+                {GREP_PRESETS.map(preset => (
+                  <option key={preset.label} value={preset.pattern}>{preset.label}</option>
                 ))}
               </select>
             </div>
             <input
               ref={findInputRef}
+              id="find-change-text"
               type="text"
               value={findText}
-              onInput={(e) => setFindText((e.target as HTMLInputElement).value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleFindNext();
-                if (e.key === 'Escape') onClose();
-              }}
+              onInput={event => setFindText(event.currentTarget.value)}
+              onKeyDown={event => { if (event.key === 'Enter') handleFindNext(); }}
               placeholder={isGrep ? 'Regular expression pattern (e.g. \\b\\d+\\b)' : 'Text to find...'}
-              style={{
-                width: '100%',
-                background: '#141416',
-                border: '1px solid #38383e',
-                borderRadius: '4px',
-                color: '#fff',
-                padding: '7px 10px',
-                fontSize: '12px',
-                fontFamily: isGrep ? 'monospace' : 'inherit',
-                outline: 'none',
-              }}
+              className={isGrep ? 'find-change-grep-field' : undefined}
             />
           </div>
 
-          <div>
-            <label style={{ display: 'block', fontSize: '11px', color: '#aaa', fontWeight: 500, marginBottom: '4px' }}>
-              Change to:
-            </label>
+          <label className="editor-dialog-field">
+            Change to
             <input
               type="text"
               value={changeText}
-              onInput={(e) => setChangeText((e.target as HTMLInputElement).value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleChange();
-                if (e.key === 'Escape') onClose();
-              }}
+              onInput={event => setChangeText(event.currentTarget.value)}
+              onKeyDown={event => { if (event.key === 'Enter') handleChange(); }}
               placeholder={isGrep ? 'Replacement or backreferences ($1, $2)' : 'Replacement text...'}
-              style={{
-                width: '100%',
-                background: '#141416',
-                border: '1px solid #38383e',
-                borderRadius: '4px',
-                color: '#fff',
-                padding: '7px 10px',
-                fontSize: '12px',
-                fontFamily: isGrep ? 'monospace' : 'inherit',
-                outline: 'none',
-              }}
+              className={isGrep ? 'find-change-grep-field' : undefined}
             />
-          </div>
+          </label>
 
-          {/* Options & Scope */}
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginTop: '4px',
-              padding: '10px 12px',
-              background: '#19191d',
-              borderRadius: '6px',
-            }}
-          >
-            <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '5px', cursor: 'pointer', fontSize: '11px' }}>
-                <input
-                  type="checkbox"
-                  checked={isGrep}
-                  onChange={(e) => setIsGrep((e.target as HTMLInputElement).checked)}
-                />
+          <div className="find-change-options">
+            <div className="find-change-options-group">
+              <label>
+                <input type="checkbox" checked={isGrep} onChange={event => setIsGrep(event.currentTarget.checked)} />
                 GREP
               </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '5px', cursor: 'pointer', fontSize: '11px' }}>
-                <input
-                  type="checkbox"
-                  checked={caseSensitive}
-                  onChange={(e) => setCaseSensitive((e.target as HTMLInputElement).checked)}
-                />
+              <label>
+                <input type="checkbox" checked={caseSensitive} onChange={event => setCaseSensitive(event.currentTarget.checked)} />
                 Match Case
               </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '5px', cursor: 'pointer', fontSize: '11px' }}>
+              <label>
                 <input
                   type="checkbox"
                   checked={wholeWord}
                   disabled={isGrep}
-                  onChange={(e) => setWholeWord((e.target as HTMLInputElement).checked)}
+                  onChange={event => setWholeWord(event.currentTarget.checked)}
                 />
                 Whole Word
               </label>
             </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{ fontSize: '11px', color: '#888' }}>Search:</span>
-              <select
-                value={scope}
-                onChange={(e) => setScope((e.target as HTMLSelectElement).value as any)}
-                style={{
-                  background: '#141416',
-                  border: '1px solid #38383e',
-                  color: '#e6e6e6',
-                  fontSize: '11px',
-                  borderRadius: '3px',
-                  padding: '2px 6px',
-                }}
-              >
+            <label className="find-change-scope">
+              Search
+              <select value={scope} onChange={event => setScope(event.currentTarget.value as typeof scope)}>
                 <option value="document">Entire Document</option>
                 <option value="spread">Current Spread</option>
                 <option value="story">Selected Story</option>
               </select>
-            </div>
+            </label>
           </div>
 
-          <label>Paragraph style<select aria-label="Find paragraph style" value={paragraphStyleId} onChange={event => { setParagraphStyleId(event.currentTarget.value); setActiveMatch(null); }}><option value="">Any</option>{stateManager.getState().paragraphStyles.map(style => <option key={style.id} value={style.id}>{style.name}</option>)}</select></label>
-          <label>Character style<select aria-label="Find character style" value={characterStyleId} onChange={event => { setCharacterStyleId(event.currentTarget.value); setActiveMatch(null); }}><option value="">Any</option>{stateManager.getState().characterStyles?.map(style => <option key={style.id} value={style.id}>{style.name}</option>)}</select></label>
-          {/* Status readout */}
-          {statusMessage && (
-            <div
-              style={{
-                fontSize: '11px',
-                color: statusMessage.includes('No matching') ? '#f87171' : '#38bdf8',
-                padding: '4px 6px',
-                borderRadius: '3px',
-                background: 'rgba(0,0,0,0.25)',
-              }}
-            >
-              {statusMessage}
-            </div>
-          )}
-
-          {/* Action Buttons */}
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'flex-end',
-              gap: '8px',
-              marginTop: '6px',
-            }}
-          >
-            <button
-              onClick={handleFindNext}
-              style={{
-                background: '#2a2a30',
-                border: '1px solid #4a4a54',
-                color: '#fff',
-                padding: '6px 14px',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontWeight: 600,
-                fontSize: '11px',
-              }}
-            >
-              Find Next
-            </button>
-            <button
-              onClick={handleChange}
-              style={{
-                background: '#2a2a30',
-                border: '1px solid #4a4a54',
-                color: '#fff',
-                padding: '6px 14px',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontWeight: 600,
-                fontSize: '11px',
-              }}
-            >
-              Change
-            </button>
-            <button
-              onClick={handleChangeFind}
-              style={{
-                background: '#2a2a30',
-                border: '1px solid #4a4a54',
-                color: '#fff',
-                padding: '6px 14px',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontWeight: 600,
-                fontSize: '11px',
-              }}
-            >
-              Change / Find
-            </button>
-            <button
-              onClick={handleChangeAll}
-              style={{
-                background: '#0d99ff',
-                border: '1px solid #0d99ff',
-                color: '#fff',
-                padding: '6px 16px',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontWeight: 600,
-                fontSize: '11px',
-              }}
-            >
-              Change All
-            </button>
+          <div className="find-change-style-fields">
+            <label className="editor-dialog-field">
+              Paragraph style
+              <select
+                aria-label="Find paragraph style"
+                value={paragraphStyleId}
+                onChange={event => { setParagraphStyleId(event.currentTarget.value); setActiveMatch(null); }}
+              >
+                <option value="">Any</option>
+                {stateManager.getState().paragraphStyles.map(style => <option key={style.id} value={style.id}>{style.name}</option>)}
+              </select>
+            </label>
+            <label className="editor-dialog-field">
+              Character style
+              <select
+                aria-label="Find character style"
+                value={characterStyleId}
+                onChange={event => { setCharacterStyleId(event.currentTarget.value); setActiveMatch(null); }}
+              >
+                <option value="">Any</option>
+                {stateManager.getState().characterStyles?.map(style => <option key={style.id} value={style.id}>{style.name}</option>)}
+              </select>
+            </label>
           </div>
+
+          {statusMessage && <div className="editor-dialog-message" role="status">{statusMessage}</div>}
         </div>
-      </div>
+
+        <footer className="editor-dialog-actions">
+          <button type="button" className="action-btn" onClick={handleFindNext}>Find Next</button>
+          <button type="button" className="action-btn" onClick={handleChange}>Change</button>
+          <button type="button" className="action-btn" onClick={handleChangeFind}>Change / Find</button>
+          <button type="button" className="action-btn-primary" onClick={handleChangeAll}>Change All</button>
+        </footer>
+      </section>
     </div>
   );
 }

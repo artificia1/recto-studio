@@ -14,6 +14,7 @@ A more compact editor and an Appearance popup with live previews.
 - Open **Appearance** from the toolbar to change the theme, button style, and accent color while the editor stays open behind the popup. Themes include Dark, Light, Midnight, OLED, and System. Choose Classic, Minimal, or Glass buttons.
 - Pick any accent color with the color picker or enter a hex value. Appearance preferences stay on this device.
 - A denser header keeps the paper size and publishing commands on one row at typical desktop widths. At narrower widths, the controls wrap and menus stay inside the window.
+- Menus, Find/Change, and Collaboration follow the workspace palette. The All spreads button stays readable over page artwork with every button style.
 - The Properties inspector shows a document overview when no object is selected. The footer keeps save and preflight status, display quality, and ink controls together.
 
 ## Website

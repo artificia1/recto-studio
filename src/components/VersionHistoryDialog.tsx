@@ -1,5 +1,7 @@
+import { useRef } from 'preact/hooks';
 import type { VersionSnapshot } from '../types';
 import type { StateManager } from '../state/stateManager';
+import { useModalFocus } from '../hooks/useModalFocus';
 
 interface Props {
   snapshots: VersionSnapshot[];
@@ -16,6 +18,9 @@ interface Props {
 
 export default function VersionHistoryDialog({ snapshots, selectedSnapshotId, diffResult, commitMessage, setCommitMessage,
   onClose, handleCreateSnapshot, handleSelectSnapshot, handleDeleteSnapshot, handleRollback }: Props) {
+  const dialog = useRef<HTMLDivElement>(null);
+  useModalFocus(true, dialog);
+
   return (
     <div
       className="modal-overlay"
@@ -35,18 +40,27 @@ export default function VersionHistoryDialog({ snapshots, selectedSnapshotId, di
     >
       <div
         className="modal-card"
+        ref={dialog}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="version-history-title"
+        onKeyDown={(event) => {
+          event.stopPropagation();
+          if (event.key === 'Escape') onClose();
+        }}
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: '#202020',
-          border: '1px solid #444',
+          background: 'var(--bg-modal)',
+          border: '1px solid var(--border-light)',
           borderRadius: '8px',
-          width: '720px',
-          maxWidth: '92vw',
-          maxHeight: '85vh',
+          width: 'min(720px, 92vw)',
+          maxHeight: '92dvh',
+          boxSizing: 'border-box',
           display: 'flex',
           flexDirection: 'column',
-          padding: '20px',
-          color: '#fff',
+          padding: 'clamp(12px, 3vw, 20px)',
+          overflowY: 'auto',
+          color: 'var(--text-primary)',
           boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
         }}
       >
@@ -56,20 +70,18 @@ export default function VersionHistoryDialog({ snapshots, selectedSnapshotId, di
             justifyContent: 'space-between',
             alignItems: 'center',
             marginBottom: '16px',
-            borderBottom: '1px solid #333',
+            borderBottom: '1px solid var(--border-color)',
             paddingBottom: '12px',
           }}
         >
           <div>
-            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>Version History & Snapshots</h3>
-            <span style={{ fontSize: '11px', color: '#888' }}>
-              Local-first Git-style revision checkpoints with immutable states & diffing
-            </span>
+            <h3 id="version-history-title" style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>Version History & Snapshots</h3>
           </div>
           <button
             className="icon-btn"
+            aria-label="Close version history"
             onClick={onClose}
-            style={{ fontSize: '16px', color: '#888' }}
+            style={{ fontSize: '16px', color: 'var(--text-secondary)' }}
           >
             ✕
           </button>
@@ -82,24 +94,27 @@ export default function VersionHistoryDialog({ snapshots, selectedSnapshotId, di
             gap: '8px',
             marginBottom: '16px',
             padding: '10px',
-            background: '#181818',
+            background: 'var(--bg-panel)',
             borderRadius: '6px',
-            border: '1px solid #333',
+            border: '1px solid var(--border-color)',
+            flexWrap: 'wrap',
           }}
         >
           <input
             type="text"
-            placeholder="Commit message (e.g. 'Completed cover headline layout')..."
+            aria-label="Snapshot description"
+            placeholder="Describe the changes…"
             value={commitMessage}
             onInput={(e) => setCommitMessage((e.target as HTMLInputElement).value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') handleCreateSnapshot();
             }}
             style={{
-              flex: 1,
-              background: '#242424',
-              color: '#fff',
-              border: '1px solid #444',
+              flex: '1 1 160px',
+              minWidth: 0,
+              background: 'var(--bg-input)',
+              color: 'var(--text-primary)',
+              border: '1px solid var(--border-light)',
               borderRadius: '4px',
               padding: '6px 10px',
               fontSize: '12px',
@@ -127,8 +142,9 @@ export default function VersionHistoryDialog({ snapshots, selectedSnapshotId, di
           {/* Snapshot List */}
           <div
             style={{
-              flex: '0 0 280px',
-              borderRight: '1px solid #333',
+              flex: '0 0 min(44%, 280px)',
+              minWidth: 0,
+              borderRight: '1px solid var(--border-color)',
               paddingRight: '12px',
               overflowY: 'auto',
               display: 'flex',
@@ -137,8 +153,8 @@ export default function VersionHistoryDialog({ snapshots, selectedSnapshotId, di
             }}
           >
             {snapshots.length === 0 ? (
-              <div style={{ color: '#666', fontSize: '12px', padding: '16px 0', textAlign: 'center' }}>
-                No snapshots recorded yet. Create one above to establish a baseline checkpoint!
+              <div style={{ color: 'var(--text-secondary)', fontSize: '12px', padding: '16px 0', textAlign: 'center' }}>
+                No snapshots yet.
               </div>
             ) : (
               snapshots.map((snap) => {
@@ -151,29 +167,33 @@ export default function VersionHistoryDialog({ snapshots, selectedSnapshotId, di
                   second: '2-digit',
                 });
                 return (
-                  <div
+                  <button
+                    type="button"
                     key={snap.id}
+                    aria-pressed={isSelected}
                     onClick={() => handleSelectSnapshot(snap.id)}
                     style={{
                       padding: '8px 10px',
                       borderRadius: '6px',
-                      background: isSelected ? '#1e3a5f' : '#262626',
-                      border: isSelected ? '1px solid #3b82f6' : '1px solid #333',
+                      background: isSelected ? 'var(--accent-surface)' : 'var(--bg-input)',
+                      border: `1px solid var(${isSelected ? '--accent-cyan' : '--border-color'})`,
+                      color: 'var(--text-primary)',
                       cursor: 'pointer',
-                      transition: 'background 0.15s ease',
+                      overflowWrap: 'anywhere',
+                      textAlign: 'start',
                     }}
                   >
-                    <div style={{ fontWeight: 600, fontSize: '12px', color: '#fff', marginBottom: '2px' }}>
+                    <span style={{ display: 'block', fontWeight: 600, fontSize: '12px', marginBottom: '2px' }}>
                       {snap.message}
-                    </div>
-                    <div style={{ fontSize: '10px', color: isSelected ? '#93c5fd' : '#888', display: 'flex', justifyContent: 'space-between' }}>
+                    </span>
+                    <span style={{ fontSize: '10px', color: 'var(--text-secondary)', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: '2px 8px' }}>
                       <span>{dateStr}</span>
                       <span>by {snap.author}</span>
-                    </div>
-                    <div style={{ fontSize: '9px', color: '#777', marginTop: '4px' }}>
+                    </span>
+                    <span style={{ display: 'block', fontSize: '10px', color: 'var(--text-secondary)', marginTop: '4px' }}>
                       {snap.spreadCount} spreads · {snap.elementCount} elements
-                    </div>
-                  </div>
+                    </span>
+                  </button>
                 );
               })
             )}
@@ -183,53 +203,55 @@ export default function VersionHistoryDialog({ snapshots, selectedSnapshotId, di
           <div
             style={{
               flex: 1,
+              minWidth: 0,
               display: 'flex',
               flexDirection: 'column',
               justifyContent: 'space-between',
               paddingLeft: '4px',
               overflowY: 'auto',
+              overflowWrap: 'anywhere',
             }}
           >
             {selectedSnapshotId ? (
               <div>
-                <h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#93c5fd' }}>
+                <h4 style={{ margin: '0 0 8px 0', fontSize: '13px' }}>
                   Snapshot Inspection
                 </h4>
                 {diffResult && (
                   <div
                     style={{
-                      background: '#181818',
+                      background: 'var(--bg-input)',
                       padding: '12px',
                       borderRadius: '6px',
-                      border: '1px solid #333',
+                      border: '1px solid var(--border-color)',
                       fontSize: '11px',
                       marginBottom: '16px',
                     }}
                   >
-                    <div style={{ fontWeight: 600, marginBottom: '6px', color: '#e0e0e0' }}>
+                    <div style={{ fontWeight: 600, marginBottom: '6px' }}>
                       Diff vs Active Canvas:
                     </div>
-                    <div style={{ color: '#10b981', marginBottom: '3px' }}>
+                    <div style={{ marginBottom: '3px' }}>
                       + Added in Current: {diffResult.added.length} elements
                     </div>
-                    <div style={{ color: '#f59e0b', marginBottom: '3px' }}>
+                    <div style={{ marginBottom: '3px' }}>
                       ~ Modified in Current: {diffResult.modified.length} elements
                     </div>
-                    <div style={{ color: '#ef4444', marginBottom: '8px' }}>
+                    <div style={{ marginBottom: '8px' }}>
                       - Deleted in Current: {diffResult.removed.length} elements
                     </div>
-                    <div style={{ color: '#888', fontStyle: 'italic' }}>
+                    <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
                       Summary: {diffResult.summary}
                     </div>
                   </div>
                 )}
-                <div style={{ fontSize: '11px', color: '#888', lineHeight: 1.5 }}>
+                <div style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
                   Restoring this snapshot will reset spreads and elements back to this checkpoint.
                   All intermediate history will be saved as a local undo step.
                 </div>
               </div>
             ) : (
-              <div style={{ color: '#666', fontSize: '12px', padding: '24px', textAlign: 'center' }}>
+              <div style={{ color: 'var(--text-secondary)', fontSize: '12px', padding: '16px 0', textAlign: 'center' }}>
                 Select a snapshot on the left to inspect its diff and restore state.
               </div>
             )}
@@ -238,15 +260,16 @@ export default function VersionHistoryDialog({ snapshots, selectedSnapshotId, di
               <div
                 style={{
                   display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '8px',
                   justifyContent: 'space-between',
                   alignItems: 'center',
                   paddingTop: '16px',
-                  borderTop: '1px solid #333',
+                  borderTop: '1px solid var(--border-color)',
                 }}
               >
                 <button
-                  className="action-btn"
-                  style={{ color: '#ef4444', borderColor: '#7f1d1d' }}
+                  className="action-btn danger-btn"
                   onClick={() => handleDeleteSnapshot(selectedSnapshotId)}
                 >
                   Delete Snapshot

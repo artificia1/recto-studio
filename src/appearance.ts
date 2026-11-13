@@ -48,6 +48,7 @@ function renderAppearance() {
   root.dataset.density = preference.compact ? 'compact' : 'default';
   root.dataset.buttons = preference.buttonStyle;
   root.style.setProperty('--custom-accent', preference.customAccent);
+  for (const listener of listeners) listener(preference);
 }
 
 export function setAppearance(next: Appearance) {
@@ -55,7 +56,6 @@ export function setAppearance(next: Appearance) {
   renderAppearance();
   try { localStorage.setItem(storageKey, JSON.stringify(preference)); }
   catch { /* Keep this session's appearance if browser storage is unavailable. */ }
-  for (const listener of listeners) listener(preference);
 }
 
 export function initializeAppearance() {

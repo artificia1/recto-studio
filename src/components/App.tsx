@@ -183,7 +183,10 @@ export function App() {
       spreadCanvasRef.current.render();
     }
 
-    const unsubscribe = subscribeAppearance(() => spreadCanvasRef.current?.render());
+    const unsubscribe = subscribeAppearance(() => {
+      spreadCanvasRef.current?.refreshRulerPalette();
+      spreadCanvasRef.current?.render();
+    });
     return () => {
       unsubscribe();
       if (spreadCanvasRef.current) {
@@ -356,7 +359,9 @@ export function App() {
         <Toolbar state={state} />
 
         <main className="canvas-viewport" id="canvas-container" ref={containerRef}>
-          <button className="workspace-map-toggle sm-btn" onClick={() => setShowWorkspace(true)}>All spreads</button>
+          <button type="button" className="workspace-map-toggle" aria-haspopup="dialog" onClick={() => setShowWorkspace(true)}>
+            All spreads
+          </button>
           <div className="ruler-corner"></div>
           <div className="ruler-top-container">
             <canvas id="ruler-top" ref={rulerTopRef}></canvas>

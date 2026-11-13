@@ -73,9 +73,9 @@ export default function SpatialWorkspace({ state, onClose }: { state: ProjectSta
     <div className="spatial-controls"><strong>Multi-spread workspace</strong>
       <label>Zoom<select aria-label="Workspace zoom" value={zoom} onChange={event => setZoom(Number(event.currentTarget.value))}>{[0.05,0.1,0.15,0.25,0.5,1].map(value => <option value={value}>{Math.round(value * 100)}%</option>)}</select></label>
       <label>Columns<select aria-label="Workspace columns" value={columns} onChange={event => setColumns(Number(event.currentTarget.value))}>{[1,2,3,4,6,8].map(value => <option value={value}>{value}</option>)}</select></label>
-      <button onClick={onClose}>Return to spread editor</button>
+      <button type="button" className="sm-btn" onClick={onClose}>Return to spread editor</button>
     </div>
-    <p>Drag artwork across pages or onto the grey pasteboard. Pasteboard items are saved but excluded from publication output. Double-click a page to edit it. Layout previews simplify tables, clipping and colour; use the spread editor and exported proof for final inspection.</p>
+    <p>Drag artwork across pages or onto the pasteboard. Pasteboard items are saved but excluded from publication output. Double-click a page to edit it. Layout previews simplify tables, clipping and colour. Use the spread editor and exported proof for final inspection.</p>
     {message && <p role="status">{message}</p>}
     <div className="spatial-scroll" ref={scroll} onScroll={updateViewport}>
       <svg ref={svg} width={grid.width * scale} height={grid.height * scale} viewBox={`0 0 ${grid.width} ${grid.height}`} onPointerMove={event => { pointer.current = { x: event.clientX, y: event.clientY }; if (drag) { const p = point(event); setDrag({ ...drag, dx: p.x - drag.x, dy: p.y - drag.y }); } }}
@@ -94,8 +94,8 @@ export default function SpatialWorkspace({ state, onClose }: { state: ProjectSta
           const order = (a: CanvasElement, b: CanvasElement) => (state.layers.find(layer => layer.id === a.layerId)?.order || 0) - (state.layers.find(layer => layer.id === b.layerId)?.order || 0) || a.zIndex - b.zIndex;
           const objects = [...inherited.sort(order), ...[...cell.spread.elements].sort(order)].filter(element => state.layers.find(layer => layer.id === element.layerId)?.visible !== false);
           return <g key={cell.spread.id} transform={`translate(${cell.x} ${cell.y})`}>
-            <rect x={-30} y={-30} width={cell.width + 60} height={cell.height + 60} fill="#34363a" stroke={state.activeSpreadIndex === cell.index ? '#159ee8' : '#555'} stroke-width={1}/>
-            <text x={0} y={-12} fill="#eee" font-size={6}>Spread {cell.index + 1}</text>
+            <rect x={-30} y={-30} width={cell.width + 60} height={cell.height + 60} fill="var(--bg-hover)" stroke={state.activeSpreadIndex === cell.index ? 'var(--accent-cyan)' : 'var(--border-light)'} stroke-width={1}/>
+            <text x={0} y={-12} fill="currentColor" font-size={6}>Spread {cell.index + 1}</text>
             {cell.spread.pages.map((page, index) => <rect key={page.id} data-workspace-page={page.id} x={index * state.settings.widthMm} width={state.settings.widthMm} height={state.settings.heightMm} fill="white" stroke="#999" stroke-width={0.5} onDblClick={() => { stateManager.setActiveSpread(cell.index); stateManager.setPan(0, 0); onClose(); }}/>) }
             {objects.map(element => {
               const pageIndex = Math.max(0, cell.spread.pages.findIndex(page => page.id === element.pageId));
@@ -107,7 +107,7 @@ export default function SpatialWorkspace({ state, onClose }: { state: ProjectSta
                 const ids = [element.id, ...stateManager.getState().selectedElementIds.filter(id => id !== element.id)];
                 setDrag({ id: element.id, ids, x: p.x, y: p.y, dx: 0, dy: 0, grabX: p.x - cell.x - pageIndex * state.settings.widthMm - element.x, grabY: p.y - cell.y - element.y });
               }}>
-                <rect width={element.width} height={element.height} fill="transparent" stroke={state.selectedElementIds.includes(element.id) ? '#159ee8' : 'none'} stroke-width={0.5}/>
+                <rect width={element.width} height={element.height} fill="transparent" stroke={state.selectedElementIds.includes(element.id) ? 'var(--accent-cyan)' : 'none'} stroke-width={0.5}/>
                 <g pointer-events="none">{preview(element)}</g>
               </g>;
             })}

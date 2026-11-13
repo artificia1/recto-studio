@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { contrastRatio } from './contrast';
 import { importProject, savedProject } from './fixtures';
 
 test('workspace appearance follows saved preferences without changing the project', async ({ page }) => {
@@ -98,4 +99,41 @@ test('OLED and custom colors persist with the chosen button style on a narrow sc
   await popup.getByRole('button', { name: 'Reset to defaults' }).click();
   await expect(root).toHaveAttribute('data-buttons', 'classic');
   await expect(root).toHaveAttribute('data-accent', 'blue');
+});
+
+test('toolbar menus keep labels, descriptions, and shortcuts readable in light mode', async ({ page }) => {
+  await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.abort());
+  await page.goto('/');
+  const toolbar = page.locator('.top-bar');
+  await toolbar.getByRole('button', { name: 'Appearance', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: 'Appearance' });
+  await settings.getByRole('button', { name: 'Light Soft white' }).click();
+  await settings.getByRole('button', { name: 'Jade' }).click();
+  await settings.getByRole('button', { name: 'Close Appearance' }).click();
+
+  for (const [triggerTitle, selector, actionName] of [
+    [/^File Management/, '.file-dropdown-menu', /^Open Project/],
+    [/^Choose Blank Book Preset/, '.new-dropdown-menu', /^Blank Editorial Magazine/],
+    [/^Export Clean PDF, Print PDF/, '.export-dropdown-menu', /PDF/],
+  ] as const) {
+    const trigger = toolbar.getByTitle(triggerTitle);
+    await trigger.click();
+    const menu = toolbar.locator(selector);
+    const action = menu.getByRole('button', { name: actionName }).first();
+    await expect(action).toBeVisible();
+    await page.mouse.move(0, 0);
+    const foregrounds = await action.evaluate(button => {
+      const items = [button, ...button.querySelectorAll('.dropdown-item-title, .dropdown-item-sub, .dropdown-item-shortcut')];
+      return items.map(item => getComputedStyle(item).color);
+    });
+    const menuColor = await menu.evaluate(element => getComputedStyle(element).backgroundColor);
+    for (const color of foregrounds) expect(contrastRatio(color, menuColor)).toBeGreaterThanOrEqual(4.5);
+
+    await action.hover();
+    await expect.poll(() => action.evaluate(button => {
+      const { color, backgroundColor } = getComputedStyle(button);
+      return { color, backgroundColor };
+    }).then(({ color, backgroundColor }) => contrastRatio(color, backgroundColor))).toBeGreaterThanOrEqual(4.5);
+    await trigger.click();
+  }
 });

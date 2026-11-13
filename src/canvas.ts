@@ -129,6 +129,7 @@ export class SpreadCanvas {
   private rulerLeft: HTMLCanvasElement;
   private ctxTop: CanvasRenderingContext2D;
   private ctxLeft: CanvasRenderingContext2D;
+  private rulerPalette!: { background: string; marks: string; labels: string; cursor: string };
 
   private isDragging: boolean = false;
   private isResizing: boolean = false;
@@ -275,6 +276,7 @@ export class SpreadCanvas {
     this.ctx = canvas.getContext('2d', { alpha: false })!;
     this.ctxTop = rulerTop.getContext('2d')!;
     this.ctxLeft = rulerLeft.getContext('2d')!;
+    this.refreshRulerPalette();
 
     this.initEvents();
     this.windowCleanups.push(registerProofCapture(spot => {
@@ -4685,6 +4687,16 @@ export class SpreadCanvas {
     this.drawDimensionHud(ctx, cursorScreenX + 14, cursorScreenY + 14, wMm, hMm, toolBadge);
   }
 
+  public refreshRulerPalette(): void {
+    const style = getComputedStyle(this.rulerTop);
+    this.rulerPalette = {
+      background: style.backgroundColor,
+      marks: style.getPropertyValue('--text-secondary').trim(),
+      labels: style.color,
+      cursor: style.accentColor,
+    };
+  }
+
   private drawRulers() {
     const state = stateManager.getState();
     const origin = this.getSpreadScreenOrigin(state);
@@ -4692,11 +4704,11 @@ export class SpreadCanvas {
 
     const ctxT = this.ctxTop;
     const wT = this.rulerTop.getBoundingClientRect().width;
-    ctxT.fillStyle = '#2d2d2d';
+    ctxT.fillStyle = this.rulerPalette.background;
     ctxT.fillRect(0, 0, wT, 24);
 
-    ctxT.strokeStyle = '#555555';
-    ctxT.fillStyle = '#aaaaaa';
+    ctxT.strokeStyle = this.rulerPalette.marks;
+    ctxT.fillStyle = this.rulerPalette.labels;
     ctxT.font = '9px Inter, sans-serif';
     ctxT.textAlign = 'left';
     ctxT.lineWidth = 1;
@@ -4721,7 +4733,7 @@ export class SpreadCanvas {
     }
 
     const cursorTopX = origin.x + (this.mouseMmX * pxPerMm);
-    ctxT.strokeStyle = '#0d99ff';
+    ctxT.strokeStyle = this.rulerPalette.cursor;
     ctxT.beginPath();
     ctxT.moveTo(cursorTopX, 0);
     ctxT.lineTo(cursorTopX, 24);
@@ -4729,11 +4741,11 @@ export class SpreadCanvas {
 
     const ctxL = this.ctxLeft;
     const hL = this.rulerLeft.getBoundingClientRect().height;
-    ctxL.fillStyle = '#2d2d2d';
+    ctxL.fillStyle = this.rulerPalette.background;
     ctxL.fillRect(0, 0, 24, hL);
 
-    ctxL.strokeStyle = '#555555';
-    ctxL.fillStyle = '#aaaaaa';
+    ctxL.strokeStyle = this.rulerPalette.marks;
+    ctxL.fillStyle = this.rulerPalette.labels;
     ctxL.font = '9px Inter, sans-serif';
     ctxL.textAlign = 'right';
     ctxL.lineWidth = 1;
@@ -4762,7 +4774,7 @@ export class SpreadCanvas {
     }
 
     const cursorLeftY = origin.y + (this.mouseMmY * pxPerMm);
-    ctxL.strokeStyle = '#0d99ff';
+    ctxL.strokeStyle = this.rulerPalette.cursor;
     ctxL.beginPath();
     ctxL.moveTo(0, cursorLeftY);
     ctxL.lineTo(24, cursorLeftY);
