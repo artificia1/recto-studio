@@ -522,7 +522,7 @@ html, body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.15s ease;
+  transition: border-color 0.15s ease;
   user-select: none;
   white-space: nowrap;
 }
@@ -668,7 +668,6 @@ html, body {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  transition: background 0.12s ease;
   text-decoration: none;
   box-sizing: border-box;
 }
@@ -946,7 +945,7 @@ html, body {
   font-weight: 600;
   padding: 10px 0;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: border-bottom-color 0.15s ease;
 }
 
 .inspector-tab:hover {
