@@ -29,8 +29,8 @@ test('saves a spread layout, finds it after reload and inserts a new editable co
   expect((await savedProject(page)).spreads).toHaveLength(1);
 
   await card.getByRole('button', { name: 'Rename', exact: true }).click();
-  await card.getByLabel('New layout name').fill('Print layout');
-  await card.getByRole('button', { name: 'Save name' }).click();
+  await page.getByLabel('New layout name').fill('Print layout');
+  await page.getByRole('button', { name: 'Save name', exact: true }).click();
   const renamed = page.getByRole('article').filter({ hasText: 'Print layout' });
   const download = page.waitForEvent('download');
   await renamed.getByRole('button', { name: 'Export file' }).click();
