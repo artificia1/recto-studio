@@ -108,12 +108,12 @@
 :root[data-theme="light"][data-accent="amber"] { --accent-cyan: #815008; }
 
 :root[data-accent="custom"] {
-  --accent-cyan: color-mix(in srgb, var(--custom-accent) 65%, white);
+  --accent-cyan: color-mix(in srgb, var(--custom-accent) 45%, white);
   --accent-fill: color-mix(in srgb, var(--custom-accent) 40%, #111217);
 }
 
 :root[data-theme="light"][data-accent="custom"] {
-  --accent-cyan: color-mix(in srgb, var(--custom-accent) 40%, #111217);
+  --accent-cyan: color-mix(in srgb, var(--custom-accent) 35%, #111217);
 }
 
 * { scrollbar-color: var(--scroll-thumb) transparent; }
@@ -141,14 +141,18 @@
 .action-btn.active, .control-bar-pill.pill-active, .sheet-side-pill, .app-updater .action-btn[aria-expanded="true"] {
   background: var(--accent-surface);
   border-color: var(--accent-cyan);
-  color: var(--accent-cyan);
+  color: var(--text-primary);
 }
 
-.action-btn-primary, .action-btn-primary.active, .preflight-fix-all-btn {
+.action-btn-primary, .action-btn-primary.active {
   background: var(--primary-face, var(--accent-fill));
   border-color: var(--primary-border, var(--accent-fill));
   color: var(--primary-color, var(--accent-foreground));
   box-shadow: var(--primary-shadow, none);
+}
+
+.action-btn-primary:is(:hover, .active) {
+  box-shadow: inset 0 0 0 1px currentColor;
 }
 
 :is(.action-btn, .sm-btn):not(.active, .danger-btn) {

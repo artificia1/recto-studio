@@ -39,3 +39,72 @@
 .story-revisions .sm-btn { flex: 0 0 auto; width: auto; padding: 5px 12px; }
 .revision-comparison { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 12px; }
 .manuscript-preview .revision-comparison pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 14em; overflow: auto; }
+
+.story-editor-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  place-items: center;
+  padding: 12px;
+  background: #0009;
+  backdrop-filter: blur(2px);
+}
+
+.story-editor-dialog {
+  width: min(1120px, 100%);
+  height: min(820px, calc(100dvh - 24px));
+  background: var(--bg-modal);
+  border-color: var(--border-light);
+  overflow-y: auto;
+}
+
+.story-editor-header,
+.story-editor-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 16px;
+  background: var(--bg-bar);
+  flex-shrink: 0;
+}
+
+.story-editor-header { border-bottom: 1px solid var(--border-color); }
+.story-editor-header h2 { font-size: 14px; }
+
+.story-editor-heading,
+.story-editor-size,
+.story-editor-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  min-width: 0;
+}
+
+.story-editor-heading { margin-inline-end: auto; }
+.story-editor-heading select { max-width: min(100%, 220px); text-overflow: ellipsis; }
+.story-editor-size { color: var(--text-secondary); font-variant-numeric: tabular-nums; gap: 4px; }
+.story-editor-size .sm-btn { min-width: 24px; }
+.story-editor-footer {
+  justify-content: space-between;
+  border-top: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.story-editor-dialog .manuscript-body { min-height: 160px; }
+.story-editor-dialog .story-editor-text { flex: 1 1 0; }
+.story-editor-text::placeholder { color: var(--text-secondary); opacity: 1; }
+.story-editor-text:focus-visible { outline: 2px solid var(--accent-cyan); }
+.story-tracked-preview { color: var(--text-primary); background: var(--bg-panel); }
+.story-tracked-text { white-space: pre-wrap; }
+.story-tracked-text del { background: color-mix(in srgb, var(--accent-red) 18%, var(--bg-panel)); }
+.story-tracked-text ins { background: var(--accent-surface); }
+
+@media (max-width: 760px), (max-height: 640px) {
+  .story-editor-dialog .manuscript-body { flex: 1 0 auto; }
+  .story-editor-dialog .story-editor-text { flex: auto; }
+}

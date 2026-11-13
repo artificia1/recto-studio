@@ -4697,7 +4697,7 @@ export class SpreadCanvas {
     };
   }
 
-  private drawRulers() {
+  public drawRulers() {
     const state = stateManager.getState();
     const origin = this.getSpreadScreenOrigin(state);
     const pxPerMm = MM_TO_PX * state.zoom;

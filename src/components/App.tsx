@@ -13,7 +13,7 @@ import { BookletImpositionModal, CoverSpineModal } from './LazyPrintDialogs';
 import { SpreadCanvas } from '../canvas';
 import { stateManager } from '../state';
 import { fontManager } from '../fontManager';
-import { subscribeAppearance } from '../appearance';
+import { getAppearance, subscribeAppearance } from '../appearance';
 const ManuscriptImportModal = lazy(() => import('./ManuscriptImportModal').then(module => ({ default: module.ManuscriptImportModal })));
 const EquationModal = lazy(() => import('./EquationModal').then(module => ({ default: module.EquationModal })));
 const InddImportModal = lazy(() => import('./InddImportModal').then(module => ({ default: module.InddImportModal })));
@@ -183,9 +183,20 @@ export function App() {
       spreadCanvasRef.current.render();
     }
 
-    const unsubscribe = subscribeAppearance(() => {
-      spreadCanvasRef.current?.refreshRulerPalette();
-      spreadCanvasRef.current?.render();
+    let previousAppearance = getAppearance();
+    const unsubscribe = subscribeAppearance(appearance => {
+      const canvas = spreadCanvasRef.current;
+      if (!canvas) return;
+      canvas.refreshRulerPalette();
+      if (appearance.compact !== previousAppearance.compact) {
+        canvas.resizeCanvas();
+        canvas.scheduleRender();
+      } else if (appearance.pasteboard !== previousAppearance.pasteboard) {
+        canvas.scheduleRender();
+      } else {
+        canvas.drawRulers();
+      }
+      previousAppearance = appearance;
     });
     return () => {
       unsubscribe();

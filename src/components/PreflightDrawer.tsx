@@ -8,45 +8,33 @@ export default function PreflightDrawer({ issues, drawerRef, onClose }: {
   drawerRef: RefObject<HTMLDivElement>;
   onClose(): void;
 }) {
-  const handleFixIssue = (e: MouseEvent, issue: PreflightIssue) => {
-    e.stopPropagation();
-    stateManager.autoFixPreflightIssue(issue);
-  };
-
-  const handleFixAll = (e: MouseEvent) => {
-    e.stopPropagation();
-    stateManager.autoFixAllPreflightIssues();
+  const inspectIssue = (issue: PreflightIssue) => {
+    stateManager.setActiveSpread(issue.spreadIndex);
+    if (issue.elementId) stateManager.selectElements([issue.elementId]);
   };
 
   return (
-    <div ref={drawerRef} className="preflight-drawer">
-          <div className="preflight-drawer-header">
-            <div className="preflight-drawer-title">
-          <span>PRINT PREFLIGHT AUDIT</span>
-          <span
-            style={{
-              fontSize: '9.5px',
-              fontWeight: 700,
-              padding: '1px 6px',
-              borderRadius: '10px',
-              backgroundColor: issues.length === 0 ? '#2ec4b6' : '#e63946',
-              color: '#ffffff',
-            }}
-          >
-            {issues.length} {issues.length === 1 ? 'ISSUE' : 'ISSUES'}
+    <div ref={drawerRef} className="preflight-drawer" role="region" aria-labelledby="preflight-audit-title">
+      <div className="preflight-drawer-header">
+        <div className="preflight-drawer-title">
+          <h2 id="preflight-audit-title">Print Preflight Audit</h2>
+          <span className="preflight-badge" data-severity={issues.length ? 'error' : 'ok'}>
+            {issues.length} {issues.length === 1 ? 'issue' : 'issues'}
           </span>
         </div>
         <div className="preflight-actions">
           {issues.length > 0 && (
             <button
-              className="preflight-fix-all-btn"
-              onClick={handleFixAll}
+              type="button"
+              className="action-btn-primary"
+              onClick={() => stateManager.autoFixAllPreflightIssues()}
               title="Automatically fix all resolvable preflight issues"
             >
               Auto-Fix All
             </button>
           )}
           <button
+            type="button"
             className="preflight-close-btn"
             onClick={onClose}
             title="Close preflight audit panel"
@@ -58,53 +46,33 @@ export default function PreflightDrawer({ issues, drawerRef, onClose }: {
 
       <div className="preflight-drawer-body">
         {issues.length === 0 ? (
-          <div style={{ padding: '16px 12px', color: '#2ec4b6', fontSize: '11px', textAlign: 'center' }}>
-            <div style={{ fontSize: '18px', marginBottom: '6px' }}>OK</div>
-            <b>All Preflight Checks Passed</b>
-            <div style={{ color: '#888', marginTop: '4px', fontSize: '10.5px' }}>
-              No overset text, low-res assets, missing Alt Text, bleed gaps, or trim edge hazards detected.
-            </div>
+          <div className="preflight-empty">
+            <strong>All Preflight Checks Passed</strong>
+            <p>No overset text, low-res assets, missing alt text, bleed gaps, or trim edge hazards detected.</p>
           </div>
         ) : (
           groupPreflightIssues(issues).map(([key, group]) => <details key={key} open={group.length === 1}>
-            <summary>{group[0].code} · {group.length} {group.length === 1 ? 'finding' : 'findings'} · Pages {[...new Set(group.map(issue => issue.pageNumber))].sort((a, b) => a - b).join(', ')}</summary>
-            {group.length > 1 && <p>{group[0].message}</p>}
+            <summary>
+              {group[0].code} · {group.length} {group.length === 1 ? 'finding' : 'findings'} · Pages {[...new Set(group.map(issue => issue.pageNumber))].sort((a, b) => a - b).join(', ')}
+            </summary>
+            {group.length > 1 && <p className="preflight-group-message">{group[0].message}</p>}
             {group.map((issue, index) => (
-            <div
-              key={`${issue.id}-${index}`}
-              className="preflight-item"
-              style={{
-                borderLeft: `3px solid ${issue.severity === 'error' ? '#e63946' : '#f4a261'}`,
-              }}
-              onClick={() => {
-                stateManager.setActiveSpread(issue.spreadIndex);
-                if (issue.elementId) {
-                  stateManager.selectElements([issue.elementId]);
-                }
-              }}
-              title="Click to jump to element and inspect on canvas"
-            >
-              <div className="preflight-item-top">
-                <b style={{ color: issue.severity === 'error' ? '#ff6b6b' : '#f4a261' }}>
-                  {issue.code}
-                </b>
-                <span style={{ color: '#888888' }}>
-                  Page {issue.pageNumber} • Spread {issue.spreadIndex + 1}
-                </span>
-              </div>
-              <div style={{ color: '#e0e0e0', lineHeight: '1.35', fontSize: '11px' }}>
-                {issue.message}
-              </div>
-              <div className="preflight-item-actions">
-                <button
-                  className="preflight-fix-btn"
-                  onClick={(e) => handleFixIssue(e as any, issue)}
-                  title="Apply automatic fix for this issue"
-                >
-                  Quick Fix
+              <div key={`${issue.id}-${index}`} className="preflight-item" data-severity={issue.severity}>
+                <button type="button" className="preflight-item-locate" onClick={() => inspectIssue(issue)}
+                  title="Jump to finding on the canvas">
+                  <span className="preflight-item-top">
+                    <strong>{issue.code}</strong>
+                    <span>Page {issue.pageNumber} · Spread {issue.spreadIndex + 1}</span>
+                  </span>
+                  <span>{issue.message}</span>
                 </button>
+                <div className="preflight-item-actions">
+                  <button type="button" className="sm-btn" onClick={() => stateManager.autoFixPreflightIssue(issue)}
+                    title="Apply automatic fix for this issue">
+                    Quick Fix
+                  </button>
+                </div>
               </div>
-            </div>
             ))}
           </details>)
         )}
