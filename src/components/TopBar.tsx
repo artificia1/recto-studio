@@ -32,6 +32,12 @@ function saveProject(saveAs = false) {
     .catch(error => alert(`Could not save this project. ${error instanceof Error ? error.message : String(error)}`));
 }
 
+function ActionIcon({ name }: { name: string }) {
+  return <svg className="top-action-icon" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+    <use href={`./toolbar-icons.svg#${name}`} />
+  </svg>;
+}
+
 interface TopBarProps {
   state: ProjectState;
   onImportManuscript: (story: IngestedStory, fileName: string, frame: TextElement) => void;
@@ -651,9 +657,7 @@ export function TopBar({
             title="Quick Apply Styles & Commands (Ctrl+/ or Ctrl+Enter)"
             aria-label="Quick Apply"
           >
-            <svg className="top-action-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
-              <path d="M6 3h7M6 8h7M6 13h7M3 3h1M3 8h1M3 13h1" stroke-linecap="round" />
-            </svg>
+            <ActionIcon name="commands" />
             <span className="top-action-label">Quick Apply</span>
           </button>
         )}
@@ -665,9 +669,7 @@ export function TopBar({
             title="Find / Change (GREP) (Ctrl+F)"
             aria-label="Find"
           >
-            <svg className="top-action-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
-              <circle cx="6.8" cy="6.8" r="3.8" /><path d="m10 10 3.4 3.4" stroke-linecap="round" />
-            </svg>
+            <ActionIcon name="find" />
             <span className="top-action-label">Find</span>
           </button>
         )}
@@ -742,17 +744,12 @@ export function TopBar({
           aria-label={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
           aria-pressed={isFullscreen}
         >
-          <svg className="top-action-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
-            <path d={isFullscreen ? 'M2 6h4V2m8 4h-4V2m-8 8h4v4m8-4h-4v4' : 'M6 2H2v4m8-4h4v4M2 10v4h4m4 0h4v-4'} stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
+          <ActionIcon name={isFullscreen ? 'exit-fullscreen' : 'fullscreen'} />
           <span className="top-action-label">{isFullscreen ? 'Exit' : 'Fullscreen'}</span>
         </button>
         <button type="button" className="action-btn top-btn-appearance" aria-label="Appearance"
           title="Workspace appearance" aria-haspopup="dialog" onClick={() => setShowAppearance(true)}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
-            <path d="M12 3a9 9 0 1 0 0 18h1.4a1.6 1.6 0 0 0 1.1-2.8 1.4 1.4 0 0 1 1-2.4H18A3 3 0 0 0 21 13v-1a9 9 0 0 0-9-9Z"/>
-            <path stroke-linecap="round" stroke-width="2.5" d="M8 10h.01M12 7h.01M16 10h.01M7 14h.01"/>
-          </svg><span className="top-action-label">Appearance</span>
+          <ActionIcon name="appearance" /><span className="top-action-label">Appearance</span>
         </button>
         {isDesktop() && <Suspense fallback={null}><AppUpdater /></Suspense>}
       </div>
