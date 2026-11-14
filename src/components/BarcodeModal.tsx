@@ -6,7 +6,7 @@
 
 import { useState } from 'preact/hooks';
 import { stateManager } from '../state';
-import { generateEan13Svg } from '../engine/barcodeEngine';
+import { generateEan13DataUrl } from '../engine/barcodeEngine';
 
 interface BarcodeModalProps {
   isOpen: boolean;
@@ -18,10 +18,10 @@ export function BarcodeModal({ isOpen, onClose }: BarcodeModalProps) {
   const [showText, setShowText] = useState(true);
   if (!isOpen) return null;
 
-  const previewSvg = generateEan13Svg(rawDigits, { showText });
+  const previewSrc = generateEan13DataUrl(rawDigits, { showText });
 
   const handleInsert = () => {
-    stateManager.insertBarcode(rawDigits);
+    stateManager.insertBarcode(rawDigits, { showText });
     onClose();
   };
 
@@ -76,10 +76,11 @@ export function BarcodeModal({ isOpen, onClose }: BarcodeModalProps) {
 
         <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <div>
-            <label style={{ display: 'block', fontSize: '11px', color: '#a0a0a5', marginBottom: '6px' }}>
+            <label htmlFor="barcode-digits" style={{ display: 'block', fontSize: '11px', color: '#a0a0a5', marginBottom: '6px' }}>
               ISBN-13 or EAN-13 Digits (12 or 13 numbers):
             </label>
             <input
+              id="barcode-digits"
               type="text"
               value={rawDigits}
               onInput={(e) => setRawDigits((e.target as HTMLInputElement).value)}
@@ -117,8 +118,9 @@ export function BarcodeModal({ isOpen, onClose }: BarcodeModalProps) {
               justifyContent: 'center',
               minHeight: '110px',
             }}
-            dangerouslySetInnerHTML={{ __html: previewSvg }}
-          />
+          >
+            <img src={previewSrc} alt="EAN-13 barcode preview" style={{ width: '100%', height: '110px' }} />
+          </div>
 
           <button
             onClick={handleInsert}

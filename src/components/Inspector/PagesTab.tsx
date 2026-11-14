@@ -211,7 +211,7 @@ export function PagesTab({ state }: PagesTabProps) {
               {spreads.length > 1 && (
                 <button
                   className="btn-del-spread"
-                  onClick={(e) => handleDeleteSpread(e as any, idx)}
+                  onClick={(e) => handleDeleteSpread(e, idx)}
                   title="Delete Spread"
                 >
                   ✕

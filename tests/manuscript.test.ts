@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { ingestManuscript, mapManuscriptStyles, parseDocxContent, parseMarkdownContent } from '../src/contentImport';
 import { createZipArchive } from '../src/zip';
 import { readZip } from '../src/zip';
-import { editStory, formatStory, plainStory, sliceStory, storyText } from '../src/engine/storyContent';
+import { editStory, formatStory, indexStory, plainStory, sliceStory, storyText } from '../src/engine/storyContent';
 import { layoutStory } from '../src/engine/storyLayout';
 import { stateManager } from '../src/state/stateManager';
 import { generateEpubPackage } from '../src/epubExport';
@@ -77,8 +77,15 @@ describe('Manuscript import and structured content', () => {
   it('preserves whitespace in every slice and retains formatting through text edits', () => {
     const content = formatStory(plainStory('One\n\nTwo 😀 and three\n'), 5, 8, { italic: true });
     const text = storyText(content);
+    const indexed = indexStory(content);
     for (let a = 0; a <= text.length; a++) for (let b = a; b <= text.length; b++) {
-      expect(storyText(sliceStory(content, a, b))).toBe(text.slice(a, b));
+      const slice = sliceStory(content, a, b);
+      expect(storyText(slice)).toBe(text.slice(a, b));
+      expect(indexed.slice(a, b)).toEqual(slice);
+      if (b === text.length) {
+        const remainder = indexed.from(a);
+        expect(Array.from({ length: remainder.length }, (_, index) => remainder.at(index))).toEqual(slice.paragraphs);
+      }
     }
     for (const value of ['One\n\nTwo 😀 and three\n!', '', 'Prefix\n' + text, 'One\n\nTwo NEW 😀 and three\n']) {
       expect(storyText(editStory(content, value))).toBe(value);

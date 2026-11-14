@@ -4,9 +4,9 @@
  * Licensed under the MIT License.
  */
 
-import { useState } from 'preact/hooks';
+import { useMemo, useState } from 'preact/hooks';
 import { stateManager } from '../state';
-import { generateQrSvg } from '../engine/qrEngine';
+import { generateQrDataUrl } from '../engine/qrEngine';
 
 interface QrCodeModalProps {
   isOpen: boolean;
@@ -17,13 +17,28 @@ export function QrCodeModal({ isOpen, onClose }: QrCodeModalProps) {
   const [qrType, setQrType] = useState<'url' | 'text' | 'email' | 'wifi'>('url');
   const [content, setContent] = useState('https://recto.studio');
   const [sizeMm, setSizeMm] = useState(30);
+  const [inserting, setInserting] = useState(false);
+  const [insertError, setInsertError] = useState('');
+  const payload = content || 'https://recto.studio';
+  const previewSrc = useMemo(() => {
+    if (!isOpen) return '';
+    try { return generateQrDataUrl(payload); }
+    catch { return ''; }
+  }, [isOpen, payload]);
   if (!isOpen) return null;
 
-  const previewSvg = generateQrSvg(content || 'https://recto.studio', sizeMm);
-
-  const handleInsert = () => {
-    stateManager.insertQrCode(content || 'https://recto.studio', { sizeMm });
-    onClose();
+  const handleInsert = async () => {
+    if (!previewSrc) return;
+    setInserting(true);
+    setInsertError('');
+    try {
+      await stateManager.insertQrCode(payload, { sizeMm });
+      onClose();
+    } catch (error) {
+      setInsertError(error instanceof Error ? error.message : 'The QR code could not be inserted.');
+    } finally {
+      setInserting(false);
+    }
   };
 
   return (
@@ -121,10 +136,11 @@ export function QrCodeModal({ isOpen, onClose }: QrCodeModalProps) {
             </div>
 
             <div>
-              <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: '#d1d1d6', marginBottom: '4px' }}>
+              <label htmlFor="qr-payload" style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: '#d1d1d6', marginBottom: '4px' }}>
                 Payload / Content:
               </label>
               <input
+                id="qr-payload"
                 type="text"
                 value={content}
                 onInput={(e) => setContent((e.target as HTMLInputElement).value)}
@@ -171,10 +187,14 @@ export function QrCodeModal({ isOpen, onClose }: QrCodeModalProps) {
               padding: '8px',
               border: '1px solid #444',
             }}
-            dangerouslySetInnerHTML={{ __html: previewSvg }}
-          />
+          >
+            {previewSrc
+              ? <img src={previewSrc} alt="QR code preview" style={{ width: '100%', height: '100%' }} />
+              : <p role="alert" style={{ color: '#222' }}>This content is too long for a QR code. Shorten it to continue.</p>}
+          </div>
         </div>
 
+        {insertError && <p role="alert" style={{ color: '#f99', padding: '8px 20px' }}>{insertError}</p>}
         <div style={{ padding: '12px 20px', borderTop: '1px solid #2d2d34', display: 'flex', justifyContent: 'flex-end', gap: '8px', backgroundColor: '#131316' }}>
           <button
             type="button"
@@ -193,7 +213,8 @@ export function QrCodeModal({ isOpen, onClose }: QrCodeModalProps) {
           </button>
           <button
             type="button"
-            onClick={handleInsert}
+            onClick={() => void handleInsert()}
+            disabled={!previewSrc || inserting}
             style={{
               padding: '6px 16px',
               fontSize: '11px',

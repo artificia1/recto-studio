@@ -25,6 +25,13 @@ const ScriptsModal = lazy(() => import('./ScriptsModal').then(module => ({ defau
 const FindChangeModal = lazy(() => import('./FindChangeModal').then(module => ({ default: module.FindChangeModal })));
 const QuickApply = lazy(() => import('./QuickApply').then(module => ({ default: module.QuickApply })));
 
+declare global {
+  interface Window {
+    recto?: { stateManager: typeof stateManager; spreadCanvas: SpreadCanvas };
+    papercut?: Window['recto'];
+  }
+}
+
 export function App() {
   const [showWorkspace, setShowWorkspace] = useState(false);
   const state = useProjectState();
@@ -173,11 +180,11 @@ export function App() {
         rulerLeftRef.current
       );
 
-      (window as any).recto = {
+      window.recto = {
         stateManager,
         spreadCanvas: spreadCanvasRef.current,
       };
-      (window as any).papercut = (window as any).recto;
+      window.papercut = window.recto;
 
       spreadCanvasRef.current.render();
     }

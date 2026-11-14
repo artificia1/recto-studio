@@ -103,7 +103,7 @@ export function generateEan13Svg(rawInput: string, options: { widthMm?: number; 
 /**
  * Returns a data URL containing the SVG barcode.
  */
-export function generateEan13DataUrl(isbn: string): string {
-  const svg = generateEan13Svg(isbn);
+export function generateEan13DataUrl(isbn: string, options?: Parameters<typeof generateEan13Svg>[1]): string {
+  const svg = generateEan13Svg(isbn, options);
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }

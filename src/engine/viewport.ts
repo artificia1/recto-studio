@@ -51,38 +51,32 @@ export function calculateSpreadGeometry(
   pageWidthMm: number,
   pageHeightMm: number,
   numPages: number,
-  zoom: number
+  zoom: number,
+  geometry: SpreadGeometry = { pageWidthMm: 0, pageHeightMm: 0, numPages: 0, spreadWidthMm: 0, spreadHeightMm: 0,
+    spreadWidthPx: 0, spreadHeightPx: 0 },
 ): SpreadGeometry {
-  const count = Math.max(1, numPages);
-  const spreadWidthMm = pageWidthMm * count;
-  const spreadHeightMm = pageHeightMm;
-  const spreadWidthPx = mmToPx(spreadWidthMm, zoom);
-  const spreadHeightPx = mmToPx(spreadHeightMm, zoom);
-
-  return {
-    pageWidthMm,
-    pageHeightMm,
-    numPages: count,
-    spreadWidthMm,
-    spreadHeightMm,
-    spreadWidthPx,
-    spreadHeightPx,
-  };
+  geometry.numPages = Math.max(1, numPages);
+  geometry.pageWidthMm = pageWidthMm;
+  geometry.pageHeightMm = geometry.spreadHeightMm = pageHeightMm;
+  geometry.spreadWidthMm = pageWidthMm * geometry.numPages;
+  geometry.spreadWidthPx = mmToPx(geometry.spreadWidthMm, zoom);
+  geometry.spreadHeightPx = mmToPx(pageHeightMm, zoom);
+  return geometry;
 }
 
 /** Calculates the top-left screen pixel position of the active spread. */
 export function getSpreadScreenOrigin(
   containerRect: ViewportRect,
   spreadGeometry: SpreadGeometry,
-  viewport: ViewportTransformState
+  viewport: ViewportTransformState,
+  point: Point2D = { x: 0, y: 0 },
 ): Point2D {
   const centerX = containerRect.width / 2 + viewport.panX;
   const centerY = containerRect.height / 2 + viewport.panY;
 
-  return {
-    x: centerX - spreadGeometry.spreadWidthPx / 2,
-    y: centerY - spreadGeometry.spreadHeightPx / 2,
-  };
+  point.x = centerX - spreadGeometry.spreadWidthPx / 2;
+  point.y = centerY - spreadGeometry.spreadHeightPx / 2;
+  return point;
 }
 
 /** Transforms screen pixels to physical spread millimeters. */
@@ -90,13 +84,13 @@ export function screenToSpreadMm(
   screenX: number,
   screenY: number,
   spreadOriginPx: Point2D,
-  zoom: number
+  zoom: number,
+  point: Point2D = { x: 0, y: 0 },
 ): Point2D {
   const pxPerMm = MM_TO_PX * zoom;
-  return {
-    x: (screenX - spreadOriginPx.x) / pxPerMm,
-    y: (screenY - spreadOriginPx.y) / pxPerMm,
-  };
+  point.x = (screenX - spreadOriginPx.x) / pxPerMm;
+  point.y = (screenY - spreadOriginPx.y) / pxPerMm;
+  return point;
 }
 
 /** Transforms physical spread millimeters to screen pixels. */

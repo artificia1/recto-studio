@@ -1,3 +1,4 @@
+import { drawCanvasRulers, type RulerPalette } from './engine/canvasRulers';
 import { instantiateMasterItem, resolveMaster } from './engine/masterInheritance';
 import { lockedArtworkIds } from './engine/selectionGeometry';
 import { calculateImageFitting } from './engine/imageFitting';
@@ -7,6 +8,8 @@ import { publicationWrapObjects, wrappedPlainContent } from './engine/publicatio
 export { calculateImageFitting, type ImageFitTransform } from './engine/imageFitting';
 import { layoutFrameNotes, publicationText } from './engine/publicationReferences';
 import { reviewPinPosition } from './engine/reviewPins';
+import { calculateSpreadGeometry, getSpreadScreenOrigin, MM_TO_PX, screenToSpreadMm } from './engine/viewport';
+import { bindCanvasInput, type CanvasMouseDown, type CanvasMouseMove, type CanvasMouseUp } from './engine/interaction/canvasInput';
 import { handleCanvasKeyDown } from './engine/interaction/keyboard';
 import { masterTargetPage } from './engine/pageLabels';
 import { getAppearance, pasteboardColors } from './appearance';
@@ -17,14 +20,12 @@ import {
   CanvasElement,
   TextElement,
   ImageElement,
-  ImageFitMode,
   ShapeElement,
   TableElement,
   VectorPathElement,
   BezierNode,
   TextOnPathSettings,
   DisplayQuality,
-  OpenTypeFeatures,
   GrepStyleRule,
 } from './types';
 import { stateManager, numberToSuperscript } from './state';
@@ -37,7 +38,21 @@ import { tableEngine } from './engine/tableEngine';
 import { tableThread } from './engine/tableCells';
 import { canvasRunFont, layoutStory } from './engine/storyLayout';
 
-export const MM_TO_PX = 3.7795275591;
+export { MM_TO_PX } from './engine/viewport';
+
+interface FormattedLine {
+  text: string;
+  isLastInPara: boolean;
+  indentX: number;
+  availWidth: number;
+}
+
+interface CanvasTextLayout {
+  allLines: FormattedLine[];
+  dropCapChar: string;
+  dropCapWidth: number;
+  dropCapFontSize: number;
+}
 
 
 const LEADING_HANG_CHARS = new Set(['“', '‘', '"', "'", '«', '‹', '(', '[']);
@@ -129,7 +144,7 @@ export class SpreadCanvas {
   private rulerLeft: HTMLCanvasElement;
   private ctxTop: CanvasRenderingContext2D;
   private ctxLeft: CanvasRenderingContext2D;
-  private rulerPalette!: { background: string; marks: string; labels: string; cursor: string };
+  private rulerPalette!: RulerPalette;
 
   private isDragging: boolean = false;
   private isResizing: boolean = false;
@@ -196,14 +211,6 @@ export class SpreadCanvas {
   private mouseScreenY: number = 0;
 
   // Touch gesture & pinch tracking
-  private lastTouchX: number = 0;
-  private lastTouchY: number = 0;
-  private initialPinchDist: number = 0;
-  private initialPinchZoom: number = 1;
-  private initialPinchPanX: number = 0;
-  private initialPinchPanY: number = 0;
-  private initialPinchMidX: number = 0;
-  private initialPinchMidY: number = 0;
 
   // Zero-allocation pre-allocated reusable coordinate and struct caches
   private _origin = { x: 0, y: 0 };
@@ -241,7 +248,7 @@ export class SpreadCanvas {
   private staticBleedPx: number = 0;
 
   // Text layout memoization
-  private textLayoutCache: Map<string, any> = new Map();
+  private textLayoutCache = new Map<string, CanvasTextLayout>();
 
   // Active in-place canvas overlay editor (WordPad/Figma style)
   private activeInlineEditor: { elementId: string; el: HTMLElement } | null = null;
@@ -301,9 +308,7 @@ export class SpreadCanvas {
       this.scheduleRender();
     });
 
-    collabSession.onPeersChange(() => {
-      this.scheduleRender();
-    });
+    this.windowCleanups.push(collabSession.onPeersChange(() => this.scheduleRender()));
   }
 
   public destroy(): void {
@@ -325,11 +330,11 @@ export class SpreadCanvas {
 
   private addWindowListener<K extends keyof WindowEventMap>(
     type: K,
-    listener: (this: Window, ev: WindowEventMap[K]) => any,
+    listener: (this: Window, ev: WindowEventMap[K]) => void,
     options?: boolean | AddEventListenerOptions
   ) {
-    window.addEventListener(type, listener as any, options);
-    this.windowCleanups.push(() => window.removeEventListener(type, listener as any, options));
+    window.addEventListener(type, listener, options);
+    this.windowCleanups.push(() => window.removeEventListener(type, listener, options));
   }
 
   public scheduleRender() {
@@ -367,154 +372,33 @@ export class SpreadCanvas {
   }
 
   private initEvents() {
-    this.canvas.style.touchAction = 'none';
-    this.canvas.addEventListener('mousedown', this.handleMouseDown.bind(this));
-    this.addWindowListener('mousemove', this.handleMouseMove.bind(this));
-    this.addWindowListener('mouseup', this.handleMouseUp.bind(this));
-    this.canvas.addEventListener('wheel', this.handleWheel.bind(this), { passive: false });
-    this.canvas.addEventListener('dblclick', this.handleDoubleClick.bind(this));
-
-    // Pointer events for Stylus (Apple Pencil, S-Pen, Surface Pen) and Palm Rejection
-    this.canvas.addEventListener('pointerdown', this.handlePointerDown.bind(this));
-    this.addWindowListener('pointermove', this.handlePointerMove.bind(this));
-    this.addWindowListener('pointerup', this.handlePointerUp.bind(this));
-    this.addWindowListener('pointercancel', this.handlePointerCancel.bind(this));
-
-    // Touch support for tablets & landscape touchscreens
-    this.canvas.addEventListener('touchstart', (e: TouchEvent) => {
-      // Palm Rejection: If an active stylus pen is in contact with screen, reject palm touches
-      if (this.activePenPointerId !== null) {
-        if (e.cancelable) e.preventDefault();
-        return;
-      }
-      this.currentPointerType = 'touch';
-
-      if (e.touches.length === 1) {
-        if (e.cancelable) e.preventDefault();
-        const touch = e.touches[0];
-        this.lastTouchX = touch.clientX;
-        this.lastTouchY = touch.clientY;
-        const fakeMouse = {
-          clientX: touch.clientX,
-          clientY: touch.clientY,
-          button: 0,
-          preventDefault: () => { if (e.cancelable) e.preventDefault(); },
-          stopPropagation: () => e.stopPropagation(),
-        } as unknown as MouseEvent;
-        this.handleMouseDown(fakeMouse);
-      } else if (e.touches.length === 2) {
-        if (e.cancelable) e.preventDefault();
+    this.windowCleanups.push(bindCanvasInput(this.canvas, {
+      mouseDown: this.handleMouseDown.bind(this),
+      mouseMove: this.handleMouseMove.bind(this),
+      mouseUp: this.handleMouseUp.bind(this),
+      wheel: this.handleWheel.bind(this),
+      doubleClick: this.handleDoubleClick.bind(this),
+      pointerDown: this.handlePointerDown.bind(this),
+      pointerMove: this.handlePointerMove.bind(this),
+      pointerUp: this.handlePointerUp.bind(this),
+      pointerCancel: this.handlePointerCancel.bind(this),
+      drop: this.handleFileDrop.bind(this),
+      penIsDown: () => this.activePenPointerId !== null,
+      touchPointer: () => { this.currentPointerType = 'touch'; },
+      startPinch: () => {
         this.isPanning = true;
         this.isDrawingNew = false;
         this.isDragging = false;
         this.isResizing = false;
         this.activeHandle = null;
-        const state = stateManager.getState();
-        const t0 = e.touches[0];
-        const t1 = e.touches[1];
-        const midX = (t0.clientX + t1.clientX) / 2;
-        const midY = (t0.clientY + t1.clientY) / 2;
-        this.lastTouchX = midX;
-        this.lastTouchY = midY;
-        this.initialPinchDist = Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY);
-        this.initialPinchZoom = state.zoom;
-        this.initialPinchPanX = state.panX;
-        this.initialPinchPanY = state.panY;
-        this.initialPinchMidX = midX;
-        this.initialPinchMidY = midY;
-      }
-    }, { passive: false });
-
-    this.addWindowListener('touchmove', (e: TouchEvent) => {
-      // Palm Rejection: Ignore touch moves while pen is actively drawing
-      if (this.activePenPointerId !== null) {
-        if (e.cancelable) e.preventDefault();
-        return;
-      }
-      this.currentPointerType = 'touch';
-
-      if (e.touches.length === 1) {
-        if (this.isPanning) {
-          this.isPanning = false;
-        }
-        const touch = e.touches[0];
-        this.lastTouchX = touch.clientX;
-        this.lastTouchY = touch.clientY;
-        const fakeMouse = {
-          clientX: touch.clientX,
-          clientY: touch.clientY,
-          button: 0,
-          preventDefault: () => { if (e.cancelable) e.preventDefault(); },
-          stopPropagation: () => e.stopPropagation(),
-        } as unknown as MouseEvent;
-        this.handleMouseMove(fakeMouse);
-      } else if (e.touches.length === 2) {
-        if (e.cancelable) e.preventDefault();
-        const t0 = e.touches[0];
-        const t1 = e.touches[1];
-        const curDist = Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY);
-        const midX = (t0.clientX + t1.clientX) / 2;
-        const midY = (t0.clientY + t1.clientY) / 2;
-        this.lastTouchX = midX;
-        this.lastTouchY = midY;
-
-        if (this.initialPinchDist > 5) {
-          const scale = curDist / this.initialPinchDist;
-          const targetZoom = Math.max(0.2, Math.min(3.0, this.initialPinchZoom * scale));
-          const rect = this.canvas.getBoundingClientRect();
-          const cX = rect.left + rect.width / 2;
-          const cY = rect.top + rect.height / 2;
-          const zoomRatio = targetZoom / this.initialPinchZoom;
-          const newPanX = (midX - cX) - (this.initialPinchMidX - cX - this.initialPinchPanX) * zoomRatio;
-          const newPanY = (midY - cY) - (this.initialPinchMidY - cY - this.initialPinchPanY) * zoomRatio;
-
-          // Single atomic update eliminates double-render cascade on mobile devices
-          stateManager.setZoomAndPan(targetZoom, newPanX, newPanY);
-        }
-      }
-    }, { passive: false });
-
-    const onTouchEnd = (e: TouchEvent) => {
-      if (this.activePenPointerId !== null) {
-        return;
-      }
-      if (e.touches.length <= 1) {
-        this.isPanning = false;
-      }
-      if (e.touches.length === 0) {
-        const touch = (e.changedTouches && e.changedTouches[0]);
-        const clientX = touch ? touch.clientX : this.lastTouchX;
-        const clientY = touch ? touch.clientY : this.lastTouchY;
-        const fakeMouse = {
-          clientX,
-          clientY,
-          button: 0,
-          preventDefault: () => {},
-          stopPropagation: () => {},
-        } as unknown as MouseEvent;
-        this.handleMouseUp(fakeMouse);
-        return;
-      }
-      const touch = (e.changedTouches && e.changedTouches[0]) || (e.touches && e.touches[0]);
-      const clientX = touch ? touch.clientX : this.lastTouchX;
-      const clientY = touch ? touch.clientY : this.lastTouchY;
-      const fakeMouse = {
-        clientX,
-        clientY,
-        button: 0,
-        preventDefault: () => {},
-        stopPropagation: () => {},
-      } as unknown as MouseEvent;
-      this.handleMouseUp(fakeMouse);
-    };
-    this.addWindowListener('touchend', onTouchEnd);
-    this.addWindowListener('touchcancel', onTouchEnd);
-
-    this.canvas.addEventListener('dragover', (e) => e.preventDefault());
-    this.canvas.addEventListener('drop', this.handleFileDrop.bind(this));
-
-    this.addWindowListener('keydown', (event: KeyboardEvent) => {
-      handleCanvasKeyDown(event, stateManager, {
+      },
+      stopPinch: () => { this.isPanning = false; },
+      getViewport: () => {
+        const { zoom, panX, panY } = stateManager.getState();
+        return { zoom, panX, panY };
+      },
+      setViewport: (zoom, panX, panY) => stateManager.setZoomAndPan(zoom, panX, panY),
+      keyDown: event => handleCanvasKeyDown(event, stateManager, {
         beginSpacePan: () => {
           if (this.isSpacePanning) return false;
           this.isSpacePanning = true;
@@ -529,63 +413,33 @@ export class SpreadCanvas {
           stateManager.setTool('select');
           this.render();
         },
-      });
-    });
-
-    this.addWindowListener('keyup', (e: KeyboardEvent) => {
-      if (e.code === 'Space') {
+      }),
+      keyUp: event => {
+        if (event.code !== 'Space') return;
         this.isSpacePanning = false;
         if (!this.isPanning) {
           const state = stateManager.getState();
           this.canvas.style.cursor = state.activeTool === 'hand' ? 'grab' : 'default';
         }
-      }
-    });
+      },
+    }));
   }
 
   private getSpreadDimensions(state: ProjectState) {
-    const spread = stateManager.getActiveSpread();
-    const numPages = spread.pages.length;
-    const pageWidthMm = state.settings.widthMm;
-    const pageHeightMm = state.settings.heightMm;
-
-    const spreadWidthMm = pageWidthMm * numPages;
-    const spreadHeightMm = pageHeightMm;
-
-    const dims = this._spreadDims;
-    dims.numPages = numPages;
-    dims.pageWidthMm = pageWidthMm;
-    dims.pageHeightMm = pageHeightMm;
-    dims.spreadWidthMm = spreadWidthMm;
-    dims.spreadHeightMm = spreadHeightMm;
-    dims.spreadWidthPx = spreadWidthMm * MM_TO_PX * state.zoom;
-    dims.spreadHeightPx = spreadHeightMm * MM_TO_PX * state.zoom;
-
-    return dims;
+    const { widthMm, heightMm } = state.settings;
+    return calculateSpreadGeometry(widthMm, heightMm, stateManager.getActiveSpread().pages.length, state.zoom, this._spreadDims);
   }
 
   private getSpreadScreenOrigin(state: ProjectState) {
     const rect = this.canvas.getBoundingClientRect();
-    const { spreadWidthPx, spreadHeightPx } = this.getSpreadDimensions(state);
-
-    const canvasW = rect.width > 0 ? rect.width : (this.canvas.width || spreadWidthPx);
-    const canvasH = rect.height > 0 ? rect.height : (this.canvas.height || spreadHeightPx);
-
-    const centerX = canvasW / 2 + state.panX;
-    const centerY = canvasH / 2 + state.panY;
-
-    this._origin.x = centerX - spreadWidthPx / 2;
-    this._origin.y = centerY - spreadHeightPx / 2;
-
-    return this._origin;
+    const dimensions = this.getSpreadDimensions(state);
+    const width = rect.width > 0 ? rect.width : this.canvas.width || dimensions.spreadWidthPx;
+    const height = rect.height > 0 ? rect.height : this.canvas.height || dimensions.spreadHeightPx;
+    return getSpreadScreenOrigin({ width, height }, dimensions, state, this._origin);
   }
 
   private screenToSpreadMm(screenX: number, screenY: number, state: ProjectState) {
-    const origin = this.getSpreadScreenOrigin(state);
-    const pxPerMm = MM_TO_PX * state.zoom;
-    this._pointMm.x = (screenX - origin.x) / pxPerMm;
-    this._pointMm.y = (screenY - origin.y) / pxPerMm;
-    return this._pointMm;
+    return screenToSpreadMm(screenX, screenY, this.getSpreadScreenOrigin(state), state.zoom, this._pointMm);
   }
 
   private findPageAtMm(spreadMmX: number, spreadMmY: number, state: ProjectState): { page: Page; localX: number; localY: number } | null {
@@ -608,7 +462,7 @@ export class SpreadCanvas {
     return null;
   }
 
-  private handleMouseDown(e: MouseEvent) {
+  private handleMouseDown(e: CanvasMouseDown) {
     if (this.activeInlineEditor) {
       this.closeInlineTextEditor(true);
     }
@@ -617,7 +471,7 @@ export class SpreadCanvas {
     const screenX = e.clientX - rect.left;
     const screenY = e.clientY - rect.top;
 
-    if (e.button === 1 || state.activeTool === 'hand' || this.isSpacePanning || (e as any).spaceKey) {
+    if (e.button === 1 || state.activeTool === 'hand' || this.isSpacePanning) {
       this.isPanning = true;
       this.panStartX = e.clientX - state.panX;
       this.panStartY = e.clientY - state.panY;
@@ -897,7 +751,7 @@ export class SpreadCanvas {
     }
   }
 
-  private handleMouseMove(e: MouseEvent) {
+  private handleMouseMove(e: CanvasMouseMove) {
     const state = stateManager.getState();
     const rect = this.canvas.getBoundingClientRect();
     const screenX = e.clientX - rect.left;
@@ -1344,13 +1198,11 @@ export class SpreadCanvas {
     return val;
   }
 
-  private handleMouseUp(e: MouseEvent) {
+  private handleMouseUp(e: CanvasMouseUp) {
     const state = stateManager.getState();
     const rect = this.canvas.getBoundingClientRect();
-    const clientX = (e && typeof e.clientX === 'number' && !isNaN(e.clientX)) ? e.clientX : this.lastTouchX;
-    const clientY = (e && typeof e.clientY === 'number' && !isNaN(e.clientY)) ? e.clientY : this.lastTouchY;
-    const screenX = clientX - rect.left;
-    const screenY = clientY - rect.top;
+    const screenX = e.clientX - rect.left;
+    const screenY = e.clientY - rect.top;
 
     const hadInteractiveMod = this.isDragging || this.isResizing;
     if (hadInteractiveMod) {
@@ -1358,7 +1210,7 @@ export class SpreadCanvas {
     }
 
     if (this.isPencilDrawing) {
-      this.handlePencilMouseUp(e);
+      this.handlePencilMouseUp();
     }
 
     if (this.isPanning) {
@@ -2180,7 +2032,7 @@ export class SpreadCanvas {
     return null;
   }
 
-  private handlePenMouseDown(mmX: number, mmY: number, screenX: number, screenY: number, e: MouseEvent) {
+  private handlePenMouseDown(mmX: number, mmY: number, screenX: number, screenY: number, e: CanvasMouseDown) {
     const state = stateManager.getState();
     const spread = stateManager.getActiveSpread();
     const pageHit = this.findPageAtMm(mmX, mmY, state);
@@ -2290,7 +2142,7 @@ export class SpreadCanvas {
       this.activePenPointerId = null;
     }
     if (this.isPencilDrawing) {
-      this.handlePencilMouseUp(e);
+      this.handlePencilMouseUp();
     }
   }
 
@@ -2306,7 +2158,7 @@ export class SpreadCanvas {
     }
   }
 
-  private handlePencilMouseDown(mmX: number, mmY: number, screenX: number, screenY: number, e: MouseEvent | PointerEvent) {
+  private handlePencilMouseDown(mmX: number, mmY: number, screenX: number, screenY: number, e: CanvasMouseDown | PointerEvent) {
     if (this.isPencilDrawing) return;
     const state = stateManager.getState();
     const pageHit = this.findPageAtMm(mmX, mmY, state);
@@ -2319,7 +2171,7 @@ export class SpreadCanvas {
     const pageStartMm = pageIdx * pageWidthMm;
     const localX = mmX - pageStartMm;
     const localY = mmY;
-    const pressure = (e as PointerEvent).pressure && (e as PointerEvent).pressure > 0 ? (e as PointerEvent).pressure : 0.5;
+    const pressure = 'pressure' in e && e.pressure > 0 ? e.pressure : 0.5;
 
     this.isPencilDrawing = true;
     this.pencilTargetPage = targetPage;
@@ -2327,7 +2179,7 @@ export class SpreadCanvas {
     this.scheduleRender();
   }
 
-  private handlePencilMouseMove(e: MouseEvent | PointerEvent) {
+  private handlePencilMouseMove(e: CanvasMouseMove | PointerEvent) {
     if (!this.isPencilDrawing || !this.pencilTargetPage) return;
     const state = stateManager.getState();
     const rect = this.canvas.getBoundingClientRect();
@@ -2341,7 +2193,7 @@ export class SpreadCanvas {
     const pageStartMm = pageIdx * pageWidthMm;
     const localX = mmX - pageStartMm;
     const localY = mmY;
-    const pressure = (e as PointerEvent).pressure && (e as PointerEvent).pressure > 0 ? (e as PointerEvent).pressure : 0.5;
+    const pressure = 'pressure' in e && e.pressure > 0 ? e.pressure : 0.5;
 
     const lastPt = this.pencilStrokePoints[this.pencilStrokePoints.length - 1];
     if (!lastPt || Math.hypot(localX - lastPt.x, localY - lastPt.y) >= 0.4) {
@@ -2350,7 +2202,7 @@ export class SpreadCanvas {
     }
   }
 
-  private handlePencilMouseUp(e?: MouseEvent | PointerEvent) {
+  private handlePencilMouseUp() {
     if (!this.isPencilDrawing) return;
     this.isPencilDrawing = false;
     const points = [...this.pencilStrokePoints];
@@ -3159,7 +3011,7 @@ export class SpreadCanvas {
         }
 
         const pStyle = text.paragraphStyleId ? state.paragraphStyles.find(s => s.id === text.paragraphStyleId) : undefined;
-        const activeGrepRules = pStyle?.grepStyles || (text as any).grepStyles;
+        const activeGrepRules = pStyle?.grepStyles || text.grepStyles;
         if (pStyle?.shadingColor) {
           const sPaddingPx = (pStyle.shadingPaddingMm || 1.5) * pxPerMm;
           ctx.save();
@@ -3180,16 +3032,16 @@ export class SpreadCanvas {
         ctx.font = `${fontSizePx}px ${text.fontFamily || 'serif'}`;
         ctx.textBaseline = 'top';
 
-        if (text.letterSpacingPt && (ctx as any).letterSpacing !== undefined) {
-          (ctx as any).letterSpacing = `${(text.letterSpacingPt * (96 / 72) * state.zoom).toFixed(2)}px`;
-        } else if ((ctx as any).letterSpacing !== undefined) {
-          (ctx as any).letterSpacing = '0px';
+        if (text.letterSpacingPt && ctx.letterSpacing !== undefined) {
+          ctx.letterSpacing = `${(text.letterSpacingPt * (96 / 72) * state.zoom).toFixed(2)}px`;
+        } else if (ctx.letterSpacing !== undefined) {
+          ctx.letterSpacing = '0px';
         }
 
-        if (text.openTypeFeatures?.smallCaps && (ctx as any).fontVariantCaps !== undefined) {
-          (ctx as any).fontVariantCaps = 'all-small-caps';
-        } else if ((ctx as any).fontVariantCaps !== undefined) {
-          (ctx as any).fontVariantCaps = 'normal';
+        if (text.openTypeFeatures?.smallCaps && ctx.fontVariantCaps !== undefined) {
+          ctx.fontVariantCaps = 'all-small-caps';
+        } else if (ctx.fontVariantCaps !== undefined) {
+          ctx.fontVariantCaps = 'normal';
         }
 
         // Baseline Grid snapping parameters
@@ -3248,13 +3100,6 @@ export class SpreadCanvas {
           }
           isOverflowing = layout.overset;
         } else {
-          interface FormattedLine {
-            text: string;
-            isLastInPara: boolean;
-            indentX: number;
-            availWidth: number;
-          }
-
           const otKey = text.openTypeFeatures ? Object.entries(text.openTypeFeatures).filter(([_, v]) => v).map(([k]) => k).sort().join(',') : '';
           const layoutKey = `${text.id}_${processedText}_${text.fontFamily}_${text.fontSizePt}_${text.lineHeight}_${text.letterSpacingPt || 0}_${text.columns}_${text.columnGutterMm}_${text.paddingMm}_${elScreenW}_${elScreenH}_${totalFootnoteHeightPx}_${text.dropCapLines}_${Boolean(text.opticalMarginAlignment)}_${Boolean(text.balanceColumns)}_${otKey}_${state.zoom}`;
 
@@ -3992,9 +3837,9 @@ export class SpreadCanvas {
         ctx.font = 'bold 10px Inter, sans-serif';
         const badgeWidth = ctx.measureText(peer.name).width + 10;
         ctx.fillStyle = peer.color || '#f43f5e';
-        if (typeof (ctx as any).roundRect === 'function') {
+        if (typeof ctx.roundRect === 'function') {
           ctx.beginPath();
-          (ctx as any).roundRect(peerScreenX + 12, peerScreenY + 12, badgeWidth, 18, 4);
+          ctx.roundRect(peerScreenX + 12, peerScreenY + 12, badgeWidth, 18, 4);
           ctx.fill();
         } else {
           ctx.fillRect(peerScreenX + 12, peerScreenY + 12, badgeWidth, 18);
@@ -4029,7 +3874,7 @@ export class SpreadCanvas {
           ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
           ctx.fillRect(sx, sy, sw, sh);
           for (const el of spread.elements) {
-            const spotCol = (el as any).spotColor;
+            const spotCol = el.spotColor;
             if (spotCol) {
               const pageIdx = Math.max(0, spread.pages.findIndex(p => p.id === el.pageId));
               const elX = origin.x + (pageIdx * pageWidthMm + el.x) * pxPerMm;
@@ -4113,13 +3958,8 @@ export class SpreadCanvas {
     let hasExceedance = false;
 
     for (const el of spread.elements) {
-      const colorsToCheck = [
-        (el as any).fillColor,
-        (el as any).strokeColor,
-        (el as any).color,
-        (el as any).backgroundColor,
-        (el as any).borderColor,
-      ].filter(Boolean);
+      const colorsToCheck = el.type === 'shape' || el.type === 'path' ? [el.fillColor, el.strokeColor]
+        : el.type === 'text' ? [el.color, el.backgroundColor, el.borderColor] : [el.borderColor];
 
       let maxTac = 0;
       for (const col of colorsToCheck) {
@@ -4416,9 +4256,9 @@ export class SpreadCanvas {
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
     ctx.lineWidth = 1;
 
-    if (typeof (ctx as any).roundRect === 'function') {
+    if (typeof ctx.roundRect === 'function') {
       ctx.beginPath();
-      (ctx as any).roundRect(bx, by, pillW, pillH, 5);
+      ctx.roundRect(bx, by, pillW, pillH, 5);
       ctx.fill();
       ctx.stroke();
     } else {
@@ -4542,9 +4382,9 @@ export class SpreadCanvas {
       ctx.strokeStyle = '#00e5ff';
       ctx.lineWidth = 1;
 
-      if (typeof (ctx as any).roundRect === 'function') {
+      if (typeof ctx.roundRect === 'function') {
         ctx.beginPath();
-        (ctx as any).roundRect(badgeX, badgeY, badgeW, badgeH, 3);
+        ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 3);
         ctx.fill();
         ctx.stroke();
       } else {
@@ -4699,86 +4539,8 @@ export class SpreadCanvas {
 
   public drawRulers() {
     const state = stateManager.getState();
-    const origin = this.getSpreadScreenOrigin(state);
-    const pxPerMm = MM_TO_PX * state.zoom;
-
-    const ctxT = this.ctxTop;
-    const wT = this.rulerTop.getBoundingClientRect().width;
-    ctxT.fillStyle = this.rulerPalette.background;
-    ctxT.fillRect(0, 0, wT, 24);
-
-    ctxT.strokeStyle = this.rulerPalette.marks;
-    ctxT.fillStyle = this.rulerPalette.labels;
-    ctxT.font = '9px Inter, sans-serif';
-    ctxT.textAlign = 'left';
-    ctxT.lineWidth = 1;
-
-    const startMmX = Math.floor(-origin.x / pxPerMm);
-    const endMmX = Math.ceil((wT - origin.x) / pxPerMm);
-
-    for (let mm = startMmX; mm <= endMmX; mm++) {
-      const screenX = origin.x + (mm * pxPerMm);
-      if (mm % 50 === 0) {
-        ctxT.beginPath();
-        ctxT.moveTo(screenX, 10);
-        ctxT.lineTo(screenX, 24);
-        ctxT.stroke();
-        ctxT.fillText(`${mm}`, screenX + 2, 9);
-      } else if (mm % 10 === 0) {
-        ctxT.beginPath();
-        ctxT.moveTo(screenX, 16);
-        ctxT.lineTo(screenX, 24);
-        ctxT.stroke();
-      }
-    }
-
-    const cursorTopX = origin.x + (this.mouseMmX * pxPerMm);
-    ctxT.strokeStyle = this.rulerPalette.cursor;
-    ctxT.beginPath();
-    ctxT.moveTo(cursorTopX, 0);
-    ctxT.lineTo(cursorTopX, 24);
-    ctxT.stroke();
-
-    const ctxL = this.ctxLeft;
-    const hL = this.rulerLeft.getBoundingClientRect().height;
-    ctxL.fillStyle = this.rulerPalette.background;
-    ctxL.fillRect(0, 0, 24, hL);
-
-    ctxL.strokeStyle = this.rulerPalette.marks;
-    ctxL.fillStyle = this.rulerPalette.labels;
-    ctxL.font = '9px Inter, sans-serif';
-    ctxL.textAlign = 'right';
-    ctxL.lineWidth = 1;
-
-    const startMmY = Math.floor(-origin.y / pxPerMm);
-    const endMmY = Math.ceil((hL - origin.y) / pxPerMm);
-
-    for (let mm = startMmY; mm <= endMmY; mm++) {
-      const screenY = origin.y + (mm * pxPerMm);
-      if (mm % 50 === 0) {
-        ctxL.beginPath();
-        ctxL.moveTo(10, screenY);
-        ctxL.lineTo(24, screenY);
-        ctxL.stroke();
-        ctxL.save();
-        ctxL.translate(9, screenY - 2);
-        ctxL.rotate(-Math.PI / 2);
-        ctxL.fillText(`${mm}`, 0, 0);
-        ctxL.restore();
-      } else if (mm % 10 === 0) {
-        ctxL.beginPath();
-        ctxL.moveTo(16, screenY);
-        ctxL.lineTo(24, screenY);
-        ctxL.stroke();
-      }
-    }
-
-    const cursorLeftY = origin.y + (this.mouseMmY * pxPerMm);
-    ctxL.strokeStyle = this.rulerPalette.cursor;
-    ctxL.beginPath();
-    ctxL.moveTo(0, cursorLeftY);
-    ctxL.lineTo(24, cursorLeftY);
-    ctxL.stroke();
+    drawCanvasRulers(this.rulerTop, this.rulerLeft, this.ctxTop, this.ctxLeft,
+      this.getSpreadScreenOrigin(state), state.zoom, { x: this.mouseMmX, y: this.mouseMmY }, this.rulerPalette);
   }
 
   private renderVectorPath(

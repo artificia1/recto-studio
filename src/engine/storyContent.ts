@@ -27,6 +27,17 @@ export function compactRuns(runs: StoryRun[]): StoryRun[] {
   return result.length ? result : [{ text: '' }];
 }
 
+function sliceParagraph(paragraph: StoryParagraph, start: number, end: number): StoryParagraph {
+  let offset = 0;
+  const runs = paragraph.runs.flatMap(run => {
+    const a = Math.max(0, start - offset);
+    const b = Math.min(run.text.length, end - offset);
+    offset += run.text.length;
+    return b > a ? [cutRun(run, a, b)] : [];
+  });
+  return { ...paragraph, runs: compactRuns(runs) };
+}
+
 /** Offsets use UTF-16, matching textarea selectionStart/selectionEnd. */
 export function sliceStory(content: StoryContent, start: number, end: number): StoryContent {
   const paragraphs: StoryParagraph[] = [];
@@ -34,18 +45,57 @@ export function sliceStory(content: StoryContent, start: number, end: number): S
   for (const paragraph of content.paragraphs) {
     const length = paragraph.runs.reduce((n, r) => n + r.text.length, 0);
     if (offset <= end && offset + length >= start) {
-      let runOffset = offset;
-      const runs = paragraph.runs.flatMap(run => {
-        const a = Math.max(0, start - runOffset);
-        const b = Math.min(run.text.length, end - runOffset);
-        runOffset += run.text.length;
-      return b > a ? [cutRun(run, a, b)] : [];
-      });
-      paragraphs.push({ ...paragraph, runs: compactRuns(runs) });
+      paragraphs.push(sliceParagraph(paragraph, start - offset, end - offset));
     }
     offset += length + 1;
+    if (offset > end) break;
   }
   return { version: 1, paragraphs: paragraphs.length ? paragraphs : [{ runs: [{ text: '' }] }] };
+}
+
+/** Index paragraph positions once for a threaded layout pass. */
+export function indexStory(content: StoryContent) {
+  let offset = 0;
+  const positions = content.paragraphs.map(paragraph => {
+    const start = offset;
+    const end = start + paragraph.runs.reduce((length, run) => length + run.text.length, 0);
+    offset = end + 1;
+    return { start, end };
+  });
+  const full = content.paragraphs.map(paragraph => sliceParagraph(paragraph, 0, Infinity));
+
+  const firstParagraphAt = (start: number) => {
+    let low = 0;
+    let high = positions.length;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      if (positions[mid].end < start) low = mid + 1;
+      else high = mid;
+    }
+    return low;
+  };
+
+  const slice = (start: number, end: number): StoryContent => {
+    const paragraphs: StoryParagraph[] = [];
+    for (let index = firstParagraphAt(start); index < positions.length && positions[index].start <= end; index++) {
+      const bounds = positions[index];
+      // Full slices share immutable copies. Slice boundary paragraphs from the
+      // original runs to preserve marker identity and offsets.
+      paragraphs.push(start <= bounds.start && end >= bounds.end ? full[index]
+        : sliceParagraph(content.paragraphs[index], start - bounds.start, end - bounds.start));
+    }
+    return { version: 1, paragraphs: paragraphs.length ? paragraphs : [{ runs: [{ text: '' }] }] };
+  };
+
+  const from = (start: number): Pick<StoryParagraph[], 'length' | 'at'> => {
+    const index = firstParagraphAt(start);
+    if (index === full.length) return [{ runs: [{ text: '' }] }];
+    const first = start <= positions[index].start ? full[index]
+      : sliceParagraph(content.paragraphs[index], start - positions[index].start, Infinity);
+    return { length: full.length - index, at: offset => offset === 0 ? first : full[index + offset] };
+  };
+
+  return { slice, from };
 }
 
 /** Replace one edit while retaining formatting outside the edit and at the insertion point. */

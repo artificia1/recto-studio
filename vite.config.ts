@@ -12,6 +12,7 @@ export default defineConfig({
     // The native SVG rasterizer is loaded by Node's export path only.
     exclude: ['@resvg/resvg-js'],
   },
+  worker: { format: 'es' },
   build: {
     manifest: true,
     rollupOptions: {

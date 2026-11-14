@@ -3,7 +3,7 @@ import { resolveMaster } from './masterInheritance';
 import { masterTargetPage } from './pageLabels';
 import { segmentTextWithGrep } from './legacyTypography';
 
-export function publicationWrapObjects(state: ProjectState, spread: Spread): CanvasElement[] {
+export function publicationWrapObjects(state: Pick<ProjectState, 'masterSpreads' | 'layers'>, spread: Spread): CanvasElement[] {
   const master = resolveMaster(state.masterSpreads, spread.masterSpreadId);
   const inherited = (master?.elements || []).flatMap(element => {
     const page = masterTargetPage(master!.pages, spread.pages, element.pageId);

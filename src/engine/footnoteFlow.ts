@@ -1,10 +1,12 @@
-import type { Footnote, ProjectState, StoryContent, TextElement } from '../types';
+import type { DocumentSettings, Footnote, StoryContent, TextElement } from '../types';
 import { measureStoryText, type StoryLine } from './storyLayout';
 
 export interface NoteContinuation { note: Footnote; rows: string[]; started: boolean }
 interface NoteLine { text: string; noteId: string; column: number; x: number; y: number }
 
-export function footnoteGeometry(state: ProjectState, frame: TextElement) {
+type NoteSettings = { settings: Pick<DocumentSettings, 'footnoteSettings'> };
+
+export function footnoteGeometry(state: NoteSettings, frame: TextElement) {
   const size = state.settings.footnoteSettings?.fontSizePt || 8;
   const family = state.settings.footnoteSettings?.fontFamily || frame.fontFamily;
   const columns = frame.spanColumns ? 1 : Math.max(1, frame.splitColumns || frame.columns || 1);
@@ -37,7 +39,7 @@ export function wrapFootnote(text: string, width: number, size: number, family: 
   return rows;
 }
 
-export function composeFootnotes(state: ProjectState, frame: TextElement, content: StoryContent,
+export function composeFootnotes(state: NoteSettings, frame: TextElement, content: StoryContent,
   body: StoryLine[], notes: Footnote[], incoming: NoteContinuation[]) {
   const geometry = footnoteGeometry(state, frame);
   const { columns, columnWidth, lineHeight, gutter, size, family } = geometry;

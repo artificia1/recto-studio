@@ -121,9 +121,14 @@ export function TopBar({
     return () => window.removeEventListener('keydown', handleSaveShortcut);
   }, []);
 
+  const fullscreenDocument: Document & {
+    webkitFullscreenElement?: Element;
+    webkitExitFullscreen?(): void;
+  } = document;
+
   useEffect(() => {
     const handleFsChange = () => {
-      setIsFullscreen(Boolean(document.fullscreenElement || (document as any).webkitFullscreenElement));
+      setIsFullscreen(Boolean(document.fullscreenElement || fullscreenDocument.webkitFullscreenElement));
     };
     document.addEventListener('fullscreenchange', handleFsChange);
     document.addEventListener('webkitfullscreenchange', handleFsChange);
@@ -135,18 +140,18 @@ export function TopBar({
 
   const handleToggleFullscreen = () => {
     try {
-      if (!document.fullscreenElement && !(document as any).webkitFullscreenElement) {
-        const root = document.documentElement;
+      if (!document.fullscreenElement && !fullscreenDocument.webkitFullscreenElement) {
+        const root: HTMLElement & { webkitRequestFullscreen?(): void } = document.documentElement;
         if (root.requestFullscreen) {
           root.requestFullscreen().catch(() => {});
-        } else if ((root as any).webkitRequestFullscreen) {
-          (root as any).webkitRequestFullscreen();
+        } else if (root.webkitRequestFullscreen) {
+          root.webkitRequestFullscreen();
         }
       } else {
         if (document.exitFullscreen) {
           document.exitFullscreen().catch(() => {});
-        } else if ((document as any).webkitExitFullscreen) {
-          (document as any).webkitExitFullscreen();
+        } else if (fullscreenDocument.webkitExitFullscreen) {
+          fullscreenDocument.webkitExitFullscreen();
         }
       }
     } catch {

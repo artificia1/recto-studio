@@ -17,8 +17,9 @@ export function Toolbar({ state }: ToolbarProps) {
   const selectedEl = state.selectedElementId
     ? activeSpread.elements.find((e) => e.id === state.selectedElementId)
     : null;
-  const fillColor = (selectedEl as any)?.backgroundColor || (selectedEl as any)?.fillColor || '#ffffff';
-  const strokeColor = (selectedEl as any)?.borderColor || (selectedEl as any)?.strokeColor || '#111111';
+  const fillColor = (selectedEl?.type === 'text' ? selectedEl.backgroundColor
+    : selectedEl?.type === 'shape' || selectedEl?.type === 'path' ? selectedEl.fillColor : undefined) || '#ffffff';
+  const strokeColor = (selectedEl && ('borderColor' in selectedEl ? selectedEl.borderColor : selectedEl.strokeColor)) || '#111111';
 
   return (
     <aside className="toolbar-left">
@@ -131,11 +132,10 @@ export function Toolbar({ state }: ToolbarProps) {
             className="swatch-swap-btn"
             onClick={(e) => {
               e.stopPropagation();
-              if (selectedEl) {
-                stateManager.updateElement(selectedEl.id, {
-                  backgroundColor: strokeColor,
-                  borderColor: fillColor,
-                } as any);
+              if (selectedEl?.type === 'text') {
+                stateManager.updateElement(selectedEl.id, { backgroundColor: strokeColor, borderColor: fillColor });
+              } else if (selectedEl?.type === 'shape' || selectedEl?.type === 'path') {
+                stateManager.updateElement(selectedEl.id, { fillColor: strokeColor, strokeColor: fillColor });
               }
             }}
             title="Swap Fill and Stroke (Shift+X)"

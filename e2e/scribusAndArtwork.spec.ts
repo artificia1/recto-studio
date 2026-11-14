@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { gzipSync } from 'node:zlib';
-import { importProject, savedProject } from './fixtures';
+import { importProject, projectFixture, savedProject } from './fixtures';
 import { scribusFixture } from '../tests/scribusFixture';
 
 test('reviews a compressed Scribus import before opening an editable project', async ({ page }) => {
@@ -38,6 +38,44 @@ test('saves a selection to the artwork library and places it with a new identity
   const elements = state.spreads[0].elements;
   expect(elements).toHaveLength(2);
   expect(elements[1]).toMatchObject({ text: elements[0].text, id: expect.stringMatching(/^artwork-/), pageId: elements[0].pageId });
+});
+
+test('migrates legacy artwork and saves even when localStorage is full', async ({ page }) => {
+  const artwork = {
+    format: 'recto-artwork-v1',
+    id: '8ab59977-7f45-4ef0-ae91-1e839398d09b',
+    name: 'Legacy artwork',
+    elements: [{ ...projectFixture().spreads[0].elements[0], pageId: 'artwork-page' }],
+  };
+  await page.addInitScript(artwork => {
+    if (!sessionStorage.getItem('legacy-artwork-seeded')) {
+      localStorage.setItem('recto-artwork-library-v1', JSON.stringify([artwork]));
+      sessionStorage.setItem('legacy-artwork-seeded', 'true');
+    }
+    Storage.prototype.setItem = () => { throw new DOMException('Storage is full', 'QuotaExceededError'); };
+  }, artwork);
+
+  await page.goto('./');
+  await importProject(page);
+  const openLibrary = async () => {
+    await page.getByRole('button', { name: /Templates/ }).click();
+    await page.getByText('Artwork library', { exact: true }).click();
+    return page.locator('details').filter({ has: page.getByText('Artwork library', { exact: true }) });
+  };
+  const library = await openLibrary();
+  await expect(library.getByText('Legacy artwork', { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('recto-artwork-library-v1'))).toBeNull();
+  await library.getByLabel('Artwork name').fill('New artwork');
+  await library.getByRole('button', { name: 'Save selection' }).click();
+  await expect(library.getByRole('status')).toContainText('Saved New artwork');
+  await page.reload();
+  const reopened = await openLibrary();
+  await expect(reopened.getByText('Legacy artwork', { exact: true })).toBeVisible();
+  const entry = reopened.locator('.publication-panel').filter({ hasText: 'New artwork' });
+  await expect(entry).toBeVisible();
+  await entry.getByRole('button', { name: 'Remove', exact: true }).click();
+  await expect(entry).toHaveCount(0);
+  await expect(reopened.getByText('Legacy artwork', { exact: true })).toBeVisible();
 });
 
 test('keeps an excluded layer visible and editable while saving its publication setting', async ({ page }) => {

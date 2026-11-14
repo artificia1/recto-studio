@@ -124,7 +124,7 @@ export function LayersTab({ state }: LayersTabProps) {
             onChange={(e) => {
               const val = (e.target as HTMLSelectElement).value;
               if (val) {
-                stateManager.addFinishingLayer(val as any);
+                stateManager.addFinishingLayer(val as Parameters<typeof stateManager.addFinishingLayer>[0]);
                 (e.target as HTMLSelectElement).value = '';
               }
             }}

@@ -45,15 +45,15 @@ import {
 } from '../types/index';
 import { editStory, formatStory, plainStory, sliceStory, storyText, styleStoryParagraphs } from '../engine/storyContent';
 import { layoutStory } from '../engine/storyLayout';
-import { publicationPreflight } from '../engine/publicationPreflight';
+import { calculateTacPercentage, runEditorPreflight } from '../engine/editorPreflight';
 import { instantiateMasterItem, resolveMaster } from '../engine/masterInheritance';
 import { arrangeSelection, lockedArtworkIds, restorePlacedPasteboard, selectionUnits } from '../engine/selectionGeometry';
 import { elementUsesFont, primaryFont, visitDocumentFonts } from '../engine/documentFonts';
 import { prepareSpreadTemplate } from '../engine/spreadTemplate';
 import { validateBinding, type DataRefreshChange } from '../engine/dataRefresh';
 import { contentOf, insertRun, layoutFrameNotes, migrateLegacyNotes, noteMarker, notesForFrame, publicationHeadings, reflowStoryState, refreshPublication, storyHeads, textFrames } from '../engine/publicationReferences';
+import { reconcileFrameStoryEdits } from './frameStoryEdits';
 import { generateEan13DataUrl } from '../engine/barcodeEngine';
-import { generateQrDataUrl } from '../engine/qrEngine';
 import { RectoDB } from './persistence';
 import { Autosave } from './autosave';
 import { isDesktop } from '../desktop';
@@ -295,28 +295,9 @@ export class StateManager {
     }
   }
 
-  private pushHistory() {
-    // Older editing commands still mutate the plain frame view. Reconcile those
-    // edits before recording history so formatting and canonical copy stay in sync.
-    const edits = new Map<string, { frame: TextElement; text: string; start: number; end: number }[]>();
-    for (const spread of this.state.spreads) for (const frame of spread.elements) {
-      if (frame.type !== 'text' || !frame.textContent || frame.text === storyText(frame.textContent)) continue;
-      const head = this.getStoryHead(frame.id);
-      if (!head) continue;
-      const group = edits.get(head.id) || [];
-      group.push({ frame, text: frame.text, start: frame.storyStart ?? 0, end: frame.storyEnd ?? frame.text.length });
-      edits.set(head.id, group);
-    }
-    for (const [id, group] of edits) {
-      const head = this.getStoryHead(id)!;
-      const content = this.getStoryContent(id);
-      let text = storyText(content);
-      for (const edit of group.sort((a, b) => b.start - a.start)) text = text.slice(0, edit.start) + edit.text + text.slice(edit.end);
-      head.storyContent = editStory(content, text);
-      head.rawStoryText = storyText(head.storyContent);
-      this.reflowStory(id);
-    }
-    this.reflowFormattedStories();
+  private pushHistory(composedStoryId?: string) {
+    reconcileFrameStoryEdits(this.state, id => this.getStoryHead(id), id => this.getStoryContent(id), id => this.reflowStory(id));
+    this.reflowFormattedStories(composedStoryId);
     const autoHeads = this.state.spreads.flatMap(spread => spread.elements)
       .filter((element): element is TextElement => element.type === 'text' && !element.prevFrameId && !!element.autoExtendStory)
       .map(element => element.id);
@@ -330,7 +311,7 @@ export class StateManager {
         if (head) head.autoPaginationError = error instanceof Error ? error.message : String(error);
       }
     }
-    this.refreshPublicationReferences(false);
+    this.refreshPublicationReferences(false, composedStoryId);
     this.history.push(this.state);
   }
 
@@ -570,10 +551,10 @@ export class StateManager {
     return this.createLayer(config.name, config.colorHex);
   }
 
-  public insertBarcode(rawDigits: string, options: { widthMm?: number; heightMm?: number } = {}) {
+  public insertBarcode(rawDigits: string, options: { widthMm?: number; heightMm?: number; showText?: boolean } = {}) {
     const spread = this.getActiveSpread();
     const page = spread.pages[0];
-    const dataUrl = generateEan13DataUrl(rawDigits);
+    const dataUrl = generateEan13DataUrl(rawDigits, options);
     const w = options.widthMm || 38;
     const h = options.heightMm || 26;
     const barcodeEl: ImageElement = {
@@ -1520,6 +1501,42 @@ export class StateManager {
     this.setStoryContent(frameId, editStory(this.getStoryContent(frameId), text));
   }
 
+  public async setStoryTextInBackground(frameId: string, text: string, signal: AbortSignal): Promise<void> {
+    const revision = this.documentRevision;
+    const source = this.state;
+    const head = this.assertStoryEditable(frameId);
+    const stillCurrent = () => {
+      if (signal.aborted) return false;
+      if (revision !== this.documentRevision || source !== this.state) throw new Error('The document changed during layout. Review the latest manuscript before applying this edit.');
+      return true;
+    };
+    const { prepareStoryComposition, fontMeasurementsMatch } = await import('../engine/storyComposition');
+    if (!stillCurrent()) return;
+    const request = prepareStoryComposition(source, head, text);
+    if (!request) { this.setStoryText(frameId, text); return; }
+    const { requestStoryComposition } = await import('../engine/storyCompositionClient');
+    if (!stillCurrent()) return;
+    const result = await requestStoryComposition(request, signal);
+    if (!stillCurrent()) return;
+    if (!result || !fontMeasurementsMatch(request.probes) ||
+      request.fonts.some(asset => fontManager.getFontAsset(asset.family) !== asset)) {
+      this.setStoryText(frameId, text);
+      return;
+    }
+    this.assertStoryEditable(frameId);
+    const frames = new Map(textFrames(this.state).map(frame => [frame.id, frame]));
+    if (result.frames.some(composition => !frames.has(composition.id))) throw new Error('A linked story frame changed during layout.');
+    head.storyContent = result.content;
+    head.rawStoryText = result.rawText;
+    for (const { id, ...composition } of result.frames) {
+      const frame = frames.get(id)!;
+      Object.assign(frame, composition);
+      if (frame !== head) { delete frame.storyContent; delete frame.rawStoryText; }
+    }
+    this.pushHistory(head.id);
+    this.notify();
+  }
+
   public formatStoryRange(frameId: string, start: number, end: number, formatting: TextFormatting & { characterStyleId?: string }) {
     if (end <= start) return;
     this.setStoryContent(frameId, formatStory(this.getStoryContent(frameId), start, end, formatting));
@@ -1537,9 +1554,9 @@ export class StateManager {
     this.notify();
   }
 
-  public reflowFormattedStories() {
+  public reflowFormattedStories(excludedStoryId?: string) {
     for (const spread of this.state.spreads) for (const frame of spread.elements) {
-      if (frame.type === 'text' && frame.storyContent && !frame.prevFrameId) this.reflowStory(frame.id);
+      if (frame.type === 'text' && frame.storyContent && !frame.prevFrameId && frame.id !== excludedStoryId) this.reflowStory(frame.id);
     }
   }
 
@@ -2792,321 +2809,12 @@ export class StateManager {
     return JSON.stringify(this.state, null, 2);
   }
 
-  public calculateTacPercentage(colorStr?: string): number {
-  if (!colorStr || colorStr === 'transparent' || colorStr === 'none') return 0;
-  const str = colorStr.trim();
-  const cmykMatch = str.match(/cmyk\s*\(\s*([\d.]+)%?\s*,\s*([\d.]+)%?\s*,\s*([\d.]+)%?\s*,\s*([\d.]+)%?\s*\)/i);
-  if (cmykMatch) {
-    const c = parseFloat(cmykMatch[1]) || 0;
-    const m = parseFloat(cmykMatch[2]) || 0;
-    const y = parseFloat(cmykMatch[3]) || 0;
-    const k = parseFloat(cmykMatch[4]) || 0;
-    return Math.round(c + m + y + k);
+  public calculateTacPercentage(color?: string): number {
+    return calculateTacPercentage(color);
   }
-
-  let hex = str;
-  if (hex.startsWith('#')) {
-    hex = hex.substring(1);
-    if (hex.length === 3) hex = hex.split('').map((c) => c + c).join('');
-    if (hex.length === 6) {
-      const r = parseInt(hex.substring(0, 2), 16) / 255;
-      const g = parseInt(hex.substring(2, 4), 16) / 255;
-      const b = parseInt(hex.substring(4, 6), 16) / 255;
-      const k = 1 - Math.max(r, g, b);
-      if (k >= 0.99) return 100;
-      const c = (1 - r - k) / (1 - k);
-      const m = (1 - g - k) / (1 - k);
-      const y = (1 - b - k) / (1 - k);
-      return Math.round((c + m + y + k) * 100);
-    }
-  }
-  return 0;
-}
 
   public runPreflightCheck(snapshot = this.state): PreflightIssue[] {
-    const issues: PreflightIssue[] = [];
-    const settings = snapshot.settings;
-    const pageWidthMm = settings.widthMm;
-    const pageHeightMm = settings.heightMm;
-    const bleedMm = settings.bleedMm ?? 3;
-
-    let hasSeenH1 = false;
-    let lastHeadingLevel = 0;
-
-    snapshot.spreads.forEach((spread, spreadIdx) => {
-      for (const el of spread.elements) {
-        if (el.pasteboard) continue;
-        const page = spread.pages.find((p) => p.id === el.pageId) || spread.pages[0];
-        const pageNumber = page ? page.pageNumber : spreadIdx + 1;
-
-        // 1. OVERSET_TEXT: Overflowing text frames without continuation nextFrameId
-        if (el.type === 'text') {
-          const textEl = el as TextElement;
-          const textContent = textEl.text || '';
-          if (textContent.length > 0 && !textEl.nextFrameId) {
-            const padding = textEl.paddingMm ?? 2;
-            const cols = Math.max(1, textEl.columns || 1);
-            const gutter = textEl.columnGutterMm ?? 4;
-            const availW = Math.max(10, (textEl.width - (padding * 2) - ((cols - 1) * gutter)) / cols);
-            const availH = Math.max(10, textEl.height - (padding * 2));
-            const fontPt = textEl.fontSizePt || 10;
-            const lineH = textEl.lineHeight || 1.3;
-            const lineSpacingMm = (fontPt * lineH * 25.4) / 72;
-            const maxLinesPerCol = Math.max(1, Math.floor(availH / lineSpacingMm));
-            const avgCharWidthMm = (fontPt * 0.45 * 25.4) / 72;
-            const charsPerLine = Math.max(10, Math.floor(availW / avgCharWidthMm));
-            const totalCapacity = maxLinesPerCol * charsPerLine * cols;
-
-            const explicitLines = textContent.split('\n');
-            let approxRenderedLines = 0;
-            for (const line of explicitLines) {
-              approxRenderedLines += Math.max(1, Math.ceil(line.length / charsPerLine));
-            }
-            const totalLinesCapacity = maxLinesPerCol * cols;
-
-            const overset = textEl.textContent ? layoutStory(textEl.textContent, textEl, snapshot.paragraphStyles, snapshot.characterStyles, undefined, layoutFrameNotes(snapshot, textEl).height,
-              { obstacles: spread.elements, baselineGrid: settings.baselineGrid }).overset
-              : approxRenderedLines > totalLinesCapacity || textContent.length > totalCapacity * 1.15;
-            if (overset) {
-              const overflowAmt = Math.max(
-                approxRenderedLines - totalLinesCapacity,
-                Math.ceil((textContent.length - totalCapacity) / charsPerLine)
-              );
-              issues.push({
-                id: `preflight-overset-${spreadIdx}-${el.id}`,
-                severity: 'error',
-                code: 'OVERSET_TEXT',
-                message: textEl.textContent ? 'Manuscript text exceeds the final frame. Link another frame or enlarge this frame.' : `Text frame overflows available area by ~${overflowAmt} lines. Link to next frame or enlarge frame.`,
-                spreadIndex: spreadIdx,
-                pageNumber,
-                elementId: el.id,
-              });
-            }
-          }
-        }
-
-        // 2. LOW_RES_IMAGE: Empty src or low effective DPI (<220 DPI)
-        if (el.type === 'image') {
-          const imgEl = el as ImageElement;
-          if (!imgEl.src || imgEl.src.trim() === '') {
-            issues.push({
-              id: `preflight-empty-img-${spreadIdx}-${el.id}`,
-              severity: 'error',
-              code: 'LOW_RES_IMAGE',
-              message: `Image frame is empty placeholder without source photo.`,
-              spreadIndex: spreadIdx,
-              pageNumber,
-              elementId: el.id,
-            });
-          } else if (!imgEl.src.startsWith('data:image/svg+xml') && (imgEl.originalWidth && imgEl.originalHeight
-            ? Math.min(imgEl.originalWidth / imgEl.width, imgEl.originalHeight / imgEl.height) * 25.4 < 220
-            : imgEl.src.startsWith('data:image') && imgEl.src.length < 250 && imgEl.width > 15)) {
-            issues.push({
-              id: `preflight-lowres-${spreadIdx}-${el.id}`,
-              severity: 'warning',
-              code: 'LOW_RES_IMAGE',
-              message: `Image resolution appears below print threshold (< 220 DPI on spread).`,
-              spreadIndex: spreadIdx,
-              pageNumber,
-              elementId: el.id,
-            });
-          }
-        }
-
-        // 3. TRIM_HAZARD: Text elements placed < 4mm from page trim boundary
-        if (el.type === 'text') {
-          const trimMargin = 4;
-          const rightEdge = el.x + el.width;
-          const bottomEdge = el.y + el.height;
-          if (
-            el.x < trimMargin ||
-            el.y < trimMargin ||
-            rightEdge > pageWidthMm - trimMargin ||
-            bottomEdge > pageHeightMm - trimMargin
-          ) {
-            issues.push({
-              id: `preflight-trim-${spreadIdx}-${el.id}`,
-              severity: 'warning',
-              code: 'TRIM_HAZARD',
-              message: `Text frame placed within 4mm of page trim edge. Risk of clipping during print trimming.`,
-              spreadIndex: spreadIdx,
-              pageNumber,
-              elementId: el.id,
-            });
-          }
-        }
-
-        // 4. BLEED_ERROR: Images touching the trim edge without filling full bleed allowance
-        if (el.type === 'image') {
-          const rightEdge = el.x + el.width;
-          const bottomEdge = el.y + el.height;
-          const touchesLeft = Math.abs(el.x) <= 1.0;
-          const touchesTop = Math.abs(el.y) <= 1.0;
-          const touchesRight = Math.abs(rightEdge - pageWidthMm) <= 1.0;
-          const touchesBottom = Math.abs(bottomEdge - pageHeightMm) <= 1.0;
-
-          if (touchesLeft || touchesTop || touchesRight || touchesBottom) {
-            const hasProperBleed =
-              (!touchesLeft || el.x <= -bleedMm + 0.5) &&
-              (!touchesTop || el.y <= -bleedMm + 0.5) &&
-              (!touchesRight || rightEdge >= pageWidthMm + bleedMm - 0.5) &&
-              (!touchesBottom || bottomEdge >= pageHeightMm + bleedMm - 0.5);
-
-            if (!hasProperBleed) {
-              issues.push({
-                id: `preflight-bleed-${spreadIdx}-${el.id}`,
-                severity: 'warning',
-                code: 'BLEED_ERROR',
-                message: `Image touches page boundary but lacks ${bleedMm}mm bleed allowance. May show white edge defect when trimmed.`,
-                spreadIndex: spreadIdx,
-                pageNumber,
-                elementId: el.id,
-              });
-            }
-          }
-        }
-
-        // 5. MISSING_ALT_TEXT: Images lacking Alt Text for screen readers (PDF/UA Section 508)
-        if (el.type === 'image') {
-          const imgEl = el as ImageElement;
-          if (!imgEl.decorative && (!imgEl.altText || !imgEl.altText.trim())) {
-            issues.push({
-              id: `preflight-alt-${spreadIdx}-${el.id}`,
-              severity: 'warning',
-              code: 'MISSING_ALT_TEXT',
-              message: `Image frame "${imgEl.name || imgEl.id}" is missing Alt Text description for screen-reader accessibility (Section 508 / PDF/UA).`,
-              spreadIndex: spreadIdx,
-              pageNumber,
-              elementId: el.id,
-            });
-          }
-        }
-
-        // 6. HEADING_ORDER_HAZARD: Logical heading structure check (H2/H3 before H1 or level skip)
-        if (el.type === 'text') {
-          const textEl = el as TextElement;
-          if (textEl.paragraphStyleId) {
-            const style = snapshot.paragraphStyles.find((s) => s.id === textEl.paragraphStyleId);
-            const tag = style?.pdfTag;
-            if (tag && /^H[1-6]$/i.test(tag)) {
-              const level = parseInt(tag.substring(1), 10);
-              if (level === 1) {
-                hasSeenH1 = true;
-                lastHeadingLevel = 1;
-              } else {
-                if (!hasSeenH1) {
-                  issues.push({
-                    id: `preflight-heading-order-${spreadIdx}-${el.id}`,
-                    severity: 'warning',
-                    code: 'HEADING_ORDER_HAZARD',
-                    message: `Heading hierarchy warning: <${tag}> appears before an <H1> has been defined (PDF/UA Section 508).`,
-                    spreadIndex: spreadIdx,
-                    pageNumber,
-                    elementId: el.id,
-                  });
-                } else if (level > lastHeadingLevel + 1) {
-                  issues.push({
-                    id: `preflight-heading-order-${spreadIdx}-${el.id}`,
-                    severity: 'warning',
-                    code: 'HEADING_ORDER_HAZARD',
-                    message: `Heading hierarchy warning: <${tag}> skips heading levels after <H${lastHeadingLevel}> (PDF/UA Section 508).`,
-                    spreadIndex: spreadIdx,
-                    pageNumber,
-                    elementId: el.id,
-                  });
-                }
-                lastHeadingLevel = level;
-              }
-            }
-          }
-        }
-
-        // 7. TAC_INK_DENSITY: Total Area Coverage (TAC) exceeding 300%
-        if (el.type === 'shape' || el.type === 'text') {
-          const colorsToCheck = [
-            (el as any).fillColor,
-            (el as any).strokeColor,
-            (el as any).color,
-            (el as any).backgroundColor,
-            (el as any).borderColor,
-          ].filter(Boolean);
-
-          for (const col of colorsToCheck) {
-            const tac = this.calculateTacPercentage(col);
-            if (tac > 300) {
-              issues.push({
-                id: `preflight-tac-${spreadIdx}-${el.id}`,
-                severity: 'warning',
-                code: 'TAC_INK_DENSITY',
-                message: `Ink coverage (${tac}%) exceeds standard press threshold (300% TAC). Risk of wet ink offset and smudging.`,
-                spreadIndex: spreadIdx,
-                pageNumber,
-                elementId: el.id,
-              });
-              break;
-            }
-          }
-        }
-
-        // 8. Typographic Linter: Straight Quotes, Double Spaces, Hyphenation Ladders
-        if (el.type === 'text') {
-          const txt = el as TextElement;
-          const content = txt.text || '';
-          if (content.length > 0) {
-            if (/"|'/.test(content)) {
-              issues.push({
-                id: `preflight-typo-quotes-${spreadIdx}-${el.id}`,
-                severity: 'info',
-                code: 'TYPO_STRAIGHT_QUOTES',
-                message: 'Straight typewriter quote(s) detected. Recommend typographical smart curly quotes (“ ” ‘ ’).',
-                spreadIndex: spreadIdx,
-                pageNumber,
-                elementId: el.id,
-              });
-            }
-            if (/  +/.test(content)) {
-              issues.push({
-                id: `preflight-typo-spaces-${spreadIdx}-${el.id}`,
-                severity: 'info',
-                code: 'TYPO_DOUBLE_SPACES',
-                message: 'Double or consecutive spaces detected. Recommend single word spacing for professional typesetting.',
-                spreadIndex: spreadIdx,
-                pageNumber,
-                elementId: el.id,
-              });
-            }
-            const lines = content.split('\n');
-            let ladderCount = 0;
-            let hasLadder = false;
-            for (const line of lines) {
-              const trimmed = line.trim();
-              if (trimmed.endsWith('-') || trimmed.endsWith('‐')) {
-                ladderCount++;
-                if (ladderCount >= 3) {
-                  hasLadder = true;
-                  break;
-                }
-              } else {
-                ladderCount = 0;
-              }
-            }
-            if (hasLadder) {
-              issues.push({
-                id: `preflight-typo-ladder-${spreadIdx}-${el.id}`,
-                severity: 'warning',
-                code: 'TYPO_HYPHENATION_LADDER',
-                message: 'Hyphenation ladder detected: 3 or more consecutive lines end with a hyphen.',
-                spreadIndex: spreadIdx,
-                pageNumber,
-                elementId: el.id,
-              });
-            }
-          }
-        }
-      }
-    });
-
-    return [...issues, ...publicationPreflight(snapshot).filter(issue => !(((issue.code === 'MISSING_ASSET' && issues.some(existing => existing.elementId === issue.elementId && existing.severity === 'error')) || (issue.code === 'MISSING_ALT_TEXT' && issues.some(existing => existing.elementId === issue.elementId && existing.code === issue.code)))))];
+    return runEditorPreflight(snapshot);
   }
 
   public autoFixPreflightIssue(issue: PreflightIssue): boolean {
@@ -3697,13 +3405,14 @@ export class StateManager {
     this.reflowFormattedStories();
   }
 
-  public refreshPublicationReferences(recordHistory = true) {
+  public refreshPublicationReferences(recordHistory = true, composedStoryId?: string) {
     migrateLegacyNotes(this.state);
     delete this.state.publicationError;
     for (let pass = 0; pass < 8; pass++) {
       const pageCount = this.state.spreads.reduce((n, spread) => n + spread.pages.length, 0);
       const changed = refreshPublication(this.state);
-      this.reflowFormattedStories();
+      if (changed) composedStoryId = undefined;
+      this.reflowFormattedStories(composedStoryId);
       for (const head of storyHeads(this.state).filter(head => head.autoExtendStory)) {
         try { this.paginateStory(head.id, 200, false); delete head.autoPaginationError; }
         catch (error) { head.autoPaginationError = error instanceof Error ? error.message : String(error); }
@@ -4267,20 +3976,20 @@ export class StateManager {
     const style = styles.find(s => s.id === styleId);
     if (!style) return;
 
-    const updates: Partial<CanvasElement> = {
+    const updates: Partial<TextElement> = {
       objectStyleId: styleId,
     };
     if (style.backgroundColor !== undefined && 'backgroundColor' in el) {
-      (updates as any).backgroundColor = style.backgroundColor;
+      updates.backgroundColor = style.backgroundColor;
     }
     if (style.borderColor !== undefined && 'borderColor' in el) {
-      (updates as any).borderColor = style.borderColor;
+      updates.borderColor = style.borderColor;
     }
     if (style.borderWidthMm !== undefined && 'borderWidthMm' in el) {
-      (updates as any).borderWidthMm = style.borderWidthMm;
+      updates.borderWidthMm = style.borderWidthMm;
     }
     if (style.paddingMm !== undefined && 'paddingMm' in el) {
-      (updates as any).paddingMm = style.paddingMm;
+      updates.paddingMm = style.paddingMm;
     }
     if (style.shadow !== undefined) {
       updates.shadow = { ...style.shadow };
@@ -4302,16 +4011,16 @@ export class StateManager {
       for (const el of spread.elements) {
         if (el.objectStyleId === styleId) {
           if (updates.backgroundColor !== undefined && 'backgroundColor' in el) {
-            (el as any).backgroundColor = updates.backgroundColor;
+            el.backgroundColor = updates.backgroundColor;
           }
           if (updates.borderColor !== undefined && 'borderColor' in el) {
-            (el as any).borderColor = updates.borderColor;
+            el.borderColor = updates.borderColor;
           }
           if (updates.borderWidthMm !== undefined && 'borderWidthMm' in el) {
-            (el as any).borderWidthMm = updates.borderWidthMm;
+            el.borderWidthMm = updates.borderWidthMm;
           }
           if (updates.paddingMm !== undefined && 'paddingMm' in el) {
-            (el as any).paddingMm = updates.paddingMm;
+            el.paddingMm = updates.paddingMm;
           }
           if (updates.shadow !== undefined) {
             el.shadow = { ...updates.shadow };
@@ -4464,7 +4173,7 @@ export class StateManager {
       }
     }
 
-    const letterMap = new Map<string, any[]>();
+    const letterMap = new Map<string, ReturnType<StateManager['generateBookIndex']>[number]['entries']>();
     const sortedTopics = Array.from(topicMap.keys()).sort((a, b) => a.localeCompare(b));
 
     for (const topic of sortedTopics) {
@@ -4510,7 +4219,8 @@ export class StateManager {
   }
 
   // --- Native Vector QR Code Generator ---
-  public insertQrCode(text: string, options?: { sizeMm?: number; pageId?: string }): ImageElement {
+  public async insertQrCode(text: string, options?: { sizeMm?: number; pageId?: string }): Promise<ImageElement> {
+    const { generateQrDataUrl } = await import('../engine/qrEngine');
     const size = options?.sizeMm || 30;
     const spread = this.getActiveSpread();
     const page = options?.pageId

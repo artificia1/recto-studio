@@ -3896,7 +3896,7 @@ assert(qrSvg.includes('<path d="M'), 'Generated QR SVG must contain vector path 
 const qrDataUrl = generateQrDataUrl('https://recto.studio/manual', 32);
 assert(qrDataUrl.startsWith('data:image/svg+xml;utf8,'), 'Generated QR data URL must be valid SVG data URI');
 
-const insertedQr = stateManager.insertQrCode('https://recto.studio/manual', { sizeMm: 35 });
+const insertedQr = await stateManager.insertQrCode('https://recto.studio/manual', { sizeMm: 35 });
 assert.strictEqual(insertedQr.type, 'image');
 assert.strictEqual(insertedQr.width, 35);
 assert.strictEqual(insertedQr.height, 35);

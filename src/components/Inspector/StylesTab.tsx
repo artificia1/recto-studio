@@ -54,7 +54,7 @@ export function StylesTab({ state }: StylesTabProps) {
       <div className="styles-list" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {state.paragraphStyles.map((style) => {
           const isEditing = editingStyleId === style.id;
-          const isAppliedToSelected = isTextSelected && (selectedEl as any).paragraphStyleId === style.id;
+          const isAppliedToSelected = selectedEl?.type === 'text' && selectedEl.paragraphStyleId === style.id;
 
           if (isEditing) {
             return (
@@ -158,7 +158,7 @@ export function StylesTab({ state }: StylesTabProps) {
                     value={style.pdfTag || 'P'}
                     onChange={(e) =>
                       stateManager.updateParagraphStyle(style.id, {
-                        pdfTag: (e.target as HTMLSelectElement).value as any,
+                        pdfTag: e.currentTarget.value as ParagraphStyle['pdfTag'],
                       })
                     }
                   >

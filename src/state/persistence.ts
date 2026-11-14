@@ -8,8 +8,9 @@ import { ProjectState } from '../types/index';
 import { parseProject } from './projectValidation';
 
 const DB_NAME = 'RectoStudioDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'projects';
+export const ARTWORK_STORE = 'artwork';
 const RECORD_ID = 'active_project';
 
 export class RectoDB {
@@ -23,14 +24,34 @@ export class RectoDB {
     if (!this.dbPromise) {
       this.dbPromise = new Promise((resolve, reject) => {
         const req = indexedDB.open(DB_NAME, DB_VERSION);
+        let blocked = false;
         req.onupgradeneeded = () => {
           const db = req.result;
           if (!db.objectStoreNames.contains(STORE_NAME)) {
             db.createObjectStore(STORE_NAME, { keyPath: 'id' });
           }
+          if (!db.objectStoreNames.contains(ARTWORK_STORE)) {
+            db.createObjectStore(ARTWORK_STORE, { keyPath: 'id' });
+          }
         };
-        req.onsuccess = () => resolve(req.result);
+        req.onsuccess = () => {
+          const db = req.result;
+          if (blocked) { db.close(); return; }
+          const disconnect = () => {
+            db.close();
+            this.dbPromise = null;
+          };
+          db.onversionchange = disconnect;
+          db.onclose = disconnect;
+          resolve(db);
+        };
+        req.onblocked = () => {
+          blocked = true;
+          this.dbPromise = null;
+          reject(new Error('Close other Recto windows or tabs to upgrade local storage, then try again.'));
+        };
         req.onerror = () => {
+          if (blocked) return;
           this.dbPromise = null;
           reject(req.error);
         };

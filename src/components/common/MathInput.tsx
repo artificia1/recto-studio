@@ -1,3 +1,4 @@
+import type { JSX } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
 import { evaluateMathExpression } from '../../utils/mathEval';
 
@@ -9,7 +10,7 @@ interface MathInputProps {
   max?: number;
   disabled?: boolean;
   className?: string;
-  style?: any;
+  style?: JSX.CSSProperties;
   placeholder?: string;
   title?: string;
 }

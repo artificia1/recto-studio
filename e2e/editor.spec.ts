@@ -28,6 +28,31 @@ test('loads and opens the editor without uncaught errors', async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test('renders code previews as images and handles a QR payload beyond capacity', async ({ page }) => {
+  await importProject(page);
+  const file = page.getByTitle('File Management, Project IO, and Document Imports');
+  await file.click();
+  await page.getByTitle('Generate native vector ISO/IEC 18004 QR code').click();
+  const qr = page.getByRole('img', { name: 'QR code preview' });
+  await expect(qr).toBeVisible();
+  const payload = page.getByLabel('Payload / Content:');
+  await payload.fill('長'.repeat(3000));
+  await expect(page.getByRole('alert')).toContainText('too long');
+  await expect(page.getByRole('button', { name: 'Insert QR Code', exact: true })).toBeDisabled();
+  await payload.fill('https://example.com');
+  await expect(qr).toBeVisible();
+  await page.getByRole('button', { name: 'Insert QR Code', exact: true }).click();
+  await file.click();
+  await page.getByTitle('Generate vector ISBN-13 / EAN-13 bookland barcode').click();
+  await expect(page.getByRole('img', { name: 'EAN-13 barcode preview' })).toBeVisible();
+  await page.getByRole('checkbox', { name: 'Show human-readable ISBN text under bars' }).uncheck();
+  await page.getByRole('button', { name: 'Insert Barcode to Spread' }).click();
+  const elements = (await savedProject(page)).spreads[0].elements;
+  const barcode = elements.find((element: { name?: string }) => element.name?.startsWith('Barcode ('));
+  expect(barcode).toBeDefined();
+  expect(decodeURIComponent(barcode.src)).not.toContain('<text');
+});
+
 test('persists paragraph keep rules, hyphenation language and font emphasis', async ({ page }) => {
   await importProject(page);
   await page.getByRole('button', { name: 'Styles', exact: true }).click();
@@ -641,6 +666,47 @@ test('previews mixed manuscript styles, cancels safely and preserves rich format
   await importProject(page, saved);
   await menuCommand(page, 'Open distraction-free Story Focus typewriter editor (Ctrl+Alt+Y)');
   await expect(editor).toHaveValue(/Final paragraph\. Appended\.$/);
+});
+
+test('composes long threaded edits in a worker and preserves the frame split and undo', async ({ page }) => {
+  const project = projectFixture();
+  const first = project.spreads[0].elements[0];
+  const paragraph = 'A long draft keeps its paragraph style as words move between linked frames.';
+  const paragraphs = Array.from({ length: 140 }, (_, index) => ({
+    id: `chapter-paragraph-${index}`, runs: [{ text: paragraph, bold: index === 0 }],
+  }));
+  const draft = paragraphs.map(item => item.runs[0].text).join('\n');
+  Object.assign(first, { text: draft, storyContent: { version: 1, paragraphs }, nextFrameId: 'text-next' });
+  project.spreads[0].elements.push({ ...first, id: 'text-next', y: 130, text: '' });
+  Object.assign(project.spreads[0].elements[1], { storyContent: undefined, nextFrameId: undefined, prevFrameId: first.id });
+  await importProject(page, project);
+  await page.evaluate(() => {
+    const OriginalWorker = window.Worker;
+    window.Worker = class extends OriginalWorker {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        if (String(url).includes('storyCompositionWorker')) {
+          this.addEventListener('message', event => {
+            document.body.dataset.storyWorkerResult = event.data?.frames?.length === 2 ? 'composed' : 'fallback';
+          });
+        }
+      }
+    };
+  });
+  await menuCommand(page, 'Open distraction-free Story Focus typewriter editor (Ctrl+Alt+Y)');
+  const editor = page.getByRole('textbox', { name: 'Story manuscript', exact: true });
+  const revised = draft.replace('long draft', 'substantially longer draft');
+  await editor.fill(revised);
+  await expect(page.locator('body')).toHaveAttribute('data-story-worker-result', 'composed', { timeout: 25_000 });
+  await expect(page.getByRole('status').filter({ hasText: 'Live canvas sync' })).toBeVisible();
+  await editor.press('Escape');
+  const [head, tail] = (await savedProject(page)).spreads[0].elements;
+  expect(head.text + tail.text).toBe(revised);
+  expect(head.storyEnd).toBe(tail.storyStart);
+  expect(head.storyContent.paragraphs[0]).toMatchObject({ id: 'chapter-paragraph-0', runs: [{ bold: true }] });
+  await page.getByTitle('Undo (Ctrl+Z)', { exact: true }).click();
+  const [oldHead, oldTail] = (await savedProject(page)).spreads[0].elements;
+  expect(oldHead.text + oldTail.text).toBe(draft);
 });
 
 test('imports a Word manuscript with source style mapping and explicit warnings', async ({ page }) => {

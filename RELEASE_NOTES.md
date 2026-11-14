@@ -1,4 +1,27 @@
-# Recto Studio 1.4.3
+# Recto Studio 1.4.4
+
+## Manuscripts and canvas
+
+- Story Editor composes eligible long threaded manuscripts in a background worker. Frame splits preserve styled runs, paragraph IDs, and undo history. Documents with footnotes or automatic pagination use the existing composer.
+- Threaded layout reuses indexed paragraph slices, avoiding repeated scans of the full manuscript as text flows across frames.
+- Canvas input now has a shared cleanup lifecycle for mouse, pen, touch, keyboard, and drag events. Ruler drawing and preflight use dedicated modules.
+- Fill and stroke swapping updates the selected shape or path correctly.
+
+## Artwork and publishing tools
+
+- Artwork library entries migrate to IndexedDB to accommodate larger collections.
+- Barcode and QR previews display as images. Oversized QR payloads show an error, and inserted ISBN artwork matches the human-readable label setting.
+- The test runner completes the unit pool before running the legacy engine integration. CLI export tests isolate their fixtures and give each export its own bounded process budget.
+
+## Downloads
+
+- **Windows x64** — Setup EXE and portable ZIP. Existing updater-enabled installations can use **Check for updates**.
+- **Linux x64** — Debian package and AppImage.
+- **Source** — ZIP and tar.gz archives. SHA-256 checksums are included.
+
+---
+
+# Previous release: Recto Studio 1.4.3
 
 All spreads opens while editing text on the canvas, and custom accent picking responds without repainting the document on each drag event.
 

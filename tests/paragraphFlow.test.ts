@@ -14,6 +14,17 @@ const measure = (text: string) => text.length;
 const paragraph = (text: string, styleId = 'body') => ({ styleId, runs: [{ text }] });
 
 describe('Paragraph composition rules', () => {
+  it('stops resolving styles when the current frame is full', () => {
+    let styleReads = 0;
+    const namedStyle = { ...style({}), get id() { styleReads++; return 'body'; } };
+    const content: StoryContent = { version: 1, paragraphs: Array.from({ length: 3000 }, () => paragraph('Short line')) };
+    const layout = layoutStory(content, { ...frame, height: 4.5, width: 20 }, [namedStyle], [], measure);
+    expect(layout.lines).toHaveLength(1);
+    expect(layout.consumed).toBe('Short line\n'.length);
+    expect(layout.overset).toBe(true);
+    expect(styleReads).toBeLessThan(10);
+  });
+
   it('keeps a paragraph together without rewriting source text', () => {
     const content: StoryContent = { version: 1, paragraphs: [paragraph('Intro', 'plain'), paragraph('aaaa bbbb cccc dddd')] };
     const result = layoutStory(content, frame, [style({ keepTogether: true })], [], measure);

@@ -42,11 +42,40 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
   };
   const [styleName, setStyleName] = useState('');
   const [error, setError] = useState('');
+  const [layingOut, setLayingOut] = useState(false);
+  const pending = useRef<{ id: string; text: string; session: number; revision: number;
+    timer: ReturnType<typeof setTimeout>; controller: AbortController }>();
   const content = stateManager.getStoryContent(activeEl?.id || '');
   const trackedText = tracking && storyText(tracking.before);
   const trackedEdit = trackedText !== undefined ? manuscriptEditRange(trackedText, editorText) : null;
   const discardDraft = () => !trackedEdit || confirm('Discard the unsaved tracked edit?');
-  const closeEditor = () => { if (discardDraft()) onClose(); };
+  const cancelLayout = () => {
+    const edit = pending.current;
+    if (edit) {
+      clearTimeout(edit.timer);
+      edit.controller.abort();
+      pending.current = undefined;
+    }
+    return edit;
+  };
+  const reportError = (id: string, reason: unknown) => {
+    setEditorText(storyText(stateManager.getStoryContent(id)));
+    setError(reason instanceof Error ? reason.message : 'Could not edit story.');
+  };
+  const flushLayout = () => {
+    const edit = cancelLayout();
+    if (!edit) return;
+    setLayingOut(false);
+    if (edit.session !== stateManager.getDocumentSession() || edit.revision !== stateManager.getDocumentRevision()) {
+      throw new Error('The document changed during layout. Review the latest manuscript before applying this edit.');
+    }
+    stateManager.setStoryText(edit.id, edit.text);
+  };
+  const closeEditor = () => {
+    if (!discardDraft()) return;
+    try { flushLayout(); onClose(); }
+    catch (reason) { if (activeEl) reportError(activeEl.id, reason); }
+  };
   const activeParagraph = storyText(content).slice(0, selection.start).split('\n').length - 1;
   const selectedContent = sliceStory(content, selection.start, selection.end);
   const selectedRun = selectedContent.paragraphs[0]?.runs[0];
@@ -57,14 +86,16 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
     textareaRef.current?.setSelectionRange(selection.start, selection.end);
   };
   const apply = (action: () => void) => {
-    try { action(); setError(''); restoreSelection(); } catch (e) { setError(e instanceof Error ? e.message : 'Could not edit story.'); }
+    try { flushLayout(); action(); setError(''); restoreSelection(); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Could not edit story.'); }
   };
 
+  useEffect(() => () => { cancelLayout(); }, [isOpen, stateManager.getDocumentSession()]);
   useEffect(() => {
     if (isOpen) { setCurrentElementId(selectedTextEl?.id || ''); setSelection({ start: 0, end: 0 }); setTracking(undefined); }
   }, [isOpen]);
   useEffect(() => {
-    if (isOpen && activeEl && !tracking) {
+    if (isOpen && activeEl && !tracking && !pending.current) {
       setEditorText(storyText(stateManager.getStoryContent(activeEl.id)));
     }
   }, [isOpen, activeEl?.id, activeEl?.text, activeEl?.rawStoryText, tracking]);
@@ -77,16 +108,44 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
 
   const handleTextChange = (newText: string) => {
     setEditorText(newText);
-    if (tracking) return;
-    if (activeEl) {
-      try {
-        stateManager.setStoryText(activeEl.id, newText);
-        setError('');
-      } catch (e) {
-        setEditorText(storyText(stateManager.getStoryContent(activeEl.id)));
-        setError(e instanceof Error ? e.message : 'Could not edit story.');
-      }
+    if (tracking || !activeEl) return;
+    const previous = cancelLayout();
+    const { id, rawStoryText, storyContent, nextFrameId, autoExtendStory } = activeEl;
+    if (previous && (previous.session !== stateManager.getDocumentSession() || previous.revision !== stateManager.getDocumentRevision())) {
+      setLayingOut(false);
+      reportError(id, new Error('The document changed during layout. Review the latest manuscript before applying this edit.'));
+      return;
     }
+    if (!nextFrameId || !storyContent || autoExtendStory || state.settings.footnotes?.length ||
+      Math.max(newText.length, rawStoryText?.length || 0) < 8000 || typeof OffscreenCanvas === 'undefined' || typeof Worker === 'undefined') {
+      setLayingOut(false);
+      try { stateManager.setStoryText(id, newText); setError(''); }
+      catch (reason) { reportError(id, reason); }
+      return;
+    }
+    const controller = new AbortController();
+    setLayingOut(true);
+    setError('');
+    const timer = setTimeout(async () => {
+      try {
+        const edit = pending.current;
+        if (!edit || edit.controller !== controller) return;
+        if (edit.session !== stateManager.getDocumentSession() || edit.revision !== stateManager.getDocumentRevision()) {
+          throw new Error('The document changed during layout. Review the latest manuscript before applying this edit.');
+        }
+        await stateManager.setStoryTextInBackground(id, newText, controller.signal);
+        if (!controller.signal.aborted) setEditorText(storyText(stateManager.getStoryContent(id)));
+      } catch (reason) {
+        if (!controller.signal.aborted) reportError(id, reason);
+      } finally {
+        if (pending.current?.controller === controller) {
+          pending.current = undefined;
+          setLayingOut(false);
+        }
+      }
+    }, 150);
+    pending.current = { id, text: newText, session: stateManager.getDocumentSession(),
+      revision: stateManager.getDocumentRevision(), controller, timer };
   };
 
   return (
@@ -211,8 +270,13 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
             onSelect={captureSelection}
             onKeyUp={captureSelection}
             onMouseUp={captureSelection}
-            onBlur={() => { captureSelection(); stateManager.finishUndoGroup(); }}
-            onInput={(e) => handleTextChange((e.target as HTMLTextAreaElement).value)}
+            onBlur={() => {
+              try { flushLayout(); }
+              catch (reason) { if (activeEl) reportError(activeEl.id, reason); }
+              captureSelection();
+              stateManager.finishUndoGroup();
+            }}
+            onInput={event => handleTextChange(event.currentTarget.value)}
             placeholder="Write manuscript story here... Canvas updates in real time."
             style={{
               fontSize: `${fontSize}px`,
@@ -237,7 +301,7 @@ export function StoryEditorModal({ isOpen, onClose, state }: StoryEditorModalPro
             <span><b>{paragraphs}</b> paragraphs</span>
             <span>~<b>{readingTimeMin}</b> min read</span>
           </div>
-          {activeEl && !activeEl.generated && <span>{tracking ? 'Tracking draft' : 'Live canvas sync'}</span>}
+          {activeEl && !activeEl.generated && <span role="status">{tracking ? 'Tracking draft' : layingOut ? 'Updating layout…' : 'Live canvas sync'}</span>}
         </footer>
       </div>
     </div>

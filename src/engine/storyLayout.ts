@@ -18,7 +18,7 @@ export interface StoryLayoutOptions {
   baselineGrid?: { enabled: boolean; startMm: number; incrementPt: number };
 }
 const PT = 25.4 / 72;
-let context: CanvasRenderingContext2D | null | undefined;
+let context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null | undefined;
 
 export function canvasRunFont(style: RunStyle, scale: number): string {
   return `${style.italic ? 'italic ' : ''}${style.bold ? 'bold ' : ''}${style.fontSizePt * PT * scale}px ${style.fontFamily}`;
@@ -28,8 +28,9 @@ export function canvasRunFont(style: RunStyle, scale: number): string {
 export const measureStoryText: StoryMeasure = (text, style) => {
   const font = fontManager.getFont(style.fontFamily);
   if (font) return font.layout(text).advanceWidth / font.unitsPerEm * style.fontSizePt * PT;
-  if (context === undefined && typeof document !== 'undefined') {
-    context = document.createElement('canvas').getContext('2d');
+  if (context === undefined) {
+    context = typeof document !== 'undefined' ? document.createElement('canvas').getContext('2d')
+      : typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(1, 1).getContext('2d') : null;
   }
   if (context) {
     context.font = canvasRunFont(style, 96 / 25.4);
@@ -65,7 +66,9 @@ export function resolveRunStyle(frame: TextElement, paragraph: Partial<Paragraph
 }
 
 /** Compose a formatted slice, returning the exact source offset that fits. Never rewrites copy. */
-function composeStory(content: StoryContent, frame: TextElement, styles: ParagraphStyle[],
+type StoryParagraphs = Pick<StoryParagraph[], 'length' | 'at'>;
+
+function composeStory(paragraphs: StoryParagraphs, frame: TextElement, styles: ParagraphStyle[],
   characters: CharacterStyle[] = [], measure: StoryMeasure = measureStoryText,
   reserveBottom = 0, options: StoryLayoutOptions = {}, breaks = new Set<number>()): { lines: StoryLine[]; consumed: number; overset: boolean } {
   const padding = frame.paddingMm ?? 2;
@@ -77,11 +80,13 @@ function composeStory(content: StoryContent, frame: TextElement, styles: Paragra
   const wrapObstacles = prepareWrapObstacles(options.obstacles || [], frame);
   let column = 0, y = padding, offset = 0, consumed = 0;
   const appliedBreaks = new Set<number>();
-  const total = content.paragraphs.reduce((n, p) => n + p.runs.reduce((m, r) => m + r.text.length, 0) + 1, -1);
-  if (width <= 0 || bottom <= padding) return { lines, consumed, overset: total > 0 };
+  if (width <= 0 || bottom <= padding) {
+    const overset = paragraphs.length > 1 || !!paragraphs.at(0)?.runs.some(run => run.text.length > 0);
+    return { lines, consumed, overset };
+  }
 
-  for (let pi = 0; pi < content.paragraphs.length; pi++) {
-    const paragraph = content.paragraphs[pi];
+  for (let pi = 0; pi < paragraphs.length; pi++) {
+    const paragraph = paragraphs.at(pi)!;
     const style = resolveParagraphStyle(paragraph, styles);
     const base = resolveRunStyle(frame, style, { text: '' }, characters);
     const leading = style?.lineHeight || frame.lineHeight || 1.3;
@@ -210,48 +215,67 @@ function composeStory(content: StoryContent, frame: TextElement, styles: Paragra
         }
       }
     }
-    if (pi < content.paragraphs.length - 1) offset++;
+    if (pi < paragraphs.length - 1) offset++;
     if (!flush(true)) return { lines, consumed, overset: true };
   }
-  return { lines, consumed: Math.max(0, total), overset: false };
+  return { lines, consumed, overset: false };
 }
 
 /** Move breakpoints rather than changing manuscript text or inserting blank paragraphs. */
 export function layoutStory(content: StoryContent, frame: TextElement, styles: ParagraphStyle[],
   characters: CharacterStyle[] = [], measure: StoryMeasure = measureStoryText,
+  reserveBottom = 0, options: StoryLayoutOptions = {}) {
+  return layoutStoryParagraphs(content.paragraphs, frame, styles, characters, measure, reserveBottom, options);
+}
+
+export function layoutStoryParagraphs(source: StoryParagraphs, frame: TextElement, styles: ParagraphStyle[],
+  characters: CharacterStyle[] = [], measure: StoryMeasure = measureStoryText,
   reserveBottom = 0, options: StoryLayoutOptions = {}): { lines: StoryLine[]; consumed: number; overset: boolean } {
   const breaks = new Set<number>();
   const padding = frame.paddingMm ?? 2;
   const capacity = frame.height - padding * 2 - reserveBottom;
-  let result = composeStory(content, frame, styles, characters, measure, reserveBottom, options, breaks);
-  let sourceOffset = 0;
-  const paragraphs = content.paragraphs.map(paragraph => {
-    const start = sourceOffset;
-    sourceOffset += paragraph.runs.reduce((n, run) => n + run.text.length, 0) + 1;
-    return { paragraph, start, end: sourceOffset - 1, style: resolveParagraphStyle(paragraph, styles) };
-  });
+  let result = composeStory(source, frame, styles, characters, measure, reserveBottom, options, breaks);
+  const paragraphs: { start: number; end: number; style: Partial<ParagraphStyle> }[] = [];
+  const paragraphAt = (index: number) => {
+    const existing = paragraphs[index];
+    if (existing) return existing;
+    const paragraph = source.at(index)!;
+    const start = index ? paragraphs[index - 1].end + 1 : 0;
+    const end = start + paragraph.runs.reduce((length, run) => length + run.text.length, 0);
+    const entry = { start, end, style: resolveParagraphStyle(paragraph, styles) };
+    paragraphs[index] = entry;
+    return entry;
+  };
   const counts = new Map<number, StoryLine[]>();
   const allLines = (index: number) => {
     if (!counts.has(index)) {
       const copy = { ...frame, columns: 1, splitColumns: 1, spanColumns: true,
         width: (frame.width - padding * 2 - ((frame.spanColumns ? 1 : Math.max(1, frame.splitColumns || frame.columns)) - 1) * frame.columnGutterMm) / (frame.spanColumns ? 1 : Math.max(1, frame.splitColumns || frame.columns)) + padding * 2,
         height: Math.max(100000, frame.height) };
-      counts.set(index, composeStory({ version: 1, paragraphs: [paragraphs[index].paragraph] }, copy, styles, characters, measure).lines);
+      counts.set(index, composeStory([source.at(index)!], copy, styles, characters, measure).lines);
     }
     return counts.get(index)!;
   };
   // Each pass moves at least one breakpoint; the cap also bounds pathological keep chains.
-  for (let pass = 0; pass < Math.min(128, paragraphs.length * 4 + 4); pass++) {
+  for (let pass = 0; pass < Math.min(128, source.length * 4 + 4); pass++) {
     let move: number | undefined;
-    for (let index = 0; index < paragraphs.length && move === undefined; index++) {
-      const { start, end, style } = paragraphs[index];
+    let lineIndex = 0;
+    for (let index = 0; index < source.length && lineIndex < result.lines.length && move === undefined; index++) {
+      const { start, end, style } = paragraphAt(index);
+      const first = lineIndex;
+      while (lineIndex < result.lines.length && result.lines[lineIndex].start <= end) lineIndex++;
       if (!style.keepTogether && !style.keepWithNext && !style.orphanLines && !style.widowLines) continue;
-      const visible = result.lines.filter(line => line.start >= start && line.start <= end);
+      const visible = result.lines.slice(first, lineIndex);
       if (!visible.length) continue;
       const full = allLines(index);
       const fullHeight = full.reduce((n, line) => n + line.height, 0);
       const groups = new Map<number, StoryLine[]>();
-      for (const line of visible) { const column = line.column || 0; groups.set(column, [...(groups.get(column) || []), line]); }
+      for (const line of visible) {
+        const column = line.column || 0;
+        const group = groups.get(column);
+        if (group) group.push(line);
+        else groups.set(column, [line]);
+      }
       const split = groups.size > 1 || result.consumed < end;
       if (style.keepTogether && split && fullHeight <= capacity && visible[0].y > padding + 0.001) move = start;
       let shown = 0;
@@ -268,17 +292,21 @@ export function layoutStory(content: StoryContent, frame: TextElement, styles: P
           if (candidate && (candidate.y > padding + 0.001)) { move = candidate.start; break; }
         }
       }
-      if (style.keepWithNext && index + 1 < paragraphs.length && result.consumed >= end) {
+      if (style.keepWithNext && index + 1 < source.length && result.consumed >= end) {
         const last = visible.at(-1)!;
-        const next = result.lines.filter(line => line.start >= paragraphs[index + 1].start && line.column === last.column);
-        const minimum = Math.max(1, paragraphs[index + 1].style.orphanLines || 1);
+        const minimum = Math.max(1, paragraphAt(index + 1).style.orphanLines || 1);
+        let next = 0;
+        for (let n = lineIndex; n < result.lines.length && next < minimum; n++) {
+          if (result.lines[n].column === last.column) next++;
+        }
+        if (next >= minimum) continue;
         const nextLines = allLines(index + 1).slice(0, minimum);
-        if (next.length < minimum && fullHeight + nextLines.reduce((n, line) => n + line.height, 0) <= capacity && visible[0].y > padding + 0.001) move = start;
+        if (fullHeight + nextLines.reduce((n, line) => n + line.height, 0) <= capacity && visible[0].y > padding + 0.001) move = start;
       }
     }
     if (move === undefined || breaks.has(move)) break;
     breaks.add(move);
-    result = composeStory(content, frame, styles, characters, measure, reserveBottom, options, breaks);
+    result = composeStory(source, frame, styles, characters, measure, reserveBottom, options, breaks);
   }
   return result;
 }

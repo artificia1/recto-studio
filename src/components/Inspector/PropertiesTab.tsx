@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { stateManager, numberToSuperscript } from '../../state';
 import { fontManager } from '../../fontManager';
-import { ProjectState, CanvasElement, TextElement, ImageElement, ShapeElement, TableElement, ParagraphStyle, VectorPathElement } from '../../types';
+import { ProjectState, CanvasElement, TextElement, ImageElement, ShapeElement, TableElement, ParagraphStyle, VectorPathElement, InteractiveFormField, ImageFitMode, TextOnPathSettings } from '../../types';
 import { MathInput } from '../common/MathInput';
 import { getAllFreeToneColors } from '../../engine/spotColors';
 import { shapeToPath } from '../../engine/vectorPath';
@@ -421,7 +421,7 @@ export function PropertiesTab({ state, onOpenPageSetup }: PropertiesTabProps) {
                       stateManager.updateElement(selectedEl.id, {
                         interactiveField: {
                           ...selectedEl.interactiveField!,
-                          type: (e.target as HTMLSelectElement).value as any,
+                          type: e.currentTarget.value as InteractiveFormField['type'],
                         },
                       });
                     }}
@@ -598,7 +598,7 @@ function ImageInspector({ element }: { element: ImageElement }) {
           value={element.fitMode || 'fill'}
           onChange={(e) =>
             stateManager.applyImageFitMode(
-              (e.target as HTMLSelectElement).value as any,
+              e.currentTarget.value as ImageFitMode,
               element.id
             )
           }
@@ -716,7 +716,7 @@ function ShapeInspector({ element }: { element: ShapeElement }) {
             value={element.strokeDash}
             onChange={(e) =>
               stateManager.updateElement(element.id, {
-                strokeDash: (e.target as HTMLSelectElement).value as any,
+                strokeDash: e.currentTarget.value as ShapeElement['strokeDash'],
               })}
           >
             <option value="solid">Solid</option>
@@ -835,7 +835,7 @@ function VectorPathInspector({ element }: { element: VectorPathElement }) {
             disabled={element.locked}
             onChange={(e) =>
               stateManager.updateElement(element.id, {
-                strokeCap: (e.target as HTMLSelectElement).value as any,
+                strokeCap: e.currentTarget.value as VectorPathElement['strokeCap'],
               })
             }
           >
@@ -851,7 +851,7 @@ function VectorPathInspector({ element }: { element: VectorPathElement }) {
             disabled={element.locked}
             onChange={(e) =>
               stateManager.updateElement(element.id, {
-                strokeJoin: (e.target as HTMLSelectElement).value as any,
+                strokeJoin: e.currentTarget.value as VectorPathElement['strokeJoin'],
               })
             }
           >
@@ -976,7 +976,7 @@ function VectorPathInspector({ element }: { element: VectorPathElement }) {
                   stateManager.updateElement(element.id, {
                     textOnPath: {
                       ...textOnPath,
-                      align: (e.target as HTMLSelectElement).value as any,
+                      align: e.currentTarget.value as TextOnPathSettings['align'],
                     },
                   })
                 }

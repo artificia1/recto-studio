@@ -30,10 +30,6 @@ export function StatusBar({ state }: StatusBarProps) {
 
   const issues = stateManager.runPreflightCheck();
 
-  const handleQualityChange = (e: any) => {
-    stateManager.setDisplayQuality(e.target.value as DisplayQuality);
-  };
-
   // Close drawer when clicking outside
   useEffect(() => {
     if (!drawerOpen) return;
@@ -81,7 +77,7 @@ export function StatusBar({ state }: StatusBarProps) {
           <span className="status-display-title">Display</span>
           <select
             value={state.displayQuality || 'typical'}
-            onChange={handleQualityChange}
+            onChange={event => stateManager.setDisplayQuality(event.currentTarget.value as DisplayQuality)}
             className="status-quality-select"
             title="Display Performance: Fast (Wireframe), Typical (Proxy Cache), High (Full Res)"
           >
@@ -94,7 +90,7 @@ export function StatusBar({ state }: StatusBarProps) {
           <span className="status-display-title">Plates</span>
           <select
             value={state.plateSolo || 'all'}
-            onChange={(e: any) => stateManager.setPlateSolo(e.target.value)}
+            onChange={event => stateManager.setPlateSolo(event.currentTarget.value as ProjectState['plateSolo'])}
             className="status-quality-select"
             title="CMYK Separation Plates: All, Cyan, Magenta, Yellow, Black (K), Spot & Finishing"
           >
