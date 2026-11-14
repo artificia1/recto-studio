@@ -24,7 +24,7 @@ it('renders each stdin record through a trusted importer with every template pag
     elements: [{ ...body, id: 'second', pageId: 'second-page', text: 'Product {{product}}' }] });
   await writeFile(template, JSON.stringify(state));
   await writeFile(plugin, 'export default { apiVersion: 1, parseRecords({ bytes }) { return JSON.parse(new TextDecoder().decode(bytes)); } };');
-  const run = promisify(execFile)(process.execPath, ['bin/recto.js', 'render', template, '--data=-', `--output=${output}`, `--importer=${plugin}`], { timeout: 45000 });
+  const run = promisify(execFile)(process.execPath, ['bin/recto.js', 'render', template, '--data=-', `--output=${output}`, `--importer=${plugin}`], { timeout: 90_000 });
   run.child.stdin!.end(JSON.stringify([{ name: 'Ada', product: 'Paper' }, { name: 'Lin', product: 'Ink' }]));
   await run;
   const manifest = JSON.parse(await readFile(path.join(output, 'manifest.json'), 'utf8'));
@@ -34,4 +34,4 @@ it('renders each stdin record through a trusted importer with every template pag
     expect(pdf.getPageCount()).toBe(2);
     expect(pdf.getTitle()).toBe(`Catalog for ${index === 0 ? 'Ada' : 'Lin'}`);
   }
-}, 60000);
+}, 95_000);

@@ -5,28 +5,14 @@
  * Licensed under the MIT License.
  */
 
-import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { register } from 'tsx/esm/api';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Ensure TypeScript execution environment via tsx if not already loaded
-if (!process.env._RECTO_TSX) {
-  process.env._RECTO_TSX = '1';
-  const tsxCli = path.resolve(__dirname, '../node_modules/tsx/dist/cli.mjs');
-  const execPath = process.execPath;
-  const args = fs.existsSync(tsxCli) ? [tsxCli, __filename, ...process.argv.slice(2)] : ['npx', 'tsx', __filename, ...process.argv.slice(2)];
-
-  const child = spawn(execPath, args, {
-    stdio: 'inherit',
-    env: process.env,
-  });
-
-  child.on('exit', (code) => process.exit(code || 0));
-} else {
+async function main() {
+  // Load the TypeScript engines in this process so stdin, exit status and
+  // cancellation are handled by the executable the caller actually launched.
+  register();
   const { exportDocumentToPdf } = await import('../src/export/pdfExport.js');
   const { generateFlipbookHtml } = await import('../src/flipbookExport.js');
   const { exportDocumentToEpubAsync } = await import('../src/epubExport.js');
@@ -363,8 +349,10 @@ Options:
     }
   }
 
-  runCli().catch((err) => {
-    console.error('Fatal CLI Error:', err);
-    process.exit(1);
-  });
+  return runCli();
 }
+
+main().catch(error => {
+  console.error('Fatal CLI Error:', error);
+  process.exitCode = 1;
+});

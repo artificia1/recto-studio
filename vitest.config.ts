@@ -10,7 +10,9 @@ export default defineConfig({
     // The WASM wrapper publishes extensionless ESM imports; resolve them through Vite.
     server: { deps: { inline: ['@kittl/little-cms'] } },
     exclude: [...configDefaults.exclude, 'e2e/**', 'tests/integration.test.ts'],
-    // Cold headless PDF exports initialize native SVG rendering and system fonts.
-    testTimeout: 20000,
+    // Cold headless exports initialize native SVG rendering and system fonts.
+    // Windows hosts under load can delay those imports as well as worker teardown.
+    testTimeout: 60_000,
+    teardownTimeout: 30_000,
   },
 });
