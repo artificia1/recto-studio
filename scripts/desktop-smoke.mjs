@@ -36,6 +36,14 @@ try {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.locator('#spread-canvas').waitFor({ state: 'visible', timeout: 30000 });
+  const spreadOverview = page.getByRole('dialog', { name: 'Multi-spread workspace' });
+  const spreadButton = page.getByRole('button', { name: 'All spreads', exact: true });
+  await spreadButton.click({ timeout: 10000 });
+  await spreadOverview.waitFor({ state: 'visible', timeout: 10000 });
+  await spreadOverview.locator('[data-workspace-page]').first().waitFor({ state: 'visible', timeout: 10000 });
+  await spreadOverview.getByRole('button', { name: 'Return to spread editor' }).click({ timeout: 10000 });
+  await spreadOverview.waitFor({ state: 'hidden', timeout: 10000 });
+  if (errors.length) throw new Error(`Desktop spread overview reported errors: ${errors.join(' | ')}`);
   await page.getByTitle('Click to rename document').fill('Desktop release verification');
   await page.getByTitle('Click to rename document').press('Tab');
   const verification = await page.evaluate(async () => {
@@ -75,7 +83,7 @@ try {
   }
   await page.screenshot({ path: 'test-results/desktop/windows-app.png', fullPage: true });
   if (errors.length) throw new Error(errors.join('\n'));
-  console.log('Windows app opened, rendered the editor, recovered autosave, and verified native file-command restrictions.');
+  console.log('Windows app opened, rendered the editor and spread overview, recovered autosave, and verified native file-command restrictions.');
 } catch (error) {
   if (page) {
     output.push(`Page URL: ${page.url()}`);

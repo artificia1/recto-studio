@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { contrastRatio } from './contrast';
+import { importProject, projectFixture } from './fixtures';
 
 for (const theme of ['dark', 'light', 'oled'] as const) {
   test(`keeps the spread overview readable with ${theme} and minimal controls`, async ({ page }) => {
@@ -32,7 +33,7 @@ for (const theme of ['dark', 'light', 'oled'] as const) {
     expect(colors.surface).toMatch(/^rgb\(/);
     expect(contrastRatio(colors.ink, colors.surface)).toBeGreaterThanOrEqual(4.5);
 
-    await trigger.click();
+    await trigger.press('Space');
     const workspace = page.getByRole('dialog', { name: 'Multi-spread workspace' });
     await expect(workspace).toBeVisible();
     const overview = await workspace.evaluate(element => {
@@ -51,3 +52,57 @@ for (const theme of ['dark', 'light', 'oled'] as const) {
     await expect(trigger).toBeFocused();
   });
 }
+
+test('all spreads reports an unavailable workspace chunk and leaves the editor usable', async ({ page }) => {
+  await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.abort());
+  await page.route(/\/assets\/SpatialWorkspace-[^/]+\.js$/, route => route.abort());
+  await page.goto('/');
+
+  const trigger = page.getByRole('button', { name: 'All spreads', exact: true });
+  await trigger.click();
+  const status = page.getByRole('dialog', { name: 'All spreads', exact: true });
+  await expect(status.getByRole('alert')).toHaveText('All spreads could not be opened. Reload the app to try again.');
+  await status.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(status).toBeHidden();
+  await expect(page.locator('#spread-canvas')).toBeVisible();
+  await page.getByTitle('File Management, Project IO, and Document Imports').click();
+  await expect(page.getByRole('button', { name: /^Open Project/ })).toBeVisible();
+});
+
+test('all spreads stays clickable over an open inline text editor', async ({ page }) => {
+  await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.abort());
+  await page.goto('/');
+  const project = projectFixture();
+  await importProject(page, project);
+
+  await page.evaluate(() => {
+    const { stateManager, spreadCanvas } = (window as any).recto;
+    const button = document.querySelector('.workspace-map-toggle')!.getBoundingClientRect();
+    const canvas = document.querySelector('#spread-canvas')!.getBoundingClientRect();
+    const state = stateManager.getState();
+    const frame = stateManager.getActiveSpread().elements[0];
+    const scale = state.zoom * 96 / 25.4;
+    const left = (canvas.width - state.settings.widthMm * scale) / 2;
+    const top = (canvas.height - state.settings.heightMm * scale) / 2;
+    stateManager.setZoomAndPan(state.zoom,
+      button.left - canvas.left - left - frame.x * scale - 15,
+      button.top - canvas.top - top - frame.y * scale - 5);
+    spreadCanvas.openInlineTextEditor(frame.id);
+  });
+  const editor = page.locator('.canvas-inline-editor');
+  await expect(editor).toBeFocused();
+  await editor.fill('Text committed when opening All spreads');
+  const trigger = page.getByRole('button', { name: 'All spreads', exact: true });
+  const [buttonBounds, editorBounds] = await Promise.all([trigger.boundingBox(), editor.boundingBox()]);
+  const x = buttonBounds!.x + buttonBounds!.width / 2;
+  const y = buttonBounds!.y + buttonBounds!.height / 2;
+  expect(x).toBeGreaterThan(editorBounds!.x);
+  expect(y).toBeGreaterThan(editorBounds!.y);
+  expect(x).toBeLessThan(editorBounds!.x + editorBounds!.width);
+  expect(y).toBeLessThan(editorBounds!.y + editorBounds!.height);
+  await page.mouse.click(x, y);
+  await expect(page.getByRole('dialog', { name: 'Multi-spread workspace' })).toBeVisible();
+  await expect(editor).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => (window as any).recto.stateManager.getActiveSpread().elements[0].text))
+    .toBe('Text committed when opening All spreads');
+});

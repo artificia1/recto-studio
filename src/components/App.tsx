@@ -9,7 +9,7 @@ import { ControlBar } from './ControlBar';
 import { Toolbar } from './Toolbar';
 import { InspectorPanel } from './Inspector/InspectorPanel';
 import { StatusBar } from './StatusBar';
-import { BookletImpositionModal, CoverSpineModal } from './LazyPrintDialogs';
+import { BookletImpositionModal, CoverSpineModal, SpreadOverviewDialog } from './LazyPrintDialogs';
 import { SpreadCanvas } from '../canvas';
 import { stateManager } from '../state';
 import { fontManager } from '../fontManager';
@@ -24,7 +24,6 @@ const ShortcutsModal = lazy(() => import('./ShortcutsModal').then(module => ({ d
 const ScriptsModal = lazy(() => import('./ScriptsModal').then(module => ({ default: module.ScriptsModal })));
 const FindChangeModal = lazy(() => import('./FindChangeModal').then(module => ({ default: module.FindChangeModal })));
 const QuickApply = lazy(() => import('./QuickApply').then(module => ({ default: module.QuickApply })));
-const SpatialWorkspace = lazy(() => import('./SpatialWorkspace'));
 
 export function App() {
   const [showWorkspace, setShowWorkspace] = useState(false);
@@ -370,7 +369,8 @@ export function App() {
         <Toolbar state={state} />
 
         <main className="canvas-viewport" id="canvas-container" ref={containerRef}>
-          <button type="button" className="workspace-map-toggle" aria-haspopup="dialog" onClick={() => setShowWorkspace(true)}>
+          <button type="button" className="workspace-map-toggle" aria-haspopup="dialog" onClick={() => setShowWorkspace(true)}
+            onKeyDown={event => { if (event.code === 'Space') event.stopPropagation(); }}>
             All spreads
           </button>
           <div className="ruler-corner"></div>
@@ -499,7 +499,11 @@ export function App() {
       </div>
 
       <StatusBar state={state} />
-      {showWorkspace && <Suspense fallback={<div role="status">Loading multi-spread workspace…</div>}><SpatialWorkspace state={state} onClose={() => { const id = stateManager.getState().selectedElementId; if (id) stateManager.zoomToElement(id); setShowWorkspace(false); }}/></Suspense>}
+      {showWorkspace && <SpreadOverviewDialog state={state} onClose={() => {
+        const id = stateManager.getState().selectedElementId;
+        if (id) stateManager.zoomToElement(id);
+        setShowWorkspace(false);
+      }} />}
 
       {findChangeMounted.current && <Suspense fallback={null}><FindChangeModal
         isOpen={showFindChange}

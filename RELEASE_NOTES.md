@@ -1,4 +1,23 @@
-# Recto Studio 1.4.2
+# Recto Studio 1.4.3
+
+All spreads opens while editing text on the canvas, and custom accent picking responds without repainting the document on each drag event.
+
+## Editor fixes
+
+- **All spreads** stays clickable when an inline editor overlaps it. Opening the overview commits the text edit, and Space activates the button when focused.
+- The overview shows a loading or recovery dialog if its tools are unavailable. The editor stays open.
+- **Appearance** previews the custom color locally as you drag, then applies your choice and keeps your five most recent custom colors.
+- Toolbar contrast stays consistent across button styles. Preflight, Story Editor, and mobile controls follow the selected theme.
+
+## Downloads
+
+- **Windows x64** — Setup EXE and portable ZIP. Use **Check for updates** in existing updater-enabled installations.
+- **Linux x64** — Debian package and AppImage.
+- **Source** — ZIP and tar.gz archives. SHA-256 checksums are included.
+
+---
+
+# Previous release: Recto Studio 1.4.2
 
 A more compact editor and an Appearance popup with live previews.
 

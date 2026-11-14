@@ -910,6 +910,7 @@ html, body {
 
 .main-canvas-container {
   position: relative;
+  isolation: isolate;
   overflow: hidden;
   background-color: #1e1e1e;
 }
@@ -2703,3 +2704,23 @@ kbd {
 .spatial-workspace > p { margin: 8px 20px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
 .spatial-scroll { flex: 1; overflow: auto; min-height: 0; }
 .spatial-scroll svg { display: block; touch-action: none; }
+
+.deferred-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  z-index: 10000;
+  place-items: center;
+  background: rgb(0 0 0 / 60%);
+}
+
+.deferred-dialog {
+  width: min(360px, 90vw);
+  padding: 20px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  background: var(--bg-modal);
+  color: var(--text-primary);
+}
+
+.deferred-dialog p { margin-bottom: 14px; }
