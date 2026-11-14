@@ -2606,6 +2606,32 @@ export class StateManager {
     this.installProject(parseProject(jsonStr, INITIAL_STATE));
   }
 
+  /** Install a reviewed local proposal as a single edit in the current document. */
+  public async applyReviewedProposal(draft: ProjectState, expectedSession: number, expectedRevision: number) {
+    const check = () => {
+      if (this.collaborativeHistory || this.documentSession !== expectedSession || this.documentRevision !== expectedRevision) {
+        throw new Error('The document changed or joined a shared session. Share a fresh snapshot to continue.');
+      }
+    };
+    check();
+    const candidate = parseProject(JSON.stringify(draft), INITIAL_STATE);
+    await fontManager.restoreFonts(candidate.embeddedFonts, check);
+    check();
+    const previous = this.state;
+    const activeId = this.getActiveSpread().id;
+    const activeIndex = candidate.spreads.findIndex(spread => spread.id === activeId);
+    candidate.activeSpreadIndex = activeIndex < 0 ? Math.min(previous.activeSpreadIndex, candidate.spreads.length - 1) : activeIndex;
+    const frameIds = new Set(candidate.spreads[candidate.activeSpreadIndex].elements.map(element => element.id));
+    candidate.selectedElementIds = previous.selectedElementIds.filter(id => frameIds.has(id));
+    candidate.selectedElementId = previous.selectedElementId && frameIds.has(previous.selectedElementId) ? previous.selectedElementId : null;
+    try {
+      this.state = candidate;
+      this.renumberPages();
+      this.pushHistory();
+    } catch (error) { this.state = previous; throw error; }
+    this.notify();
+  }
+
   private installProject(project: ProjectState) {
     const previous = this.state;
     const desktop = isDesktop();

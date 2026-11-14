@@ -9,6 +9,8 @@ import { translationCatalog } from '../src/translation/catalog';
 import { writeTranslationExchange } from '../src/translation/xliff';
 import { INITIAL_STATE } from '../src/state/defaults';
 import { PDFDocument } from 'pdf-lib';
+import { readZip } from '../src/zip';
+import { bookCoverDimensions, type BookDeliveryRecipe } from '../src/engine/bookDelivery';
 import type { ImageElement, TextElement } from '../src/types';
 
 const timeout = 120_000;
@@ -157,6 +159,62 @@ describe('Recto publishing MCP over stdio', () => {
     expect(await result('recto_compile_book', { ...args, revision: info.revision, output: 'interior.pdf', preset: 'print' }))
       .toMatchObject({ pages: 3 });
     expect((await PDFDocument.load(await readFile(files('interior.pdf')))).getPageCount()).toBe(3);
+  }, timeout);
+
+  it('returns real PNG content for the saved and proposed layouts and offers the reviewed draft', async () => {
+    const input = { project: 'original.recto', revision };
+    const original = await call('recto_render_preview_image', { ...input, page: 1, maxEdge: 640 }, readClient);
+    expect(original.isError, JSON.stringify(original.content)).not.toBe(true);
+    const image = original.content.find(item => item.type === 'image');
+    expect(image).toMatchObject({ type: 'image', mimeType: 'image/png' });
+    const originalPng = Buffer.from(image?.data ?? '', 'base64');
+    expect(originalPng.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
+    expect(originalPng.readUInt32BE(20)).toBeLessThanOrEqual(640);
+
+    const preview = await result('recto_preview_layout_edit', { ...input, changes: [
+      { kind: 'update-frame', frameId: 'story', xMm: 45 },
+      { kind: 'object-style', frameId: 'story', styleId: 'obj-none' },
+      { kind: 'add-shape', pageId, xMm: 30, yMm: 55, widthMm: 70, heightMm: 20, shape: 'rectangle', fill: '#ee4422' },
+      { kind: 'add-table', pageId, xMm: 30, yMm: 85, widthMm: 70, heightMm: 20, rows: [['Name', 'Role'], ['Ada', 'Editor']] },
+    ] });
+    const refined = await result('recto_preview_layout_edit', { ...input, basePlanId: preview.planId,
+      changes: [{ kind: 'update-frame', frameId: (preview.createdFrameIds as string[])[0], opacity: 0.75 }] });
+    const rendered = await call('recto_render_preview_image', { planId: refined.planId, spread: 1, maxEdge: 640 });
+    expect(rendered.isError, JSON.stringify(rendered.content)).not.toBe(true);
+    expect(rendered.content.find(item => item.type === 'image')?.data).not.toBe(image?.data);
+    const key = '1234567890abcdefghij';
+    const canvas = `recto-canvas-${key}.png`;
+    const proposal = `recto-proposal-${key}.rectoproposal`;
+    await writeFile(files(canvas), originalPng);
+    const observed = await call('recto_view_shared_canvas', { canvas }, readClient);
+    expect(observed.content.find(item => item.type === 'image')).toMatchObject({ data: image?.data });
+    await result('recto_offer_desktop_proposal', { planId: refined.planId, output: proposal });
+    const envelope = JSON.parse(await readFile(files(proposal), 'utf8'));
+    expect(envelope).toMatchObject({ format: 'recto-proposal', sourceRevision: revision });
+    expect(envelope.draft.spreads[0].elements[0]).toMatchObject({ x: 45, objectStyleId: 'obj-none' });
+    expect(envelope.draft.spreads[0].elements[1]).toMatchObject({ type: 'shape', opacity: 0.75 });
+    expect(await readFile(files('original.recto'), 'utf8')).toBe(untouched);
+  }, timeout);
+
+  it('delivers a book ZIP only after cover dimensions have been approved', async () => {
+    const recipe: BookDeliveryRecipe = { stock: 'cream-60lb', binding: 'paperback-perfect', preset: 'print' };
+    const dimensions = bookCoverDimensions(project.settings, 1, recipe);
+    const cover = structuredClone(project);
+    cover.settings.widthMm = dimensions.width;
+    cover.settings.heightMm = dimensions.height;
+    cover.settings.bleedMm = dimensions.bleed;
+    recipe.cover = cover;
+    const archive = { version: 2, title: 'Delivery sample', chapters: [{ id: 'one', name: 'Chapter', recto: false, state: project }], delivery: recipe };
+    const book = 'delivery.rectobook';
+    await writeFile(files(book), JSON.stringify(archive));
+    const pending = await result('recto_inspect_book', { book });
+    expect((await call('recto_export_book_package', { book, revision: pending.revision, output: 'delivery.zip' })).isError).toBe(true);
+    recipe.approvedDimensions = dimensions.signature;
+    await writeFile(files(book), JSON.stringify(archive));
+    const approved = await result('recto_inspect_book', { book });
+    await result('recto_export_book_package', { book, revision: approved.revision, output: 'delivery.zip' });
+    const entries = await readZip(new Uint8Array(await readFile(files('delivery.zip'))));
+    expect([...entries.keys()]).toEqual(expect.arrayContaining(['interior.pdf', 'cover.pdf', 'ebook.epub', 'delivery-report.json']));
   }, timeout);
 
   it('prints CSV records with a local photo and leaves no batch when a record fails', async () => {

@@ -24,16 +24,28 @@ function createPublishingServer(workspace: PublishingWorkspace) {
     capabilities: { tools: {} },
   });
   const plans = new DraftPlans();
+  async function reviewSource(args: { project?: string; revision?: string; planId?: string }) {
+    if (Boolean(args.project) === Boolean(args.planId) || (args.planId && args.revision)) throw new Error('Choose a project with an optional revision, or a plan ID.');
+    return args.planId ? plans.preview(workspace, args.planId) : loadProject(workspace, args.project!, args.revision);
+  }
+  async function editingBase(args: { project: string; revision: string; basePlanId?: string }) {
+    const original = await loadProject(workspace, args.project, args.revision);
+    if (!args.basePlanId) return { original, base: original, inputs: undefined };
+    const base = await plans.preview(workspace, args.basePlanId);
+    if (base.file !== original.file || base.revision !== original.revision) throw new Error('The preview belongs to a different source.');
+    return { original, base, inputs: base.inputs };
+  }
   let busy = false;
   function tool<T extends z.ZodType>(name: string, description: string, inputSchema: T,
-    run: (args: z.infer<T>) => Promise<Record<string, unknown>>, writes = false) {
+    run: (args: z.infer<T>, images: NonNullable<CallToolResult['content']>) => Promise<Record<string, unknown>>, writes = false) {
     server.registerTool(name, { description, inputSchema: inputSchema as z.ZodType<unknown>,
       annotations: { readOnlyHint: !writes, destructiveHint: false, openWorldHint: false } }, async (args: unknown): Promise<CallToolResult> => {
       if (busy) return failure('The publishing server is processing another request. Retry after it finishes.');
       busy = true;
       try {
-        const result = await run(args as z.infer<T>);
-        return { structuredContent: result, content: [{ type: 'text', text: JSON.stringify(result) }] };
+        const images: NonNullable<CallToolResult['content']> = [];
+        const result = await run(args as z.infer<T>, images);
+        return { structuredContent: result, content: [{ type: 'text', text: JSON.stringify(result) }, ...images] };
       } catch (error) {
         return failure(error instanceof Error ? error.message : 'The tool failed.');
       } finally { busy = false; }
@@ -58,15 +70,43 @@ function createPublishingServer(workspace: PublishingWorkspace) {
         parents: source.masterSpreads.slice(0, 50).map(parent => ({ id: parent.id, name: parent.name })),
         conditions: source.conditions?.slice(0, 50) || [],
         paragraphStyles: source.paragraphStyles.slice(0, 50).map(({ id, name }) => ({ id, name })),
+        objectStyles: source.objectStyles?.slice(0, 50).map(({ id, name }) => ({ id, name })) ?? [],
+        activeSpread: source.activeSpreadIndex + 1,
         headings: headings.slice(0, 30).map(heading => ({ ...heading, title: heading.title.slice(0, 200) })), headingCount: headings.length };
     });
   });
 
+  tool('recto_render_preview_image', 'Return a PNG of a saved page or spread, or of a pending edit. Use it for visual review and compare it with the saved source.', z.strictObject({
+    project: file.optional(), revision: revision.optional(), planId: z.uuid().optional(),
+    page: z.int().min(1).max(limits.pages).optional(), spread: z.int().min(1).max(limits.pages).optional(),
+    maxEdge: z.int().min(256).max(1800).default(1200),
+  }), async (args, images) => {
+    if (args.page !== undefined && args.spread !== undefined) throw new Error('Choose a physical page or a spread, or omit both for the active spread.');
+    const project = await reviewSource(args);
+    const { renderProof } = await import('./proof');
+    const { bytes, ...proof } = await withPublication(project, source => renderProof(source,
+      args.page === undefined ? { spread: args.spread ?? source.activeSpreadIndex + 1 } : { page: args.page }, args.maxEdge));
+    images.push({ type: 'image', mimeType: 'image/png', data: bytes.toString('base64') });
+    return { ...proof, revision: project.revision, planId: args.planId ?? null, metrics: headlessLayoutNotice };
+  });
+
+  tool('recto_view_shared_canvas', 'See the visible Recto desktop canvas that the user explicitly shared. Pass the PNG filename from the desktop review dialog.', z.strictObject({ canvas: file }), async (args, images) => {
+    if (!/^recto-canvas-[a-zA-Z0-9]{20}\.png$/.test(args.canvas.split('/').at(-1) || '')) throw new Error('Use the canvas filename from the desktop review dialog.');
+    const png = await workspace.read(args.canvas, ['.png'], 3 * 1024 * 1024);
+    if (png.length < 33 || png.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a' || png.toString('ascii', 12, 16) !== 'IHDR') {
+      throw new Error('This canvas snapshot is not a PNG. Share a fresh canvas from the editor.');
+    }
+    const width = png.readUInt32BE(16), height = png.readUInt32BE(20);
+    if (width < 1 || height < 1 || width > 1200 || height > 1200) throw new Error('The snapshot dimensions exceed the shared canvas limit.');
+    images.push({ type: 'image', mimeType: 'image/png', data: png.toString('base64') });
+    return { canvas: args.canvas, width, height, view: 'editor-canvas-snapshot' };
+  });
+
   tool('recto_read_spread', 'Inspect frames on a physical page or spread. Positions are in millimetres. Includes short manuscript excerpts and story IDs.', z.strictObject({
-    ...projectInput, ...pagination,
+    project: file.optional(), revision: revision.optional(), planId: z.uuid().optional(), ...pagination,
     page: z.int().min(1).max(limits.pages).optional(), spread: z.int().min(1).max(limits.pages).optional(),
   }).refine(args => (args.page === undefined) !== (args.spread === undefined), 'Choose exactly one physical page or spread number.'), async args => {
-    const project = await loadProject(workspace, args.project, args.revision);
+    const project = await reviewSource(args);
     return withPublication(project, async source => {
       const state = publicationSnapshot(source);
       const spread = args.spread !== undefined ? state.spreads[args.spread - 1]
@@ -88,9 +128,10 @@ function createPublishingServer(workspace: PublishingWorkspace) {
   });
 
   tool('recto_read_story', 'Read a bounded range of the source story and identify protected manuscript markers. Offsets are UTF-16.', z.strictObject({
-    ...projectInput, frameId, start: z.int().min(0).default(0), length: z.int().min(1).max(8000).default(3000),
+    project: file.optional(), revision: revision.optional(), planId: z.uuid().optional(),
+    frameId, start: z.int().min(0).default(0), length: z.int().min(1).max(8000).default(3000),
   }), async args => {
-    const project = await loadProject(workspace, args.project, args.revision);
+    const project = await reviewSource(args);
     const { head, frames } = resolveStory(project.source, args.frameId);
     const content = head.storyContent || plainStory(head.rawStoryText ?? frames.map(frame => frame.text).join('\n\n'), head.paragraphStyleId);
     const text = storyText(content);
@@ -126,18 +167,18 @@ function createPublishingServer(workspace: PublishingWorkspace) {
   });
 
   tool('recto_preview_story_edit', 'Preview a protected text replacement or a small story-wide tracking adjustment. Review the layout and preflight before saving a copy.', z.strictObject({
-    ...projectInput, revision, frameId,
+    ...projectInput, revision, frameId, basePlanId: z.uuid().optional(),
     change: z.discriminatedUnion('kind', [
       z.strictObject({ kind: z.literal('replace'), start: z.int().min(0), end: z.int().min(0),
         expectedText: z.string().max(24_000), text: z.string().max(24_000) }),
       z.strictObject({ kind: z.literal('tracking'), deltaPerThousandEm: z.int().min(-30).max(30).refine(value => value !== 0) }),
     ]),
   }), async args => {
-    const project = await loadProject(workspace, args.project, args.revision);
-    return withPublication(project, async source => {
+    const { original, base, inputs } = await editingBase(args);
+    return withPublication(base, async source => {
       const draft = await proposeStoryChange(source, args.frameId, args.change);
-      const preview = previewDraft(source, draft);
-      return { ...plans.stage(project, draft), ...preview };
+      const preview = previewDraft(original.source, draft);
+      return { ...plans.stage(original, draft, inputs), ...preview };
     });
   });
 
@@ -156,14 +197,14 @@ function createPublishingServer(workspace: PublishingWorkspace) {
     });
   });
 
-  tool('recto_preview_layout_edit', 'Preview new text and shapes, alignment, layers, editions, parents, image relinking, title, saved view, table cells, notes, or generated lists. Table rows and columns are one-based.', z.strictObject({
-    ...projectInput, revision, changes: z.array(documentChange).min(1).max(25),
+  tool('recto_preview_layout_edit', 'Preview frame placement, geometry, styles, image and vector effects, tables, alignment, layers, editions, parents, notes, or generated lists. Table rows and columns are one-based.', z.strictObject({
+    ...projectInput, revision, basePlanId: z.uuid().optional(), changes: z.array(documentChange).min(1).max(25),
   }), async args => {
-    const project = await loadProject(workspace, args.project, args.revision);
-    return withPublication(project, async source => {
+    const { original, base, inputs } = await editingBase(args);
+    return withPublication(base, async source => {
       const { draft, createdFrameIds } = await proposeDocumentChanges(workspace, source, args.changes);
-      const preview = previewDraft(source, draft);
-      return { ...plans.stage(project, draft), createdFrameIds, operations: args.changes.map(change => change.kind), ...preview };
+      const preview = previewDraft(original.source, draft);
+      return { ...plans.stage(original, draft, inputs), createdFrameIds, operations: args.changes.map(change => change.kind), ...preview };
     });
   });
 
@@ -188,12 +229,32 @@ function createPublishingServer(workspace: PublishingWorkspace) {
     covered: ['project creation', 'spread and story inspection', 'story replacement and tracking', 'text and shape placement', 'alignment and distribution', 'layer and edition visibility',
       'parent assignment', 'saved view and document title', 'image relinking', 'table cell edits', 'footnotes and endnotes', 'generated publication lists',
       'appearance profiles', 'XLIFF review', 'preflight', 'PDF and EPUB export', 'IDML import and export', 'Scribus import', 'batch publishing',
-      'book archive inspection and interior PDF export'],
-    editorOnly: ['live canvas interaction', 'current workspace and unsaved changes', 'live collaboration', 'native dialogs and updater',
-      'interactive drawing and image adjustments', 'advanced table, style and book authoring'],
+      'book archive inspection, interior PDF and delivery ZIP', 'visual proof images', 'shared desktop canvas snapshots',
+      'desktop edit proposals', 'frame geometry and style application', 'image levels and curves', 'vector decorations',
+      'table merging, row splitting and continuation pages'],
+    editorOnly: ['live canvas gestures', 'continuous screen sharing', 'live collaboration', 'native dialogs and updater',
+      'freehand drawing', 'advanced style authoring'],
   }));
 
   if (workspace.writable) {
+    tool('recto_export_book_package', 'Export an approved book delivery recipe to a ZIP with interior PDF, cover PDF, EPUB, and report. Requires the current book revision and a cover approved in Recto.', z.strictObject({
+      book: file, revision, output: file,
+    }), async args => {
+      await workspace.checkOutput(args.output, '.zip');
+      const { loadBook, confirmBookRevision } = await import('./book');
+      const book = await loadBook(workspace, args.book, args.revision);
+      if (!book.delivery) throw new Error('Set and approve a delivery recipe in Recto, then save the book archive.');
+      const { buildBookDelivery } = await import('../../src/engine/bookDelivery');
+      const archive = await buildBookDelivery(book.source, book.delivery, true);
+      if (archive.byteLength > limits.batch) throw new Error('The delivery ZIP exceeds 128 MiB.');
+      await confirmBookRevision(workspace, args.book, args.revision);
+      return { ...await workspace.write(args.output, '.zip', archive), sourceRevision: book.revision, pages: book.report.pageCount };
+    }, true);
+
+    tool('recto_offer_desktop_proposal', 'Send a staged draft to the open desktop review dialog using its one-time workspace-relative filename. The editor user can review and apply it.', z.strictObject({
+      planId: z.uuid(), output: file,
+    }), async args => plans.offer(workspace, args.planId, args.output), true);
+
     tool('recto_compile_book', 'Assemble and export the interior of a portable .rectobook archive as a strict PDF. Review the book revision and cover requirements first.', z.strictObject({
       book: file, revision, output: file, preset: preset.default('press'),
     }), async args => {

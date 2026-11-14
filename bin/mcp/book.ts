@@ -21,7 +21,7 @@ export async function loadBook(workspace: PublishingWorkspace, file: string, exp
   const pageCount = source.spreads.reduce((sum, spread) => sum + spread.pages.length, 0);
   if (pageCount > limits.pages) throw new Error('This server supports books up to 500 pages including inserted blanks.');
   const dimensions = archive.delivery && bookCoverDimensions(source.settings, pageCount, archive.delivery);
-  return { file, source, revision, report: { title: archive.title, pageCount, chapters,
+  return { file, source, revision, delivery: archive.delivery, report: { title: archive.title, pageCount, chapters,
     blankPages: pageCount - chapters.reduce((sum, chapter) => sum + chapter.pageCount, 0),
     cover: dimensions ? { ...dimensions, approved: archive.delivery?.approvedDimensions === dimensions.signature } : null,
   } };

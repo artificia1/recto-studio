@@ -8,6 +8,7 @@ interface FileMenuProps {
   onClose(): void;
   onSave(saveAs?: boolean): void;
   onRecovery(): void;
+  onProposalReview(): void;
   handleCreateBlank(preset: PagePreset, facing: boolean): void;
   handleOpenClick(): void;
   handleIdmlClick(): void;
@@ -28,7 +29,7 @@ interface FileMenuProps {
 }
 
 export default function FileMenu({
-  state, selectedTextId, onClose, onSave, onRecovery, handleCreateBlank, handleOpenClick,
+  state, selectedTextId, onClose, onSave, onRecovery, onProposalReview, handleCreateBlank, handleOpenClick,
   handleIdmlClick, handleInddClick, handlePlaceClick, onMerge, onScribus, onOpenDocumentSetup,
   onOpenQr, onOpenEquation, onOpenBarcode, onOpenStoryEditor, onOpenScripts, onOpenShortcuts,
   handleOpenCoverSpine, handleOpenImposition, onInstallGuide,
@@ -75,6 +76,9 @@ export default function FileMenu({
         </button>
         <button className="top-dropdown-item" onClick={() => { onClose(); onRecovery(); }}>
           <span>Recover Unsaved Projects…</span>
+        </button>
+        <button className="top-dropdown-item" aria-haspopup="dialog" onClick={() => { onClose(); onProposalReview(); }}>
+          <span>Review Publishing Changes…</span>
         </button>
       </>}
       {!isDesktop() && <button type="button" className="top-dropdown-item" aria-haspopup="dialog"

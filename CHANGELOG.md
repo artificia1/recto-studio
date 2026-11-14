@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Model-facing PNG previews for pages, spreads, and pending layouts, with optional desktop canvas capture and undoable proposal review.
+- Iterative MCP layout edits with frame geometry, styles, artwork controls, table continuations, and approved book delivery ZIPs.
 - Optional local `recto mcp` server for publication inspection, preflight, reviewed drafts, XLIFF, book interiors, and batch PDF output from CSV/JSON with local photos.
 - Portable Appearance profiles shared between the editor and the publishing CLI.
 - Proposed manuscript revisions with reviewer notes, side-by-side comparison, stale-edit protection, acceptance/rejection and undo.

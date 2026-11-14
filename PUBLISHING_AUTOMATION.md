@@ -2,7 +2,8 @@
 
 Recto Studio’s optional Model Context Protocol server uses the same local
 publishing engines as the editor. It communicates over standard input and output.
-The web editor and desktop application do not launch or connect to it.
+The server starts from your MCP client. The desktop app can exchange local
+review files through a workspace you choose.
 
 ## Start the server
 
@@ -70,11 +71,13 @@ For batch work, use a saved template with `{{field}}` placeholders:
 | --- | --- |
 | Find a physical page, frame, style, or story | `recto_inspect_publication`, `recto_read_spread`, `recto_read_story` |
 | Preview and save edits | `recto_preview_story_edit`, `recto_preview_layout_edit`, `recto_save_draft` |
+| Inspect the layout visually | `recto_render_preview_image`, `recto_view_shared_canvas` |
+| Review a proposal in the desktop editor | `recto_offer_desktop_proposal` |
 | Start a document or convert a file | `recto_create_publication`, `recto_import_publication` (IDML and Scribus) |
 | Translate a publication | `recto_export_publication` with `xliff`, `recto_preview_translation`, `recto_save_draft` |
 | Check or deliver a publication | `recto_run_preflight`, `recto_compile_pdf`, `recto_export_publication` (EPUB, fixed-layout EPUB, IDML, XLIFF) |
 | Render a personalized catalog | `recto_render_batch` with CSV or a JSON array |
-| Review and export a book interior | `recto_inspect_book`, `recto_compile_book` |
+| Deliver a book | `recto_inspect_book`, `recto_compile_book`, `recto_export_book_package` |
 | Share an editor theme | `recto_appearance`, `recto_save_appearance` |
 
 **Story edits.** Read the uncomposed story and work with its UTF-16 offsets and
@@ -86,12 +89,31 @@ paragraph movement, and note movement. Save with the preview’s plan ID.
 The connection keeps up to four recent plans for 15 minutes. A changed source
 file invalidates its preview.
 
-**Layout edits.** Use the preview tool to place text and shapes by page ID,
-align or distribute frames, relink images, edit table cells, add footnotes or endnotes,
-generate publication lists, assign a parent page, and change selected layer,
-edition, metadata, and saved view settings. Frame geometry and gaps use
-millimetres. Table rows and columns are one-based. Open the resulting draft
-in Recto to refine the design.
+**Layout edits.** Place text, shapes, images, and tables by page ID. Move and
+resize frames, apply existing object or paragraph styles, adjust raster levels
+and curves, add vector hatching or mesh fills, or assign a patterned stroke.
+Alignment, image relinking, table cells, notes, publication lists, parents,
+layers, editions, and saved view settings are also available. Frame geometry
+and gaps use millimetres. Table rows and columns are one-based. Use table
+operations to merge cells, enable row splitting, or append a continuation page.
+
+**Visual feedback.** Call `recto_render_preview_image` with a project and
+revision, or with a `planId`. Choose a one-based `page` or `spread`, or omit
+both for the active spread. The server returns an `image/png` content block for
+an image-capable client, plus page numbers and proof warnings. This view uses
+the headless PDF renderer and the trim area. For the actual visible desktop
+canvas with zoom, pasteboard and guides, use a shared canvas snapshot. To
+iterate, pass the last `planId` as `basePlanId` to another preview. Read a pending
+spread or story by passing its `planId` in place of a project path.
+
+**Desktop review.** In the desktop app choose **File → Review Publishing
+Changes**, select the MCP workspace, and choose whether to include the canvas.
+Recto writes a project snapshot and shows its filename, a proposal filename,
+and the optional PNG filename. Give those names to your client. It can use
+`recto_view_shared_canvas` to look at the capture and `recto_offer_desktop_proposal`
+to send a staged plan to the dialog. Review the edit and click **Apply to
+document** to update the canvas with one Undo step. Local document changes or
+collaboration invalidate the review. The files stay in your workspace for review.
 
 **Translation.** Start from a Recto XLIFF 2.0 exchange. The review checks source
 identities and protected inline codes. A draft, locked, unknown, or conflicting
@@ -110,6 +132,8 @@ of up to 100 records and 500 output pages.
 **Books.** Open a portable `.rectobook` archive containing chapter snapshots.
 The inspection reports physical page numbers, inserted blank pages, and any
 saved cover requirements. Export the assembled interior PDF using that revision.
+To export the interior, separate cover, EPUB, and delivery report together,
+approve the cover in Recto and save the book archive with its delivery recipe.
 
 **Appearance.** Every theme, accent, custom hex, button style, control density,
 and pasteboard tone is available in a portable `.rectoappearance` profile.
@@ -121,8 +145,8 @@ existing settings.
 ## Scope
 
 Call `recto_available_features` and the client’s tool listing for the current
-coverage. The server works with saved files. Live canvas gestures, unsaved
-editor state, collaboration, native dialogs, and the desktop updater remain in
-the interactive app. Advanced artwork, style editing, and cover and delivery
-package workflows still use the editor. Headless layout can differ for fonts without embedded data.
+coverage. The desktop editor controls each share and approval. Continuous
+screen sharing, native dialogs, collaboration, the updater, advanced style
+creation, and freehand drawing remain in the editor. Headless layout can differ
+for fonts without embedded data.
 Review final line breaks, and run independent preflight for PDF/X candidates.

@@ -2,8 +2,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod project_files;
+mod proposal_inbox;
 
 use project_files::{is_native_project, persist_file, ProjectFile, ProjectFiles, MAX_FILE_BYTES};
+use proposal_inbox::ProposalInbox;
 use std::io::Read;
 use std::sync::{Arc, Mutex};
 
@@ -132,8 +134,13 @@ mod tests {
 fn main() {
     tauri::Builder::default()
         .manage(ProjectRegistry::default())
+        .manage(ProposalInbox::default())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![desktop_open_document, desktop_save_project, desktop_save_file])
+        .invoke_handler(tauri::generate_handler![
+            desktop_open_document, desktop_save_project, desktop_save_file,
+            proposal_inbox::desktop_begin_proposal_review, proposal_inbox::desktop_read_proposal,
+            proposal_inbox::desktop_end_proposal_review,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Recto desktop application");
 }

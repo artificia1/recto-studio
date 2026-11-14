@@ -42,6 +42,8 @@ export interface ExportOptions {
   trapping?: { widthPt: number; tacLimit?: number };
   tagged?: boolean;
   strict?: boolean;
+  /** Allow incomplete content in disposable visual proofs. */
+  visualProof?: boolean;
   fetchExternalAssets?: boolean;
   download?: boolean;
   includeCropMarks?: boolean;
@@ -70,10 +72,11 @@ export async function exportDocumentToPdf(
   if (options.accessibility && options.spreadRange && options.spreadRange !== 'all') throw new Error('Accessible PDF currently exports the whole publication so linked tables and story structure remain complete.');
   if (options.transparency === 'flatten' && (options.tagged || options.accessibility)) throw new Error('Use separate tagged screen and flattened print exports; a flattened print PDF is not an accessible screen edition.');
   await fontManager.restoreFonts(source.embeddedFonts);
-  const state = publicationSnapshot(await prepareExportAssets(source, options.fetchExternalAssets ?? typeof window !== 'undefined', false, true));
+  const state = publicationSnapshot(await prepareExportAssets(source, options.fetchExternalAssets ?? typeof window !== 'undefined', false, true,
+    options.visualProof ? warning => options.onWarning?.(warning) : undefined));
   const publicationIssues = publicationPreflight(state, options.strict ? 'print' : 'editor');
   const tableErrors = publicationIssues.filter(issue => issue.code === 'TABLE_LAYOUT' && issue.severity === 'error');
-  if (tableErrors.length) throw new Error(tableErrors.map(issue => `Page ${issue.pageNumber}: ${issue.message}`).join('\n'));
+  if (tableErrors.length && !options.visualProof) throw new Error(tableErrors.map(issue => `Page ${issue.pageNumber}: ${issue.message}`).join('\n'));
   if (options.strict || options.accessibility) {
     const errors = publicationIssues.filter(issue => issue.severity === 'error');
     if (errors.length) throw new Error(errors.map(issue => `Page ${issue.pageNumber}: ${issue.message}`).join('\n'));
@@ -132,6 +135,7 @@ export async function exportDocumentToPdf(
   const storyOverflowMap = new Map<string, string[]>();
   doc.setLanguage((state.settings.language || 'en-US') as Parameters<typeof doc.setLanguage>[0]);
   const preflightWarnings: string[] = registerPdfFonts(doc, state.embeddedFonts);
+  if (options.visualProof) preflightWarnings.push(...publicationIssues.slice(0, 30).map(issue => `Page ${issue.pageNumber}: ${issue.message}`));
   (doc as any).preflightWarnings = preflightWarnings;
 
   let isFirstPage = true;
@@ -579,7 +583,10 @@ export async function exportDocumentToPdf(
 
             assetStore.flushPageExportBuffer(img.assetId || img.src);
           } catch (e) {
-            throw new Error(`Image “${img.name || img.id}” could not be rendered. Relink it before exporting. ${e instanceof Error ? e.message : String(e)}`);
+            const warning = `Image “${img.name || img.id}” could not be rendered. Relink it before exporting. ${e instanceof Error ? e.message : String(e)}`;
+            if (!options.visualProof) throw new Error(warning);
+            preflightWarnings.push(warning);
+            drawPlaceholderImage(doc, elX, elY, img.width, img.height, img.caption);
           }
         } else {
           drawPlaceholderImage(doc, elX, elY, img.width, img.height, img.caption);

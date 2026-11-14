@@ -54,7 +54,8 @@ export function fullImageSource(image: ImageElement): string {
 }
 
 /** Snapshot and freeze external image bytes before export; no proxy or browser-local URL escapes. */
-export async function prepareExportAssets(source: ProjectState, fetchExternal = false, includeHidden = false, renderAdjustments = false): Promise<ProjectState> {
+export async function prepareExportAssets(source: ProjectState, fetchExternal = false, includeHidden = false, renderAdjustments = false,
+  onMissingImage?: (warning: string) => void): Promise<ProjectState> {
   const state = structuredClone(source);
   const hiddenEditions = hiddenEditionIds(state);
   const masters = masterDependencies(state.masterSpreads, state.spreads.map(spread => spread.masterSpreadId));
@@ -67,6 +68,11 @@ export async function prepareExportAssets(source: ProjectState, fetchExternal = 
   for (const image of images) {
     let src = fullImageSource(image);
     if (!src) continue; // Empty design placeholders are handled by target-specific preflight.
+    if (onMissingImage && !src.startsWith('data:')) {
+      onMissingImage(`Image “${image.name || image.id}” needs relinking before export.`);
+      image.src = ''; delete image.assetId; delete image.proxySrc;
+      continue;
+    }
     const adjustments = renderAdjustments ? image.adjustments : undefined;
     const key = adjustments ? JSON.stringify([src, adjustments]) : src;
     let asset = cache.get(key);

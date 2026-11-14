@@ -46,7 +46,7 @@ export function bookCoverDimensions(settings: ProjectState['settings'], pageCoun
   return { width, height, signature, matches, pageCount, bleed: metrics.bleedMm, spine: metrics.spineWidthMm };
 }
 
-export async function buildBookDelivery(source: ProjectState, delivery: BookDeliveryRecipe) {
+export async function buildBookDelivery(source: ProjectState, delivery: BookDeliveryRecipe, isolatedFonts = false) {
   const book = structuredClone(source);
   const recipe = structuredClone(delivery);
   const dimensions = bookCoverDimensions(book.settings, book.spreads.reduce((count, spread) => count + spread.pages.length, 0), recipe);
@@ -57,9 +57,15 @@ export async function buildBookDelivery(source: ProjectState, delivery: BookDeli
   const { exportDocumentToEpubAsync } = await import('../epubExport');
   const pdfOptions = { ...PDF_PRESETS[recipe.preset].options, spreadRange: 'all' as const,
     download: false, strict: true, onWarning: (warning: string) => warnings.push(warning) };
-  const interior = new Uint8Array((await exportDocumentToPdf(book, pdfOptions)).output('arraybuffer'));
-  const cover = new Uint8Array((await exportDocumentToPdf(recipe.cover, pdfOptions)).output('arraybuffer'));
-  const ebook = await exportDocumentToEpubAsync(book, { download: false, strict: true });
+  const withFonts = async <T>(project: ProjectState, run: () => Promise<T>) => {
+    if (!isolatedFonts) return run();
+    const { fontManager } = await import('../fontManager');
+    return fontManager.withProjectFonts(project.embeddedFonts, run);
+  };
+  const interior = new Uint8Array((await withFonts(book, () => exportDocumentToPdf(book, pdfOptions))).output('arraybuffer'));
+  const coverProject = recipe.cover;
+  const cover = new Uint8Array((await withFonts(coverProject, () => exportDocumentToPdf(coverProject, pdfOptions))).output('arraybuffer'));
+  const ebook = await withFonts(book, () => exportDocumentToEpubAsync(book, { download: false, strict: true }));
   warnings.push(...ebook.warnings);
 
   const { PDFDocument } = await import('pdf-lib');

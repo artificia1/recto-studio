@@ -20,6 +20,7 @@ const ScribusImportDialog = lazy(() => import('./ScribusImportDialog'));
 const NewProjectMenu = lazy(() => import('./NewProjectMenu'));
 const ExportMenu = lazy(() => import('./ExportMenu'));
 const FileMenu = lazy(() => import('./FileMenu'));
+const LocalProposalDialog = lazy(() => import('./LocalProposalDialog'));
 const CollaborationDialog = lazy(() => import('./CollaborationDialog'));
 const DataMergeDialog = lazy(() => import('./DataMergeDialog'));
 const VersionHistoryDialog = lazy(() => import('./VersionHistoryDialog'));
@@ -102,6 +103,7 @@ export function TopBar({
   const [showRecovery, setShowRecovery] = useState(false);
   const [showAppearance, setShowAppearance] = useState(false);
   const [showInstallGuide, setShowInstallGuide] = useState(false);
+  const [showProposalReview, setShowProposalReview] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -614,6 +616,7 @@ export function TopBar({
           {showFileMenu && <Suspense fallback={null}>
             <FileMenu state={state} selectedTextId={selectedElements.length === 1 && selectedElements[0].type === 'text' ? selectedElements[0].id : undefined}
               onClose={() => setShowFileMenu(false)} onSave={saveProject} onRecovery={() => setShowRecovery(true)}
+              onProposalReview={() => setShowProposalReview(true)}
               handleCreateBlank={handleCreateBlank} handleOpenClick={handleOpenClick} handleIdmlClick={handleIdmlClick}
               handleInddClick={handleInddClick} handlePlaceClick={handlePlaceClick} onMerge={() => setShowDataMergeModal(true)}
               onScribus={() => setShowScribusImport(true)} onOpenDocumentSetup={onOpenDocumentSetup} onOpenQr={onOpenQr}
@@ -767,6 +770,7 @@ export function TopBar({
 
       {showAppearance && <Suspense fallback={null}><AppearancePage onClose={() => setShowAppearance(false)} /></Suspense>}
       {showInstallGuide && <Suspense fallback={null}><WebInstallDialog onClose={() => setShowInstallGuide(false)} /></Suspense>}
+      {showProposalReview && <Suspense fallback={null}><LocalProposalDialog onClose={() => setShowProposalReview(false)} /></Suspense>}
       {showScribusImport && <Suspense fallback={null}><ScribusImportDialog onClose={() => setShowScribusImport(false)} /></Suspense>}
       {showDataMergeModal && <Suspense fallback={null}><DataMergeDialog
         csvText={csvText} setCsvText={setCsvText} onClose={() => setShowDataMergeModal(false)} /></Suspense>}
