@@ -44,7 +44,7 @@ describe('LittleCMS ICC colour management', () => {
     manager.updateSettings({ colorManagement: { outputProfile: asset, intent: 'relative', blackPointCompensation: true,
       preservePureBlack: true, convertPdf: true, tacLimit: 320 } });
     const saved = parseProject(manager.exportJson(), manager.getState());
-    expect(profileBytes(saved.settings.colorManagement!.outputProfile)).toEqual(profile);
+    expect(Buffer.compare(profileBytes(saved.settings.colorManagement!.outputProfile), profile)).toBe(0);
     manager.undo(); expect(manager.getState().settings.colorManagement).toBeUndefined();
     const broken = structuredClone(saved); broken.settings.colorManagement!.tacLimit = 999;
     expect(() => parseProject(JSON.stringify(broken), manager.getState())).toThrow('TAC');
