@@ -1,0 +1,48 @@
+name: Check Windows desktop
+
+on:
+  pull_request:
+    paths:
+      - 'src-tauri/**'
+      - '.github/workflows/windows-native-check.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src-tauri/**'
+      - '.github/workflows/windows-native-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: 'windows-native-${{ github.ref }}'
+  cancel-in-progress: true
+
+jobs:
+  native:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Build editor assets for Tauri
+        run: npm run build
+      - name: Set up Rust
+        run: rustup default stable
+      - name: Cache Rust dependencies and build outputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: windows-native-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/src/**', 'src-tauri/tauri.conf.json') }}
+          restore-keys: windows-native-
+      - name: Test native file operations and proposal review
+        working-directory: src-tauri
+        run: cargo test --locked
