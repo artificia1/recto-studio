@@ -32,7 +32,7 @@ executable="$app/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExe
 [[ -L "$mount/Applications" ]]
 codesign --verify --deep --strict "$app"
 # Compare the architecture of the actual Mach-O payload and launch it on the same architecture.
-lipo -verify_arch "$arch" "$executable"
+lipo "$executable" -verify_arch "$arch"
 test "$(uname -m)" = "$arch"
 "$executable" &
 pid=$!
