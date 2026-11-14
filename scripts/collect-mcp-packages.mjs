@@ -57,7 +57,7 @@ if (process.platform === 'win32' && label === 'Windows-x64') {
 } else if (process.platform === 'linux' && label === 'Linux-x64') {
   const deb = await collect('deb', 'deb');
   await collect('appimage', 'AppImage');
-  const files = run('dpkg-deb', ['--contents', deb]);
+  const files = run('dpkg-deb', ['--contents', deb], { maxBuffer: 32 * 1024 * 1024 });
   if (!files.includes('/mcp-runtime/node') || !files.includes('/mcp-runtime/bin/recto.js')) throw new Error('Debian bundle is missing the MCP runtime.');
   run('zip', ['-q', '-r', path.join(output, prefix + '-mcp-runtime.zip'), 'mcp-runtime'], { cwd: path.join(root, 'src-tauri') });
 } else throw new Error('Unexpected platform label ' + label + '.');
