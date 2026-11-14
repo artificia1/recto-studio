@@ -8,6 +8,7 @@ const releasePage = 'https://github.com/artificia1/recto-studio/releases';
 
 export default function WebInstallDialog({ onClose }: { onClose(): void }) {
   const panel = useRef<HTMLElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
   const [worker, setWorker] = useState<ServiceWorkerRegistration>();
   const [loading, setLoading] = useState(false);
   const [state, setState] = useState<'idle' | 'installing' | 'ready' | 'failed'>('idle');
@@ -61,6 +62,7 @@ export default function WebInstallDialog({ onClose }: { onClose(): void }) {
   }, [worker]);
 
   const cache = async () => {
+    closeButton.current?.focus();
     setLoading(true);
     setState('installing');
     try {
@@ -75,6 +77,7 @@ export default function WebInstallDialog({ onClose }: { onClose(): void }) {
   };
 
   const install = async () => {
+    closeButton.current?.focus();
     const event = takeInstallPrompt();
     setCanInstall(false);
     if (event && (await event.prompt().catch(() => null))?.outcome === 'accepted') setInstalled(true);
@@ -90,7 +93,7 @@ export default function WebInstallDialog({ onClose }: { onClose(): void }) {
       <header>
         <img src="./logo.png" alt="" width="46" height="46" />
         <h2 id="web-install-heading">Install Recto Studio</h2>
-        <button type="button" className="action-btn" onClick={onClose} aria-label="Close install guide">Close</button>
+        <button type="button" className="action-btn" onClick={onClose} ref={closeButton} aria-label="Close install guide">Close</button>
       </header>
       <div className="web-install-options">
         <section aria-labelledby="recto-web-app-heading">
