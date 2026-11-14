@@ -1,0 +1,21 @@
+{
+  "productName": "Recto Studio MCP",
+  "mainBinaryName": "recto-studio-mcp",
+  "identifier": "com.recto.studio.mcp",
+  "app": {
+    "windows": [{
+      "title": "Recto Studio MCP",
+      "dragDropEnabled": false,
+      "width": 1440,
+      "height": 900,
+      "minWidth": 1024,
+      "minHeight": 700
+    }]
+  },
+  "bundle": {
+    "createUpdaterArtifacts": false,
+    "resources": ["mcp-runtime/"],
+    "windows": { "nsis": { "startMenuFolder": "Recto Studio MCP" } },
+    "macOS": { "minimumSystemVersion": "14.0", "signingIdentity": "-" }
+  }
+}

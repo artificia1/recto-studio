@@ -8,8 +8,26 @@ use project_files::{is_native_project, persist_file, ProjectFile, ProjectFiles, 
 use proposal_inbox::ProposalInbox;
 use std::io::Read;
 use std::sync::{Arc, Mutex};
+use tauri::Manager;
 
 type ProjectRegistry = Arc<Mutex<ProjectFiles>>;
+
+#[derive(serde::Serialize)]
+struct BundledMcp {
+    executable: std::path::PathBuf,
+    entry: std::path::PathBuf,
+}
+
+#[tauri::command]
+fn desktop_bundled_mcp(app: tauri::AppHandle) -> Result<Option<BundledMcp>, String> {
+    if app.config().identifier != "com.recto.studio.mcp" {
+        return Ok(None);
+    }
+    let runtime = app.path().resource_dir().map_err(|error| error.to_string())?.join("mcp-runtime");
+    let executable = runtime.join(if cfg!(windows) { "node.exe" } else { "node" });
+    let entry = runtime.join("bin/recto.js");
+    Ok((executable.is_file() && entry.is_file()).then_some(BundledMcp { executable, entry }))
+}
 const EXPORT_EXTENSIONS: &[&str] = &[
     "recto", "pdf", "epub", "html", "zip", "idml", "png", "svg", "json",
     "rectoarchive", "rectobook", "rectoset", "rectostyles", "rectotm", "recto-artwork", "rectolayout", "rectoappearance", "xlf", "txt",
@@ -137,7 +155,7 @@ fn main() {
         .manage(ProposalInbox::default())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
-            desktop_open_document, desktop_save_project, desktop_save_file,
+            desktop_open_document, desktop_save_project, desktop_save_file, desktop_bundled_mcp,
             proposal_inbox::desktop_begin_proposal_review, proposal_inbox::desktop_read_proposal,
             proposal_inbox::desktop_end_proposal_review,
         ])

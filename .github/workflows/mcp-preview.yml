@@ -1,0 +1,119 @@
+name: Release MCP preview
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-preview
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: MCP ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            platform: Windows-x64
+            bundles: nsis
+          - runner: macos-15
+            platform: macOS-arm64
+            bundles: dmg
+          - runner: macos-15-intel
+            platform: macOS-x86_64
+            bundles: dmg
+          - runner: ubuntu-22.04
+            platform: Linux-x64
+            bundles: deb,appimage
+    env:
+      VITE_RECTO_MCP_PREVIEW: '1'
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libfuse2 libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf
+      - run: npm ci
+      - name: Prepare standalone MCP runtime
+        run: npm run prepare:mcp-runtime
+      - run: rustup default stable
+      - name: Cache native build dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ matrix.runner }}-mcp-rust-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml', 'src-tauri/src/**', 'src-tauri/tauri*.conf.json') }}
+          restore-keys: ${{ matrix.runner }}-mcp-rust-
+      - name: Prepare Windows and Linux bundlers
+        if: runner.os != 'macOS'
+        run: node scripts/prepare-bundler-tools.mjs
+      - name: Build MCP desktop packages
+        env:
+          APPLE_SIGNING_IDENTITY: '-'
+        run: npm run tauri:build -- --config src-tauri/tauri.mcp.conf.json --bundles '${{ matrix.bundles }}' -- --locked
+      - name: Test native file operations
+        working-directory: src-tauri
+        run: cargo test --release --locked
+      - name: Verify and name release packages
+        run: node scripts/collect-mcp-packages.mjs '${{ matrix.platform }}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: recto-mcp-${{ matrix.platform }}
+          path: release-artifacts/
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: recto-mcp-*
+          path: release-artifacts
+          merge-multiple: true
+      - name: Publish the verified preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          tag="v$version-mcp-preview"
+          prefix="Recto-Studio-$version"
+          assets=(
+            "$prefix-Windows-x64-setup_mcp.exe"
+            "$prefix-macOS-arm64_mcp.dmg"
+            "$prefix-macOS-x86_64_mcp.dmg"
+            "$prefix-Linux-x64_mcp.deb"
+            "$prefix-Linux-x64_mcp.AppImage"
+            "$prefix-Linux-x64-mcp-runtime.zip"
+          )
+          cd release-artifacts
+          for name in "${assets[@]}"; do test -s "$name"; done
+          sha256sum "${assets[@]}" > SHA256SUMS-mcp.txt
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft,targetCommitish --jq 'select(.isDraft) | .targetCommitish')
+            test "$draft" = "$GITHUB_SHA"
+          else
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --prerelease --latest=false --title "Recto Studio $version MCP Preview" --notes-file ../MCP_PREVIEW.md
+          fi
+          gh release upload "$tag" "${assets[@]}" SHA256SUMS-mcp.txt --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false

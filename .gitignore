@@ -6,6 +6,7 @@ dist/
 build/
 src-tauri/target/
 src-tauri/gen/
+src-tauri/mcp-runtime/
 release-artifacts/
 
 # Local environment & config

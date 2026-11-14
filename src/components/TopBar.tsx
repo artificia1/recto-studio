@@ -765,7 +765,7 @@ export function TopBar({
           title="Workspace appearance" aria-haspopup="dialog" onClick={() => setShowAppearance(true)}>
           <ActionIcon name="appearance" /><span className="top-action-label">Appearance</span>
         </button>
-        {isDesktop() && !/Macintosh/.test(navigator.userAgent) && <Suspense fallback={null}><AppUpdater /></Suspense>}
+        {isDesktop() && import.meta.env.VITE_RECTO_MCP_PREVIEW !== '1' && !/Macintosh/.test(navigator.userAgent) && <Suspense fallback={null}><AppUpdater /></Suspense>}
       </div>
 
       {showAppearance && <Suspense fallback={null}><AppearancePage onClose={() => setShowAppearance(false)} /></Suspense>}

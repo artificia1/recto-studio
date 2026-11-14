@@ -9,6 +9,7 @@ import './webInstallDialog.css';
 
 type Offer = { source: string; proposal: string; revision: string; canvas: string | null };
 type Review = Offer & { session: number; editorRevision: number; sourceState: ProjectState };
+type BundledMcp = { executable: string; entry: string };
 
 function closeInbox(proposal: string) {
   return import('@tauri-apps/api/core').then(({ invoke }) => invoke('desktop_end_proposal_review', { proposal })).catch(() => {});
@@ -39,10 +40,18 @@ export default function LocalProposalDialog({ onClose }: { onClose(): void }) {
   const [busy, setBusy] = useState(false);
   const [shareCanvas, setShareCanvas] = useState(true);
   const [message, setMessage] = useState('');
+  const [bundled, setBundled] = useState<BundledMcp>();
   useModalFocus(true, panel);
   const close = () => { if (!busy) onClose(); };
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => {
+    if (import.meta.env.VITE_RECTO_MCP_PREVIEW !== '1') return;
+    let active = true;
+    void import('@tauri-apps/api/core').then(({ invoke }) => invoke<BundledMcp | null>('desktop_bundled_mcp'))
+      .then(runtime => { if (active && runtime) setBundled(runtime); }).catch(() => {});
+    return () => { active = false; };
+  }, []);
   useEffect(() => {
     if (!review) return;
     let alive = true;
@@ -104,6 +113,11 @@ export default function LocalProposalDialog({ onClose }: { onClose(): void }) {
         {!review && <>
           <p>Choose the folder shared with your publishing client. Recto saves a copy of the current document there for review.</p>
           <label><input type="checkbox" checked={shareCanvas} onChange={event => setShareCanvas(event.currentTarget.checked)} /> Include the visible canvas for the client</label>
+          {bundled && <label>Local MCP client configuration
+            <textarea readOnly rows={9} spellcheck={false} wrap="off" style={{ width: '100%' }} value={JSON.stringify({ mcpServers: {
+              recto: { command: bundled.executable, args: [bundled.entry, 'mcp', '--workspace', 'CHOOSE_YOUR_WORKSPACE'] },
+            } }, null, 2)} />
+          </label>}
         </>}
         {review && <>
           <p>Give your client this source file and ask it to send a proposal using the second filename.</p>
