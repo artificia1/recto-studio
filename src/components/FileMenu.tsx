@@ -22,6 +22,7 @@ interface FileMenuProps {
   onOpenStoryEditor?(): void;
   onOpenScripts?(): void;
   onOpenShortcuts?(): void;
+  onInstallGuide(): void;
   handleOpenCoverSpine(): void;
   handleOpenImposition(): void;
 }
@@ -30,7 +31,7 @@ export default function FileMenu({
   state, selectedTextId, onClose, onSave, onRecovery, handleCreateBlank, handleOpenClick,
   handleIdmlClick, handleInddClick, handlePlaceClick, onMerge, onScribus, onOpenDocumentSetup,
   onOpenQr, onOpenEquation, onOpenBarcode, onOpenStoryEditor, onOpenScripts, onOpenShortcuts,
-  handleOpenCoverSpine, handleOpenImposition,
+  handleOpenCoverSpine, handleOpenImposition, onInstallGuide,
 }: FileMenuProps) {
   return (
     <div className="top-dropdown-menu file-dropdown-menu">
@@ -76,6 +77,10 @@ export default function FileMenu({
           <span>Recover Unsaved Projects…</span>
         </button>
       </>}
+      {!isDesktop() && <button type="button" className="top-dropdown-item" aria-haspopup="dialog"
+        onClick={() => { onClose(); onInstallGuide(); }}>
+        <span>Install or use offline…</span>
+      </button>}
       <button
         className="top-dropdown-item"
         onClick={() => {

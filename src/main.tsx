@@ -6,8 +6,10 @@ import { stateManager } from './state';
 import { fontManager } from './fontManager';
 import { initializeAppearance } from './appearance';
 import { isDesktop } from './desktop';
+import { listenForWebInstall } from './webInstall';
 
 initializeAppearance();
+if (!isDesktop()) listenForWebInstall();
 const mountPoint = document.getElementById('root');
 async function start() {
   await stateManager.recoverAutosave();

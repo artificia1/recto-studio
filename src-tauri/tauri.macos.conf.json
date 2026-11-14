@@ -1,0 +1,10 @@
+{
+  "bundle": {
+    "targets": ["dmg"],
+    "createUpdaterArtifacts": false,
+    "macOS": {
+      "minimumSystemVersion": "14.0",
+      "signingIdentity": "-"
+    }
+  }
+}

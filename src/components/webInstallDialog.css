@@ -1,0 +1,48 @@
+.web-install-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10030;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: #0009;
+}
+
+.web-install-dialog {
+  width: min(580px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  border: 1px solid var(--border-light);
+  border-radius: 14px;
+  background: var(--bg-modal);
+  color: var(--text-primary);
+  box-shadow: 0 24px 96px #0007;
+  font-size: 13px;
+}
+
+.web-install-dialog header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.web-install-dialog header img { object-fit: contain; }
+.web-install-dialog h2 { flex: 1; font-size: 20px; line-height: 1.2; }
+.web-install-dialog h3 { font-size: 14px; }
+.web-install-options { display: grid; gap: 12px; padding: 16px 20px 20px; }
+.web-install-options section {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  padding: 12px 14px;
+}
+
+.web-install-options p { color: var(--text-secondary); line-height: 1.5; }
+.web-install-options strong { color: var(--text-primary); }
+.web-install-options a { color: var(--accent-cyan); text-underline-offset: 3px; }
+.web-install-options [role='status']:empty { display: none; }

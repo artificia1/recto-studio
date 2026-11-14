@@ -1,0 +1,106 @@
+name: Build macOS preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      draft_tag:
+        description: Existing macOS preview draft tag, or leave blank for build artifacts
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-preview-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: ${{ !github.event.repository.private }}
+    name: macOS ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install build dependencies
+        run: |
+          npm ci
+          rustup default stable
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ matrix.runner }}-rust-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml') }}
+          restore-keys: ${{ matrix.runner }}-rust-
+      - name: Build the disk image
+        env:
+          APPLE_SIGNING_IDENTITY: '-'
+        run: |
+          npm run tauri:build -- --config src-tauri/tauri.macos.conf.json --bundles dmg -- --locked
+          npm run analyze:bundle
+      - name: Verify native file operations
+        working-directory: src-tauri
+        run: cargo test --locked --release
+      - name: Verify the packaged app
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: bash scripts/verify-macos-bundle.sh "$EXPECTED_ARCH"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: recto-macos-${{ matrix.arch }}
+          path: release-artifacts/*.dmg
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  attach:
+    if: ${{ inputs.draft_tag != '' }}
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: recto-macos-*
+          path: release-artifacts
+          merge-multiple: true
+      - name: Attach both verified images to the matching draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRAFT_TAG: ${{ inputs.draft_tag }}
+        run: |
+          set -euo pipefail
+          cd release-artifacts
+          mapfile -t packages < <(find . -maxdepth 1 -type f -name '*.dmg' -printf '%f\n' | sort)
+          if [[ ${#packages[@]} -ne 2 || ! "$DRAFT_TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-macos-preview$ ]]; then
+            echo "Expected both disk images and a vX.Y.Z-macos-preview draft." >&2
+            exit 1
+          fi
+          version="${BASH_REMATCH[1]}"
+          arm="Recto-Studio-$version-macOS-arm64.dmg"
+          intel="Recto-Studio-$version-macOS-x86_64.dmg"
+          [[ -f "$arm" && -f "$intel" ]]
+          draft=$(gh release view "$DRAFT_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,targetCommitish --jq 'select(.isDraft) | .targetCommitish')
+          if [[ "$draft" != "$GITHUB_SHA" ]]; then
+            echo "Create the draft for this exact commit before attaching the builds." >&2
+            exit 1
+          fi
+          sha256sum "$arm" "$intel" > SHA256SUMS-macos.txt
+          gh release upload "$DRAFT_TAG" "$arm" "$intel" SHA256SUMS-macos.txt --repo "$GITHUB_REPOSITORY" --clobber

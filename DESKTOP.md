@@ -1,4 +1,30 @@
-# Recto Studio for Windows
+# Desktop installation
+
+## macOS
+
+**Safari web app.** On macOS Sonoma 14 or later, [open Recto in Safari](https://artificia1.github.io/recto-studio/)
+and choose **File → Add to Dock → Add**. Launch Recto from the Dock or Spotlight.
+Inside that window, choose **File → Install or use offline → Enable offline access**
+and wait for **Ready to open offline** before disconnecting. Save an editable
+`.recto` file before switching from Safari to the web app so you can open the
+publication there. External fonts and collaboration still need internet access.
+[Apple’s Safari web app guide](https://support.apple.com/en-us/104996)
+
+**Desktop preview.** Choose your disk image from the
+[macOS preview releases](https://github.com/artificia1/recto-studio/releases).
+In **Apple menu → About This Mac**, a **Chip** entry means Apple silicon
+(`arm64`). A **Processor** entry with Intel means `x86_64`. Open the DMG,
+drag **Recto Studio** to **Applications**, then open it from Applications.
+The preview requires macOS 14 or later and includes the editor for offline use.
+
+The preview uses an ad-hoc signature. If macOS says the developer cannot be
+verified and you trust the download from this repository, attempt to open Recto
+once, then go to **System Settings → Privacy & Security → Open Anyway** and
+confirm. A managed Mac may restrict that option. For later preview versions,
+download the new DMG and replace the app in Applications.
+[Apple’s Gatekeeper guide](https://support.apple.com/en-us/102445)
+
+## Windows
 
 Download the Windows x64 setup program from:
 https://github.com/artificia1/recto-studio/releases/latest
@@ -73,15 +99,23 @@ Windows publisher code signing. [Tauri updater documentation](https://v2.tauri.a
 
 The application does not yet register document file associations.
 
-## Linux test packages
+## Linux packages
 
-The manual `linux-artifacts.yml` workflow builds x64 `.deb` and AppImage packages
-on Ubuntu 22.04. It has read-only repository permissions and uploads build artifacts;
-it does not create or publish a release. On a Linux checkout, install Tauri's
-native prerequisites and run `node scripts/build-linux.mjs`. Windows builds keep
-their existing NSIS configuration.
+Download an x64 `.deb` or AppImage from the
+[latest stable release](https://github.com/artificia1/recto-studio/releases/latest).
+The manual `linux-artifacts.yml` workflow builds both packages on Ubuntu 22.04
+and attaches them to a draft. On a Linux checkout, install Tauri's native
+prerequisites and run `node scripts/build-linux.mjs`.
 
 Linux packages use WebKitGTK and require a real Linux smoke test for font loading,
 file dialogs, opening/saving documents and PDF export. The Linux override disables
 updater artifacts: signed Linux updater metadata is a separate release task.
-These packages have not been built or runtime-tested on this Windows workstation.
+
+## Building the macOS preview
+
+Run **Build macOS preview** on a public GitHub repository. The workflow uses
+standard Apple silicon and Intel runners, which GitHub provides free for public
+repositories. For downloadable preview assets, create a draft tagged
+`vX.Y.Z-macos-preview` for the exact commit and pass its tag to the workflow.
+The workflow checks both bundles before attaching the DMGs and checksums.
+[GitHub runner documentation](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#standard-github-hosted-runners-for-public-repositories)

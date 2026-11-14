@@ -26,6 +26,7 @@ const VersionHistoryDialog = lazy(() => import('./VersionHistoryDialog'));
 const RecoveryDialog = lazy(() => import('./RecoveryDialog'));
 const AppearancePage = lazy(() => import('./AppearancePage'));
 const TopAlignmentControls = lazy(() => import('./TopAlignmentControls'));
+const WebInstallDialog = lazy(() => import('./WebInstallDialog'));
 
 function saveProject(saveAs = false) {
   void import('../desktopProjects').then(({ saveCurrentProject }) => saveCurrentProject(saveAs))
@@ -100,6 +101,7 @@ export function TopBar({
   const [showFileMenu, setShowFileMenu] = useState(false);
   const [showRecovery, setShowRecovery] = useState(false);
   const [showAppearance, setShowAppearance] = useState(false);
+  const [showInstallGuide, setShowInstallGuide] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -617,6 +619,10 @@ export function TopBar({
               onScribus={() => setShowScribusImport(true)} onOpenDocumentSetup={onOpenDocumentSetup} onOpenQr={onOpenQr}
               onOpenEquation={onOpenEquation} onOpenBarcode={onOpenBarcode} onOpenStoryEditor={onOpenStoryEditor}
               onOpenScripts={onOpenScripts} onOpenShortcuts={onOpenShortcuts} handleOpenCoverSpine={handleOpenCoverSpine}
+              onInstallGuide={() => {
+                fileMenuRef.current?.querySelector('button')?.focus();
+                setShowInstallGuide(true);
+              }}
               handleOpenImposition={handleOpenImposition} />
           </Suspense>}
         </div>
@@ -756,10 +762,11 @@ export function TopBar({
           title="Workspace appearance" aria-haspopup="dialog" onClick={() => setShowAppearance(true)}>
           <ActionIcon name="appearance" /><span className="top-action-label">Appearance</span>
         </button>
-        {isDesktop() && <Suspense fallback={null}><AppUpdater /></Suspense>}
+        {isDesktop() && !/Macintosh/.test(navigator.userAgent) && <Suspense fallback={null}><AppUpdater /></Suspense>}
       </div>
 
       {showAppearance && <Suspense fallback={null}><AppearancePage onClose={() => setShowAppearance(false)} /></Suspense>}
+      {showInstallGuide && <Suspense fallback={null}><WebInstallDialog onClose={() => setShowInstallGuide(false)} /></Suspense>}
       {showScribusImport && <Suspense fallback={null}><ScribusImportDialog onClose={() => setShowScribusImport(false)} /></Suspense>}
       {showDataMergeModal && <Suspense fallback={null}><DataMergeDialog
         csvText={csvText} setCsvText={setCsvText} onClose={() => setShowDataMergeModal(false)} /></Suspense>}

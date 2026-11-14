@@ -36,8 +36,10 @@ Keep a `.recto` project as your editable source. Use **Export → Save Editable
 Project Archive** to back up all editions, including nonprinting material,
 in one file. [Project archive and print package guide](PUBLISHING.md#project-archives-and-print-packages)
 
-The browser editor opens without an account. For installation, portable builds,
-and updater behavior, see the [desktop guide](DESKTOP.md).
+The browser editor opens without an account. Choose **File → Install or use
+offline** for app installation and offline setup. On macOS Sonoma 14 or later,
+open Recto in Safari and choose **File → Add to Dock**. The [desktop guide](DESKTOP.md)
+covers Windows, Linux, and the downloadable macOS preview.
 
 Use `V` for Selection, `T` for Type, `P` for Pen, and `W` for Preview.
 

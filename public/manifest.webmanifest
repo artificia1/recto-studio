@@ -1,0 +1,16 @@
+{
+  "id": "./",
+  "name": "Recto Studio",
+  "short_name": "Recto",
+  "description": "Page layout and desktop publishing for books, magazines, and print.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#202020",
+  "theme_color": "#202020",
+  "icons": [
+    { "src": "./logo-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./logo.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./logo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

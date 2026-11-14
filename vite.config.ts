@@ -1,9 +1,10 @@
 import { defineConfig } from 'vite';
 import preact from '@preact/preset-vite';
+import { offlineBuild } from './scripts/offlineBuild';
 
 export default defineConfig({
   base: './',
-  plugins: [preact()],
+  plugins: [preact(), offlineBuild()],
   server: {
     port: 3000,
     open: false,

@@ -17,8 +17,9 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   webServer: {
-    command: 'npm run preview -- --host 127.0.0.1 --port 4179 --strictPort',
+    command: 'node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 4179 --strictPort',
     url: 'http://127.0.0.1:4179',
     reuseExistingServer: false,
+    timeout: 120_000,
   },
 });
