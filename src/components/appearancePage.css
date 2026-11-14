@@ -36,6 +36,7 @@
 .appearance-page-header .action-btn { gap: 6px; }
 .appearance-page-header .action-btn span { font-size: 16px; line-height: 1; }
 .appearance-page-footer { border-top: 1px solid var(--border-color); }
+.appearance-profile-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .appearance-page :is(header, footer) p { color: var(--text-secondary); font-size: 12px; }
 
 .appearance-page-content { overflow: auto; padding: 18px 22px 22px; }

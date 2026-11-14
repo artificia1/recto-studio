@@ -11,7 +11,7 @@ import {
   CanvasElement,
   DEFAULT_LAYERS,
   StoryContent, StoryParagraph, StoryRun,
-  FillGradient, Layer, VectorPathElement,
+  FillGradient, GrepStyleRule, Layer, VectorPathElement,
 } from './types';
 import { readZip, uint8ArrayToBase64 } from './zip';
 import { DEFAULT_PARAGRAPH_STYLES, DEFAULT_MASTER_SPREADS } from './state';
@@ -686,7 +686,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
       lineHeight?: number;
       alignment?: 'left' | 'center' | 'right' | 'justify';
       color?: string;
-      grepStyles?: { pattern: string; color: string; bold?: boolean; italic?: boolean }[];
+      grepStyles?: GrepStyleRule[];
     }
   >();
 
@@ -709,7 +709,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
       let detectedLineHeight: number | undefined;
       let detectedAlignment: 'left' | 'center' | 'right' | 'justify' | undefined;
       let detectedColor: string | undefined;
-      const storyGrepRules: { pattern: string; color: string; bold?: boolean; italic?: boolean }[] = [];
+      const storyGrepRules: Omit<GrepStyleRule, 'id'>[] = [];
 
       for (const [rangeIndex, pr] of pRanges.entries()) {
         const applied = decodeStoryXml(extractXmlAttr(pr, 'AppliedParagraphStyle') || '');
@@ -831,13 +831,13 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
         fullText = 'Imported text frame content';
       }
 
-      const uniqueGrepRules: { pattern: string; color: string; bold?: boolean; italic?: boolean }[] = [];
+      const uniqueGrepRules: GrepStyleRule[] = [];
       const seenPatterns = new Set<string>();
       for (const rule of storyGrepRules) {
         const key = `${rule.pattern}:${rule.color}:${rule.bold}:${rule.italic}`;
         if (!seenPatterns.has(key)) {
           seenPatterns.add(key);
-          uniqueGrepRules.push(rule);
+          uniqueGrepRules.push({ ...rule, id: `${storyId}-grep-${uniqueGrepRules.length + 1}` });
         }
       }
 
@@ -1041,7 +1041,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
       };
 
       if (storyData?.grepStyles && storyData.grepStyles.length > 0) {
-        (textEl as any).grepStyles = storyData.grepStyles;
+        textEl.grepStyles = storyData.grepStyles;
       }
 
       if (parentStory) {

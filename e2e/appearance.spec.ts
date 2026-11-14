@@ -1,6 +1,31 @@
 import { expect, test } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
 import { contrastRatio } from './contrast';
 import { importProject, savedProject } from './fixtures';
+
+test('loads and saves an appearance profile without editing the publication', async ({ page }) => {
+  await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.abort());
+  await page.goto('/');
+  await importProject(page);
+  const original = await savedProject(page);
+  await page.getByRole('button', { name: 'Appearance', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Appearance' });
+  const profile = { format: 'recto-appearance', version: 1, appearance: {
+    theme: 'oled', accent: 'custom', customAccent: '#c8a2ff', compact: true, pasteboard: 'gray', buttonStyle: 'glass',
+  } };
+  await dialog.locator('input[type="file"]').setInputFiles({
+    name: 'review.rectoappearance', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(profile)),
+  });
+  await expect(dialog.getByRole('status')).toHaveText('Appearance profile loaded.');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'oled');
+  await expect(page.locator('html')).toHaveAttribute('data-buttons', 'glass');
+  await expect(dialog.getByLabel('Custom hex')).toHaveValue('#c8a2ff');
+  const download = page.waitForEvent('download');
+  await dialog.getByRole('button', { name: 'Save profile', exact: true }).click();
+  expect(JSON.parse(await readFile((await (await download).path())!, 'utf8'))).toEqual(profile);
+  await dialog.getByRole('button', { name: 'Close Appearance' }).click();
+  expect((await savedProject(page)).spreads).toEqual(original.spreads);
+});
 
 test('workspace appearance follows saved preferences without changing the project', async ({ page }) => {
   await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.abort());

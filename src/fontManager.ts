@@ -294,6 +294,23 @@ export class FontManager {
       if (asset.variations && restoredFamily !== asset.family) throw new Error('The saved variable-font instance name does not match its source and coordinates.');
     }
   }
+
+  /** A long-lived headless process serves unrelated projects with independent fonts. */
+  public async withProjectFonts<T>(assets: FontAsset[] | undefined, run: () => Promise<T>): Promise<T> {
+    if (typeof document !== 'undefined') throw new Error('This font scope is for headless publishing.');
+    const cache = { assets: this.fontAssets, fonts: this.parsedFonts, metadata: this.customFonts };
+    this.fontAssets = new Map();
+    this.parsedFonts = new Map();
+    this.customFonts = new Map();
+    try {
+      await this.restoreFonts(assets);
+      return await run();
+    } finally {
+      this.fontAssets = cache.assets;
+      this.parsedFonts = cache.fonts;
+      this.customFonts = cache.metadata;
+    }
+  }
 }
 
 export const fontManager = new FontManager();

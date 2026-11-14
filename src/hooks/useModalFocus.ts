@@ -8,7 +8,8 @@ export function useModalFocus(open: boolean, ref: RefObject<HTMLElement>) {
     const previous = document.activeElement as HTMLElement | null;
     const root = ref.current;
     const focusables = () => Array.from(root.querySelectorAll<HTMLElement>(
-      'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]'));
+      'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]'))
+      .filter(element => element.tabIndex >= 0 && element.getClientRects().length > 0);
     focusables()[0]?.focus();
     const handle = (event: KeyboardEvent) => {
       if (event.key !== 'Tab') return;

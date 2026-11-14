@@ -58,18 +58,37 @@ export function setAppearance(next: Appearance) {
   catch { /* Keep this session's appearance if browser storage is unavailable. */ }
 }
 
+export function normalizeAppearance(saved: Partial<Appearance>): Appearance {
+  return {
+    theme: appearanceThemes.find(theme => theme.value === saved.theme)?.value ?? defaultAppearance.theme,
+    accent: saved.accent && accents.includes(saved.accent) ? saved.accent : defaultAppearance.accent,
+    compact: saved.compact === true,
+    pasteboard: saved.pasteboard && Object.hasOwn(pasteboardColors, saved.pasteboard) ? saved.pasteboard : defaultAppearance.pasteboard,
+    buttonStyle: saved.buttonStyle && buttonStyles.includes(saved.buttonStyle) ? saved.buttonStyle : defaultAppearance.buttonStyle,
+    customAccent: typeof saved.customAccent === 'string' && hexColor.test(saved.customAccent) ? saved.customAccent : defaultAppearance.customAccent,
+  };
+}
+
+export function serializeAppearance(value: Appearance) {
+  return JSON.stringify({ format: 'recto-appearance', version: 1, appearance: value }, null, 2);
+}
+
+export function parseAppearance(text: string): Appearance {
+  if (text.length > 8192) throw new Error('Choose an appearance profile smaller than 8 KiB.');
+  const data = JSON.parse(text);
+  if (data?.format !== 'recto-appearance' || data.version !== 1 || !data.appearance || typeof data.appearance !== 'object' ||
+    Array.isArray(data.appearance)) throw new Error('Choose a Recto appearance profile.');
+  const normalized = normalizeAppearance(data.appearance);
+  if (Object.entries(normalized).some(([key, value]) => data.appearance[key] !== value)) {
+    throw new Error('The profile has missing or unsupported appearance settings.');
+  }
+  return normalized;
+}
+
 export function initializeAppearance() {
   try {
     const saved = JSON.parse(localStorage.getItem(storageKey) || 'null') as Partial<Appearance> | null;
-    if (saved) preference = {
-      theme: appearanceThemes.find(theme => theme.value === saved.theme)?.value ?? defaultAppearance.theme,
-      accent: saved.accent && accents.includes(saved.accent) ? saved.accent : defaultAppearance.accent,
-      compact: saved.compact === true,
-      pasteboard: saved.pasteboard && Object.hasOwn(pasteboardColors, saved.pasteboard)
-        ? saved.pasteboard : defaultAppearance.pasteboard,
-      buttonStyle: saved.buttonStyle && buttonStyles.includes(saved.buttonStyle) ? saved.buttonStyle : defaultAppearance.buttonStyle,
-      customAccent: saved.customAccent && hexColor.test(saved.customAccent) ? saved.customAccent : defaultAppearance.customAccent,
-    };
+    if (saved) preference = normalizeAppearance(saved);
   } catch { /* Invalid preferences use the default workspace. */ }
   renderAppearance();
   window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {

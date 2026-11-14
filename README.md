@@ -11,7 +11,8 @@
 <p align="center">
   <a href="https://artificia1.github.io/recto-studio/"><strong>Open Studio</strong></a> ·
   <a href="https://github.com/artificia1/recto-studio/releases/latest"><strong>Download desktop builds</strong></a> ·
-  <a href="PUBLISHING.md">Publishing guide</a>
+  <a href="PUBLISHING.md">Publishing guide</a> ·
+  <a href="PUBLISHING_AUTOMATION.md"><strong>MCP setup</strong></a>
 </p>
 
 [![Build and deployment](https://github.com/artificia1/recto-studio/actions/workflows/deploy.yml/badge.svg?branch=main)](https://github.com/artificia1/recto-studio/actions/workflows/deploy.yml)
@@ -22,6 +23,24 @@ frames, build a visual system with parent pages and styles, then prepare the
 same publication for print, EPUB, or review. Recto is designed for independent
 publishers and editorial designers, with the same canvas available for covers,
 brochures, catalogs, and other short-form work.
+
+## New · Local publishing through MCP
+
+**Design once in Recto. Automate the next edition.** Connect a local Model
+Context Protocol (MCP) client to a saved publication and use Recto’s layout
+and export engines to prepare proofs, translations, and personalized runs.
+
+| Try this | What Recto gives you |
+| --- | --- |
+| **Fix a crowded magazine page.** Check page 4 for overset and preview a small tracking adjustment. | Before-and-after layout and preflight findings. Save the approved edit as a separate editable draft. |
+| **Review a translated catalog.** Bring in reviewed XLIFF translations and check reflow. | A new language edition with reported font and layout risks, while the source edition stays intact. |
+| **Make 50 personalized event programs.** Merge a CSV and local speaker photos into one design. | An individual PDF per record and a manifest for the batch. |
+| **Deliver a book interior.** Inspect chapter start pages and blanks, then compile a portable book archive. | A single interior PDF assembled from the saved chapter snapshots. |
+
+The server is an opt-in CLI command with read-only access by default. It opens
+the workspace folder you choose. The desktop and web editors launch as usual.
+
+[**Set up Recto MCP and try the example prompts →**](PUBLISHING_AUTOMATION.md)
 
 ## Start a publication
 
@@ -81,6 +100,7 @@ over, which checks run automatically, and what needs review before production.
 - [InDesign and IDML handoff](INDESIGN_IMPORT.md)
 - [Collaboration](COLLABORATION.md) · [Scripting](SCRIPTING.md)
 - [Desktop installation](DESKTOP.md) · [Performance](PERFORMANCE.md)
+- [Local publishing automation](PUBLISHING_AUTOMATION.md)
 
 ## Upcoming work
 
@@ -92,8 +112,8 @@ over, which checks run automatically, and what needs review before production.
   extend coverage of trapping and colour effects.
 - **Artwork and typography.** Add linked symbols, editable patterns and mesh
   fills, non-destructive image adjustments, and broader font and script coverage.
-- **Production automation.** Expand repeatable batch jobs, data source adapters,
-  and extension points for importers and publishing tools.
+- **Production automation.** Expand MCP coverage for styles and artwork, add
+  more data-source adapters, and extend repeatable book and batch delivery.
 
 ## Develop
 

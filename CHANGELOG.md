@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Optional local `recto mcp` server for publication inspection, preflight, reviewed drafts, XLIFF, book interiors, and batch PDF output from CSV/JSON with local photos.
+- Portable Appearance profiles shared between the editor and the publishing CLI.
 - Proposed manuscript revisions with reviewer notes, side-by-side comparison, stale-edit protection, acceptance/rejection and undo.
 - Document-wide revision navigation and cleanup, with persistent review records in project files and book chapters.
 - Opt-in content-sized table rows, Unicode-aware wrapping, repeated headers/footers, continuation-page creation and overflow preflight.
@@ -44,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Undoable template insertion/replacement, trim-aware layouts and spread ordering safeguards.
 
 ### Fixed
+- Preserve valid rule IDs on imported IDML text so the resulting Recto projects reopen.
 - Table edits from continuation pages now update canonical cells and shared table styling, with whole-thread lock checks.
 - Block PDF export when content-sized table rows cannot fit or a continuation is hidden from publication.
 - Story Editor reopens the selected story instead of retaining a previously viewed story.

@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 type ProjectRegistry = Arc<Mutex<ProjectFiles>>;
 const EXPORT_EXTENSIONS: &[&str] = &[
     "recto", "pdf", "epub", "html", "zip", "idml", "png", "svg", "json",
-    "rectoarchive", "rectobook", "rectoset", "rectostyles", "rectotm", "recto-artwork", "rectolayout", "xlf", "txt",
+    "rectoarchive", "rectobook", "rectoset", "rectostyles", "rectotm", "recto-artwork", "rectolayout", "rectoappearance", "xlf", "txt",
 ];
 
 #[derive(serde::Serialize)]

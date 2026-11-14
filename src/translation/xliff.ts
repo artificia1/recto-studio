@@ -54,11 +54,26 @@ export function writeTranslationExchange(groups: TranslationGroup[], source: str
   return output;
 }
 
-function direct(parent: Element, name: string) {
+interface XmlNode {
+  nodeType: number;
+  nodeValue: string | null;
+}
+
+interface XmlElement extends XmlNode {
+  localName: string | null;
+  namespaceURI: string | null;
+  textContent: string | null;
+  children: Iterable<XmlElement> & ArrayLike<XmlElement>;
+  childNodes: Iterable<XmlNode>;
+  getAttribute(name: string): string | null;
+  hasAttribute(name: string): boolean;
+}
+
+function direct(parent: XmlElement, name: string) {
   return [...parent.children].filter(node => node.namespaceURI === xliffNamespace && node.localName === name);
 }
 
-function parseParts(container: Element): TranslationPart[] {
+function parseParts(container: XmlElement): TranslationPart[] {
   const parts: TranslationPart[] = [];
   for (const node of container.childNodes) {
     if (node.nodeType === 3 || node.nodeType === 4) {
@@ -70,8 +85,8 @@ function parseParts(container: Element): TranslationPart[] {
     }
     if (node.nodeType === 8) continue;
     if (node.nodeType !== 1) throw new Error('Unsupported inline content in the translation.');
-    const element = node as Element;
-    if (element.namespaceURI !== xliffNamespace || !['ph', 'pc'].includes(element.localName)) {
+    const element = node as XmlElement;
+    if (element.namespaceURI !== xliffNamespace || (element.localName !== 'ph' && element.localName !== 'pc')) {
       throw new Error('Preserve the original inline codes. This exchange supports the XLIFF pc and ph elements.');
     }
     const id = element.getAttribute('id') || '';
@@ -89,11 +104,12 @@ function parseParts(container: Element): TranslationPart[] {
   return parts;
 }
 
-export function readTranslationExchange(xml: string): ReturnedTranslation {
+export function readTranslationExchange(xml: string, parseRoot: (text: string) => XmlElement | null = (text: string) =>
+  new DOMParser().parseFromString(text, 'application/xml').documentElement): ReturnedTranslation {
   if (xml.length > MAX_XLIFF_BYTES || new Blob([xml]).size > MAX_XLIFF_BYTES) throw new Error('Choose an XLIFF smaller than 16 MiB.');
   if (/<!DOCTYPE\b|<!ENTITY\b/i.test(xml)) throw new Error('XLIFF files cannot contain document type or entity declarations.');
-  const root = new DOMParser().parseFromString(xml, 'application/xml').documentElement;
-  if (root.localName !== 'xliff' || root.namespaceURI !== xliffNamespace || root.getAttribute('version') !== '2.0') {
+  const root = parseRoot(xml);
+  if (root?.localName !== 'xliff' || root.namespaceURI !== xliffNamespace || root.getAttribute('version') !== '2.0') {
     throw new Error('Choose a well-formed XLIFF 2.0 file exported from Recto.');
   }
   const sourceLanguage = languageTag(root.getAttribute('srcLang') || '');

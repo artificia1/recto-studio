@@ -13,14 +13,17 @@ async function main() {
   // Load the TypeScript engines in this process so stdin, exit status and
   // cancellation are handled by the executable the caller actually launched.
   register();
-  const { exportDocumentToPdf } = await import('../src/export/pdfExport.js');
-  const { generateFlipbookHtml } = await import('../src/flipbookExport.js');
-  const { exportDocumentToEpubAsync } = await import('../src/epubExport.js');
-  const { parseDataset, generateRepeaterSpreads, fetchRemoteDataset } = await import('../src/dataMerge.js');
-  const { bookEngine } = await import('../src/engine/bookEngine.js');
-  const { parseProject } = await import('../src/state/projectValidation.js');
-  const { INITIAL_STATE } = await import('../src/state/stateManager.js');
-  const { resolveBookChapter } = await import('../scripts/book-paths.mjs');
+  if (process.argv[2] === 'mcp') {
+    const { runPublishingServer } = await import('./mcp/server.js');
+    await runPublishingServer(process.argv.slice(3));
+    return;
+  }
+
+  async function readProject(inputPath) {
+    const { parseProject } = await import('../src/state/projectValidation.js');
+    const { INITIAL_STATE } = await import('../src/state/defaults.js');
+    return parseProject(fs.readFileSync(inputPath, 'utf8'), INITIAL_STATE);
+  }
 
   function printHelp() {
     console.log(`
@@ -31,6 +34,7 @@ Usage:
   recto render <template.recto> --data <file|-> --output <new-directory>
   recto book <action> <manifest.rectobook> [options]
   recto preflight <file.recto|file.json>
+  recto mcp --workspace <folder> [--allow-write]
   recto --version
   recto --help
 
@@ -40,6 +44,7 @@ Commands:
                        Options: --preset <preset>, --edition <name>, --importer <trusted-local-module>
   book <action> <file>  Multi-document book management: sync, toc, or build stitched PDF
   preflight <input>     Execute automated prepress preflight audit (overset text, DPI, bleed)
+  mcp                  Start the local publishing server over stdio
 
 Build Options:
   --data <file.csv>     Automate data-merge catalog/book generation from CSV dataset
@@ -136,10 +141,9 @@ Examples:
       }
 
       console.log(`[Recto CLI] Loading project: ${path.basename(inputPath)}...`);
-      const rawData = fs.readFileSync(inputPath, 'utf8');
       let state;
       try {
-        state = parseProject(rawData, INITIAL_STATE);
+        state = await readProject(inputPath);
       } catch (e) {
         console.error(`Error: Failed to parse JSON document: ${e.message}`);
         process.exitCode = 1;
@@ -147,6 +151,7 @@ Examples:
       }
 
       if (parsed.data) {
+        const { parseDataset, generateRepeaterSpreads, fetchRemoteDataset } = await import('../src/dataMerge.js');
         let dataset;
         if (parsed.data.startsWith('http://') || parsed.data.startsWith('https://')) {
           console.log(`[Recto CLI] Fetching remote dataset: ${parsed.data}...`);
@@ -193,6 +198,7 @@ Examples:
 
       if (isPdf) {
         console.log(`[Recto CLI] Compiling PDF with process-color helpers...`);
+        const { exportDocumentToPdf } = await import('../src/export/pdfExport.js');
         const pdf = await exportDocumentToPdf(state, {
           includeBleed: parsed.bleed,
           includeCropMarks: parsed.cropMarks,
@@ -211,6 +217,7 @@ Examples:
         return 0;
       } else if (isFlipbook) {
         console.log(`[Recto CLI] Generating interactive 3D Web Flipbook package...`);
+        const { generateFlipbookHtml } = await import('../src/flipbookExport.js');
         const html = generateFlipbookHtml(state);
         fs.writeFileSync(outputPath, html, 'utf8');
         const stats = fs.statSync(outputPath);
@@ -220,8 +227,9 @@ Examples:
         return 0;
       } else if (isEpub) {
         console.log(`[Recto CLI] Packaging EPUB 3 digital publication...`);
+        const { exportDocumentToEpubAsync } = await import('../src/epubExport.js');
         const { buffer, warnings } = await exportDocumentToEpubAsync(state, { download: false });
-      for (const warning of warnings) console.warn(`[Recto CLI] Export warning: ${warning}`);
+        for (const warning of warnings) console.warn(`[Recto CLI] Export warning: ${warning}`);
         fs.writeFileSync(outputPath, Buffer.from(buffer));
         const stats = fs.statSync(outputPath);
         console.log(`[Recto CLI] ✓ EPUB 3 package complete!`);
@@ -247,8 +255,7 @@ Examples:
       }
 
       console.log(`[Recto CLI] Executing Prepress Preflight Audit: ${path.basename(inputPath)}...`);
-      const rawData = fs.readFileSync(inputPath, 'utf8');
-      const state = parseProject(rawData, INITIAL_STATE);
+      const state = await readProject(inputPath);
 
       let issuesCount = 0;
       for (const spread of state.spreads || []) {
@@ -302,6 +309,10 @@ Options:
       }
       const bookData = JSON.parse(fs.readFileSync(bookPath, 'utf8'));
       if (!Array.isArray(bookData.chapters) || !bookData.chapters.length || bookData.chapters.length > 500) throw new Error('A book needs between 1 and 500 chapters.');
+      const { bookEngine } = await import('../src/engine/bookEngine.js');
+      const { parseProject } = await import('../src/state/projectValidation.js');
+      const { INITIAL_STATE } = await import('../src/state/defaults.js');
+      const { resolveBookChapter } = await import('../scripts/book-paths.mjs');
       // Validate every path before a style-sync operation can write any chapter.
       for (const chapter of bookData.chapters) resolveBookChapter(bookPath, chapter.filePath);
       const loadState = (fp) => {

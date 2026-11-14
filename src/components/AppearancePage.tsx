@@ -1,6 +1,6 @@
 import { createPortal } from 'preact/compat';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { appearanceThemes, defaultAppearance, getAppearance, setAppearance, subscribeAppearance,
+import { appearanceThemes, defaultAppearance, getAppearance, parseAppearance, serializeAppearance, setAppearance, subscribeAppearance,
   type Accent, type Appearance, type ButtonStyle, type PasteboardTone } from '../appearance';
 import { useModalFocus } from '../hooks/useModalFocus';
 import './appearancePage.css';
@@ -41,6 +41,8 @@ function readRecentColors(): string[] {
 export default function AppearancePage({ onClose }: { onClose: () => void }) {
   const dialog = useRef<HTMLElement>(null);
   const picker = useRef<HTMLInputElement>(null);
+  const profileInput = useRef<HTMLInputElement>(null);
+  const [profileMessage, setProfileMessage] = useState('');
   const pendingColor = useRef<string | null>(null);
   const previewFrame = useRef<number | null>(null);
   const [appearance, setCurrent] = useState(getAppearance);
@@ -204,13 +206,41 @@ export default function AppearancePage({ onClose }: { onClose: () => void }) {
         </div>
 
         <footer className="appearance-page-footer">
-          <p>Picker colors apply when you finish. Preferences stay on this device.</p>
-          <button type="button" className="action-btn" onClick={() => {
-            clearPreview();
-            update(defaultAppearance);
-            setHex(defaultAppearance.customAccent);
-            setHexError(false);
-          }}>Reset to defaults</button>
+          <p role="status">{profileMessage || 'Picker colors apply when you finish. Preferences stay on this device.'}</p>
+          <div className="appearance-profile-actions">
+            <input type="file" accept=".rectoappearance" ref={profileInput} hidden tabIndex={-1} onChange={async event => {
+              const input = event.currentTarget;
+              const file = input.files?.[0];
+              input.value = '';
+              if (!file) return;
+              try {
+                if (file.size > 8192) throw new Error('Choose an appearance profile smaller than 8 KiB.');
+                const settings = parseAppearance(await file.text());
+                clearPreview();
+                setAppearance(settings);
+                setHex(settings.customAccent);
+                setHexError(false);
+                setProfileMessage('Appearance profile loaded.');
+              } catch (error) { setProfileMessage(error instanceof Error ? error.message : 'Could not load the profile.'); }
+            }} />
+            <button type="button" className="action-btn" onClick={() => profileInput.current?.click()}>Load profile</button>
+            <button type="button" className="action-btn" onClick={async () => {
+              try {
+                commitPicker();
+                const { savePublicationFile } = await import('../desktop');
+                if (await savePublicationFile('Recto Studio.rectoappearance', serializeAppearance(getAppearance()), 'application/json')) {
+                  setProfileMessage('Appearance profile saved.');
+                }
+              } catch (error) { setProfileMessage(error instanceof Error ? error.message : 'Could not save the profile.'); }
+            }}>Save profile</button>
+            <button type="button" className="action-btn" onClick={() => {
+              clearPreview();
+              update(defaultAppearance);
+              setHex(defaultAppearance.customAccent);
+              setHexError(false);
+              setProfileMessage('');
+            }}>Reset to defaults</button>
+          </div>
         </footer>
       </section>
     </div>, document.body,
