@@ -3,13 +3,13 @@ import { runInNewContext } from 'node:vm';
 import { expect, it, vi } from 'vitest';
 
 function check(changeStory = false, useAlreadyOpen = false) {
-  const report = { text: '' };
-  const input = { name: 'handoff.idml', fsName: '/source/handoff.idml' };
+  const reports = new Map<string, string>();
+  const input = { name: encodeURIComponent('handoff “A”\nnotes.idml'), fsName: '/source/handoff.idml', length: 1240 };
   class FileMock {
     static openDialog = () => input;
     constructor(public fsName: string) {}
     open() { return true; }
-    write(value: string) { report.text = value; return true; }
+    write(value: string) { reports.set(this.fsName.split('/').at(-1)!, value); return true; }
     close() {}
   }
   class FolderMock {
@@ -33,13 +33,15 @@ function check(changeStory = false, useAlreadyOpen = false) {
     UserInteractionLevels: { NEVER_INTERACT: 'none' }, MeasurementUnits: { POINTS: 'points' }, ExportFormat: { INDESIGN_MARKUP: 'idml' }, SaveOptions: { NO: 'no' },
   };
   runInNewContext(readFileSync('public/conversion/Recto-Validate-IDML.jsx', 'utf8'), context);
-  return { report, before, after, prefs, open };
+  return { report: { text: reports.get('roundtrip-report.txt')! }, result: JSON.parse(reports.get('roundtrip-report.json')!), before, after, prefs, open };
 }
 
 it('exports and reopens separate IDML, reports drift, and restores InDesign preferences', () => {
   const result = check(true);
   expect(result.report.text).toContain('REVIEW stories');
   expect(result.report.text).not.toContain('Original text');
+  expect(result.result).toMatchObject({ status: 'REVIEW', source: 'handoff “A”\nnotes.idml', sourceBytes: 1240,
+    checks: expect.arrayContaining([{ group: 'stories', matches: false, opened: 1, reopened: 1 }]) });
   expect(result.before.exportFile).toHaveBeenCalledWith('idml', expect.objectContaining({ fsName: expect.stringMatching(/^\/checks\/Recto-IDML-check-.*\/indesign-roundtrip\.idml$/) }), false);
   expect(result.before.close).toHaveBeenCalledWith('no');
   expect(result.after.close).toHaveBeenCalledWith('no');
@@ -50,6 +52,7 @@ it('exports and reopens separate IDML, reports drift, and restores InDesign pref
 it('leaves an already-open document alone', () => {
   const result = check(false, true);
   expect(result.report.text).toContain('already open');
+  expect(result.result).toMatchObject({ status: 'ERROR', checks: [] });
   expect(result.before.exportFile).not.toHaveBeenCalled();
   expect(result.before.close).not.toHaveBeenCalled();
 });

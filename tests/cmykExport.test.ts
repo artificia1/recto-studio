@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { colorToCmyk, exportDocumentToPdf } from '../src/export/pdfExport';
-import { stateManager } from '../src/state';
+import { StateManager } from '../src/state/stateManager';
 import { TextElement } from '../src/types';
 
 describe('Pure Vector DeviceCMYK Operators & 100% K Black Plate', () => {
@@ -22,7 +22,9 @@ describe('Pure Vector DeviceCMYK Operators & 100% K Black Plate', () => {
   });
 
   it('emits PostScript DeviceCMYK "k" and "K" operators into PDF stream', async () => {
-    const page = stateManager.getState().spreads[0].pages[0];
+    const manager = new StateManager();
+    manager.createBlankProject('A4', 'Process ink test', false);
+    const page = manager.getActiveSpread().pages[0];
     const textEl: TextElement = {
       id: 'test-cmyk-body-text',
       type: 'text',
@@ -50,15 +52,16 @@ describe('Pure Vector DeviceCMYK Operators & 100% K Black Plate', () => {
       paddingMm: 2,
     };
 
-    stateManager.addElement(textEl);
+    manager.addElement(textEl);
 
-    const doc = await exportDocumentToPdf(stateManager.getState(), {
+    const doc = await exportDocumentToPdf(manager.getState(), {
       includeCropMarks: true,
       includeRegistrationMarks: true,
       includeColorBars: true,
       spreadRange: 'current',
       compress: false,
       download: false,
+      fetchExternalAssets: false,
     });
 
     const pdfOutput = doc.output();
@@ -71,7 +74,5 @@ describe('Pure Vector DeviceCMYK Operators & 100% K Black Plate', () => {
     expect(hasCmykFill).toBe(true);
     expect(hasCmykStroke).toBe(true);
     expect(hasPureKText).toBe(true);
-
-    stateManager.deleteElement(textEl.id);
   });
 });

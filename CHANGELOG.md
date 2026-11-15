@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Approved book proofs stored in `.rectobook` archives, with page matching across repagination, preflight and spine change review, and annotated PDF comment import.
+- Filtered book proof review and downloadable reports with PDF checksums and comments that need manual placement.
+- Independent checks for EPUB layouts and IDML containers, plus machine-readable InDesign round-trip and press fixture reports.
+- Book proof comparisons, page images, and IDML handoff findings available through local publishing automation.
+- A 250-page book and 40-page magazine benchmark with independent PDF checks and browser timings.
 - Model-facing PNG previews for pages, spreads, and pending layouts, with optional desktop canvas capture and undoable proposal review.
 - Iterative MCP layout edits with frame geometry, styles, artwork controls, table continuations, and approved book delivery ZIPs.
 - Optional local `recto mcp` server for publication inspection, preflight, reviewed drafts, XLIFF, book interiors, and batch PDF output from CSV/JSON with local photos.

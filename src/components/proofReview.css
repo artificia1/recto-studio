@@ -10,9 +10,16 @@
 .proof-workspace li + li { margin-top: 4px; }
 .proof-workspace aside button { width: 100%; text-align: left; }
 .proof-workspace button[aria-current] { border-color: var(--accent-cyan); background: var(--accent-surface); }
+.proof-page-filter { display: grid; gap: 4px; }
+.proof-notes { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.proof-notes label { display: grid; gap: 4px; min-width: 0; }
+.proof-notes input { max-width: 100%; }
 .proof-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; max-height: 62vh; overflow: auto; background: var(--bg-app); padding: 10px; }
 .proof-pair figure { margin: 0; min-width: 0; }
 .proof-pair img { width: 100%; height: auto; display: block; margin-top: 6px; background: white; }
+.proof-pair.proof-single { grid-template-columns: minmax(0, 1fr); }
+.proof-single:only-child { grid-column: 1 / -1; }
+.proof-single figure { width: min(100%, 36rem); margin-inline: auto; }
 .pdf-delivery-dialog { width: min(760px, 95vw); }
 .pdf-delivery-dialog .proof-inputs { grid-template-columns: minmax(0, 1fr); }
 .pdf-delivery-dialog details { margin: 8px 0; }

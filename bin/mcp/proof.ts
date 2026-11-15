@@ -5,6 +5,14 @@ import { createNodePdfRaster } from '../../src/export/pdfRasterNode';
 
 export type ProofTarget = { page: number } | { spread: number };
 
+export function openProof(bytes: Uint8Array) {
+  const root = path.dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'));
+  const asset = (folder: string) => path.join(root, folder).replaceAll('\\', '/') + '/';
+  return createNodePdfRaster(bytes, {
+    standardFontDataUrl: asset('standard_fonts'), cMapUrl: asset('cmaps'), wasmUrl: asset('wasm'),
+  });
+}
+
 export async function renderProof(source: ProjectState, target: ProofTarget, maxEdge: number) {
   const index = 'spread' in target ? target.spread - 1 : source.spreads.findIndex(spread => spread.pages.some(page => page.pageNumber === target.page));
   const spread = source.spreads[index];
@@ -20,11 +28,7 @@ export async function renderProof(source: ProjectState, target: ProofTarget, max
   });
   const bytes = new Uint8Array(pdf.output('arraybuffer'));
   if (bytes.length > 64 * 1024 * 1024) throw new Error('The proof exceeds the intermediate PDF size limit.');
-  const root = path.dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'));
-  const asset = (folder: string) => path.join(root, folder).replaceAll('\\', '/') + '/';
-  const renderer = await createNodePdfRaster(bytes, {
-    standardFontDataUrl: asset('standard_fonts'), cMapUrl: asset('cmaps'), wasmUrl: asset('wasm'),
-  });
+  const renderer = await openProof(bytes);
   try {
     const png = await renderer.png(selected.map(page => page.index), maxEdge);
     const image = png.bytes.length <= 3 * 1024 * 1024 ? png : await renderer.png(selected.map(page => page.index), 1024);

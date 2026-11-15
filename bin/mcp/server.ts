@@ -224,12 +224,46 @@ function createPublishingServer(workspace: PublishingWorkspace) {
     return { ...book.report, revision: book.revision };
   });
 
+  tool('recto_check_idml_handoff', 'Review unsupported artwork, grouping, transforms, and image links before IDML export.', z.strictObject({
+    ...projectInput, ...pagination,
+  }), async args => {
+    const project = await loadProject(workspace, args.project, args.revision);
+    const { idmlHandoffFindings } = await import('../../src/export/idmlHandoff');
+    const findings = idmlHandoffFindings(project.source), end = args.offset + args.limit;
+    return { revision: project.revision, total: findings.length, findings: findings.slice(args.offset, end),
+      nextOffset: end < findings.length ? end : null };
+  });
+
+  const bookReviewInput = { book: file, revision: revision.optional(), chapterId: frameId.optional(), planId: z.uuid().optional() };
+  tool('recto_compare_book_proof', 'Compare the book or a proposed chapter edit with its approved PDF. Flags moved pages, new findings, and cover changes.', z.strictObject({
+    ...bookReviewInput, ...pagination,
+  }).refine(args => Boolean(args.chapterId) === Boolean(args.planId), 'Pass both chapterId and planId to review a chapter draft.'), async args => {
+    const { reviewBook } = await import('./bookProof');
+    const { rows, newFindings, resolvedFindings, ...report } = await reviewBook(workspace, plans, args);
+    const end = args.offset + args.limit;
+    return { ...report, rows: rows.slice(args.offset, end), newFindings: newFindings.slice(args.offset, end),
+      resolvedFindings: resolvedFindings.slice(args.offset, end), newFindingCount: newFindings.length,
+      resolvedFindingCount: resolvedFindings.length,
+      nextOffset: end < Math.max(rows.length, newFindings.length, resolvedFindings.length) ? end : null };
+  });
+
+  tool('recto_render_book_proof_page', 'Return a PNG from the approved PDF or the current book, including an optional proposed chapter edit.', z.strictObject({
+    ...bookReviewInput, edition: z.enum(['approved', 'current']), page: z.int().min(1).max(limits.pages),
+    maxEdge: z.int().min(256).max(1800).default(1200),
+  }).refine(args => Boolean(args.chapterId) === Boolean(args.planId) && !(args.edition === 'approved' && args.planId),
+    'Pass a chapter ID and plan ID together for the current edition.'), async (args, images) => {
+    const { renderBookProofPage } = await import('./bookProof');
+    const { bytes, ...result } = await renderBookProofPage(workspace, plans, args);
+    images.push({ type: 'image', mimeType: 'image/png', data: bytes.toString('base64') });
+    return result;
+  });
+
   tool('recto_available_features', 'Report available and editor-only capabilities for this connection.', z.strictObject({}), async () => ({
     mode: workspace.writable ? 'drafts-and-exports' : 'read-only',
     covered: ['project creation', 'spread and story inspection', 'story replacement and tracking', 'text and shape placement', 'alignment and distribution', 'layer and edition visibility',
       'parent assignment', 'saved view and document title', 'image relinking', 'table cell edits', 'footnotes and endnotes', 'generated publication lists',
       'appearance profiles', 'XLIFF review', 'preflight', 'PDF and EPUB export', 'IDML import and export', 'Scribus import', 'batch publishing',
-      'book archive inspection, interior PDF and delivery ZIP', 'visual proof images', 'shared desktop canvas snapshots',
+      'book archive inspection, approved proof comparison, interior PDF and delivery ZIP', 'visual proof images', 'shared desktop canvas snapshots',
       'desktop edit proposals', 'frame geometry and style application', 'image levels and curves', 'vector decorations',
       'table merging, row splitting and continuation pages'],
     editorOnly: ['live canvas gestures', 'continuous screen sharing', 'live collaboration', 'native dialogs and updater',

@@ -1,15 +1,11 @@
 import { AnnotationMode, getDocument, GlobalWorkerOptions, type PDFPageProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import type { ProofPage } from '../engine/proofComparison';
+import { proofFingerprint, proofScanEdge } from '../engine/proofFingerprint';
 
 const limit = 75 * 1024 * 1024;
 const maximumPages = 500;
 const reviewTypes = new Set(['Text', 'FreeText', 'Highlight', 'Underline', 'StrikeOut', 'Squiggly', 'Ink', 'Square', 'Circle', 'Line', 'Stamp', 'Polygon', 'PolyLine', 'Caret']);
-
-async function digest(bytes: Uint8Array) {
-  const hash = await crypto.subtle.digest('SHA-256', new Uint8Array(bytes));
-  return [...new Uint8Array(hash)].map(byte => byte.toString(16).padStart(2, '0')).join('');
-}
 
 async function draw(page: PDFPageProxy, edge: number) {
   const natural = page.getViewport({ scale: 1 });
@@ -67,15 +63,11 @@ export async function openReviewPdf(input: File | ArrayBuffer, signal?: AbortSig
           signal?.throwIfAborted();
           const page = await pdf.getPage(index);
           try {
-            const { canvas, context, natural } = await draw(page, 384);
+            const { canvas, context, natural } = await draw(page, proofScanEdge);
             const raster = context.getImageData(0, 0, canvas.width, canvas.height).data;
             const content = await page.getTextContent();
-            const text = content.items.flatMap(item => 'str' in item ? [item.str] : []).join(' ').replace(/\s+/g, ' ').trim();
-            const textSignature = await digest(new TextEncoder().encode(text));
-            const width = Math.round(natural.width * 100) / 100, height = Math.round(natural.height * 100) / 100;
-            const artwork = await digest(new Uint8Array(raster.buffer));
-            const signature = `${width}:${height}:${textSignature}:${artwork}`;
-            pages.push({ width, height, textSignature, signature });
+            const text = content.items.flatMap(item => 'str' in item ? [item.str] : []).join(' ');
+            pages.push(await proofFingerprint(text, raster, natural));
             onProgress?.(index);
           } finally { page.cleanup(); }
         }

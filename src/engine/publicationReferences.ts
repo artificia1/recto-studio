@@ -1,7 +1,7 @@
 import type { Footnote, ProjectState, StoryContent, StoryRun, TextElement } from '../types';
 import { indexStory, plainStory, sliceStory, storyText } from './storyContent';
 import { pageLabel } from './pageLabels';
-import { layoutStory, layoutStoryParagraphs } from './storyLayout';
+import { layoutStory, layoutStoryParagraphs, type StoryMeasure } from './storyLayout';
 import { publicationWrapObjects } from './publicationWrap';
 import { hierarchicalIndex } from './indexLayout';
 import { applyEditionVisibility } from './publicationEditions';
@@ -95,7 +95,7 @@ export function notesForFrame(state: Pick<StoryLayoutState, 'settings'>, frame: 
 }
 
 export function reflowStoryState(state: StoryLayoutState, frameId: string,
-  getWrapObjects: typeof publicationWrapObjects = publicationWrapObjects) {
+  getWrapObjects: typeof publicationWrapObjects = publicationWrapObjects, measure?: StoryMeasure) {
   const byId = new Map<string, TextElement>();
   const spreadsByFrame = new Map<string, ProjectState['spreads'][number]>();
   for (const spread of state.spreads) for (const element of spread.elements) {
@@ -130,7 +130,7 @@ export function reflowStoryState(state: StoryLayoutState, frameId: string,
     }
     const options = { obstacles, baselineGrid: state.settings.baselineGrid };
     let reserved = 0;
-    let layout = layoutStoryParagraphs(paragraphs, frame, state.paragraphStyles, state.characterStyles, undefined, reserved, options);
+    let layout = layoutStoryParagraphs(paragraphs, frame, state.paragraphStyles, state.characterStyles, measure, reserved, options);
     let fragments: ReturnType<typeof composeFootnotes> | undefined;
     if (documentHasNotes) {
       const tailNotes = remaining ? notesForFrame(state, { ...frame, textContent: remaining }) : [];
@@ -142,7 +142,7 @@ export function reflowStoryState(state: StoryLayoutState, frameId: string,
         fragments.unplacedAnchors += Math.max(0, tailNotes.length - notes.length);
         if (fragments.height <= reserved + 0.001 || pass === 8) break;
         reserved = fragments.height;
-        layout = layoutStoryParagraphs(paragraphs, frame, state.paragraphStyles, state.characterStyles, undefined, reserved, options);
+        layout = layoutStoryParagraphs(paragraphs, frame, state.paragraphStyles, state.characterStyles, measure, reserved, options);
       }
     }
     const end = lastFrame ? head.rawStoryText.length : offset + layout.consumed;
@@ -161,14 +161,14 @@ export function reflowStoryState(state: StoryLayoutState, frameId: string,
   return chain;
 }
 
-export function publicationSnapshot(source: ProjectState): ProjectState {
+export function publicationSnapshot(source: ProjectState, measure?: StoryMeasure): ProjectState {
   const state = structuredClone(source);
   migrateLegacyNotes(state);
   applyEditionVisibility(state);
   for (let pass = 0; pass < 8; pass++) {
     const before = JSON.stringify(textFrames(state).map(frame => [frame.id, frame.storyStart, frame.storyEnd, frame.text]));
     const changed = refreshPublication(state);
-    for (const head of storyHeads(state)) if (head.storyContent) reflowStoryState(state, head.id);
+    for (const head of storyHeads(state)) if (head.storyContent) reflowStoryState(state, head.id, undefined, measure);
     const after = JSON.stringify(textFrames(state).map(frame => [frame.id, frame.storyStart, frame.storyEnd, frame.text]));
     if (!changed && before === after) return state;
   }
@@ -243,7 +243,10 @@ export function refreshPublication(state: ProjectState): boolean {
   const heads = storyHeads(state);
   const usedParagraphs = new Set<string>();
   for (const head of heads) if (head.storyContent) for (const paragraph of head.storyContent.paragraphs) {
-    if (!paragraph.id || usedParagraphs.has(paragraph.id)) paragraph.id = `paragraph-${crypto.randomUUID()}`;
+    if (!paragraph.id || usedParagraphs.has(paragraph.id)) {
+      paragraph.id = `paragraph-${crypto.randomUUID()}`;
+      changed = true;
+    }
     usedParagraphs.add(paragraph.id);
   }
   const pages = state.spreads.flatMap(spread => spread.pages);

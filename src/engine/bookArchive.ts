@@ -1,10 +1,20 @@
 import type { ProjectState } from '../types';
 import { bookReferenceKey, type BookReference } from './bookReferences';
-import { readBookDelivery } from './bookDelivery';
+import { readBookDelivery, type BookDeliveryRecipe } from './bookDelivery';
+import { assembleBook } from './bookAssembly';
+import { readApprovedBookProof, type ApprovedBookProof, type BookProofPage } from './bookProof';
+import type { RectoBook } from './bookEngine';
 
 export interface ArchivedChapter { id: string; name: string; state: ProjectState; recto: boolean }
+export interface BookArchive {
+  title: string;
+  chapters: ArchivedChapter[];
+  references: BookReference[];
+  delivery?: BookDeliveryRecipe;
+  proof?: ApprovedBookProof;
+}
 
-export function readBookArchive(text: string, parseChapter: (text: string) => ProjectState) {
+export function readBookArchive(text: string, parseChapter: (text: string) => ProjectState): BookArchive {
   const saved = JSON.parse(text);
   if (!saved || ![1, 2].includes(saved.version) || typeof saved.title !== 'string' ||
     !Array.isArray(saved.chapters) || saved.chapters.length > 100) throw new Error('Unsupported book archive.');
@@ -24,5 +34,26 @@ export function readBookArchive(text: string, parseChapter: (text: string) => Pr
       (ref.paragraphId !== undefined && typeof ref.paragraphId !== 'string') || !['page', 'title', 'caption'].includes(ref.format)) ||
     new Set(references.map(ref => ref.key)).size !== references.length) throw new Error('Invalid book reference list.');
   const delivery = saved.version === 2 && saved.delivery !== undefined ? readBookDelivery(saved.delivery, parseChapter) : undefined;
-  return { title: saved.title as string, chapters, references, delivery };
+  const proof = saved.version === 2 && saved.proof !== undefined ? readApprovedBookProof(saved.proof) : undefined;
+  return { title: saved.title, chapters, references, delivery, proof };
+}
+
+export function assembleArchivedBook(archive: BookArchive) {
+  const snapshots = new Map(archive.chapters.map(chapter => [chapter.id, chapter.state]));
+  const manifest: RectoBook = { title: archive.title, styleSourceChapterId: archive.chapters[0]?.id || '', references: archive.references,
+    chapters: archive.chapters.map(chapter => ({ id: chapter.id, filePath: chapter.id, title: chapter.state.settings.title || chapter.name,
+      forceRectoOpening: chapter.recto, startPageNumber: 1, pageCount: 0 })) };
+  const source = assembleBook(manifest, id => snapshots.get(id)!);
+  const pages: BookProofPage[] = [];
+  for (const chapter of manifest.chapters) {
+    const chapterId = chapter.id, chapterTitle = chapter.title;
+    if (chapter.startPageNumber > pages.length + 1) {
+      pages.push({ key: JSON.stringify([chapterId, null]), chapterId, chapterTitle, pageNumber: pages.length + 1 });
+    }
+    for (const spread of snapshots.get(chapter.id)!.spreads) for (const page of spread.pages) {
+      pages.push({ key: JSON.stringify([chapterId, page.id]), chapterId, chapterTitle, pageId: page.id, spreadId: spread.id,
+        pageNumber: pages.length + 1 });
+    }
+  }
+  return { source, chapters: manifest.chapters, pages };
 }

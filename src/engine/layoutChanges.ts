@@ -1,6 +1,6 @@
 import type { ProjectState } from '../types';
 import { contentOf, layoutFrameNotes, publicationSnapshot, storyHeads } from './publicationReferences';
-import { layoutStory } from './storyLayout';
+import { layoutStory, type StoryMeasure } from './storyLayout';
 import { plainStory } from './storyContent';
 import { publicationWrapObjects } from './publicationWrap';
 
@@ -27,7 +27,7 @@ export function captureLayout(source: ProjectState): LayoutCapture {
   return captureComposedLayout(publicationSnapshot(source));
 }
 
-export function captureComposedLayout(state: ProjectState): LayoutCapture {
+export function captureComposedLayout(state: ProjectState, measure?: StoryMeasure): LayoutCapture {
   const result: LayoutCapture = {
     pageCount: 0,
     trim: `${state.settings.widthMm} × ${state.settings.heightMm} mm`,
@@ -50,7 +50,7 @@ export function captureComposedLayout(state: ProjectState): LayoutCapture {
       let end = frame.storyEnd ?? (start + frame.text.length);
       if (!frame.nextFrameId) {
         const layout = layoutStory(frame.textContent || plainStory(frame.text, frame.paragraphStyleId), frame,
-          state.paragraphStyles, state.characterStyles, undefined, footnotes.height,
+          state.paragraphStyles, state.characterStyles, measure, footnotes.height,
           { obstacles, baselineGrid: state.settings.baselineGrid });
         if (layout.overset) {
           result.overset.set(frame.id, location);

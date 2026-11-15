@@ -19,8 +19,10 @@ import { compareChapterImpact } from '../../engine/chapterImpact';
 import { bookCoverDimensions, buildBookDelivery, defaultBookDelivery, type BookDeliveryRecipe } from '../../engine/bookDelivery';
 import { LayoutChangeSummary } from '../LayoutChangeSummary';
 import BookDeliveryPanel from './BookDeliveryPanel';
+import type { ApprovedBookProof } from '../../engine/bookProof';
 
 const ProofReviewDialog = lazy(() => import('../ProofReviewDialog'));
+const BookProofDialog = lazy(() => import('../BookProofDialog'));
 const PdfDeliveryDialog = lazy(() => import('../PdfDeliveryDialog'));
 const AccessibilityWorkspace = lazy(() => import('../AccessibilityWorkspace'));
 const TranslationWorkspace = lazy(() => import('../TranslationWorkspace'));
@@ -42,6 +44,8 @@ export default function ProductionPanel({ state }: { state: ProjectState }) {
   const [preset, setPreset] = useState<PdfPreset>('screen');
   const [busy, setBusy] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [bookReviewOpen, setBookReviewOpen] = useState(false);
+  const [approvedProof, setApprovedProof] = useState<ApprovedBookProof>();
   const [deliveryPdfOpen, setDeliveryPdfOpen] = useState(false);
   const [accessibilityOpen, setAccessibilityOpen] = useState(false);
   const [translationOpen, setTranslationOpen] = useState(false);
@@ -49,6 +53,7 @@ export default function ProductionPanel({ state }: { state: ProjectState }) {
   const [printer, setPrinter] = useState<PrinterProfile>();
   const [message, setMessage] = useState('');
   const [editionName, setEditionName] = useState('');
+  const [idmlFindings, setIdmlFindings] = useState<Awaited<ReturnType<typeof import('../../export/idmlHandoff')['idmlHandoffFindings']>>>();
   const selected = state.spreads[state.activeSpreadIndex]?.elements.find(element => element.id === state.selectedElementId);
   const canTag = selected && !selected.locked && !state.layers.find(layer => layer.id === selected.layerId)?.locked &&
     !((selected.type === 'text' || selected.type === 'table') && (selected.prevFrameId || selected.nextFrameId));
@@ -62,7 +67,7 @@ export default function ProductionPanel({ state }: { state: ProjectState }) {
     })) });
   const load = (id: string) => { const chapter = chapters.find(item => item.id === id); if (!chapter) throw new Error(`Missing chapter ${id}`); return chapter.state; };
   const lastChapter = chapters.length ? bookEngine.repaginateBook(book(), load).chapters.at(-1) : undefined;
-  const editingBook = busy || !!replacement;
+  const editingBook = busy || !!replacement || bookReviewOpen;
   const refreshChapter = (before: ArchivedChapter) => {
     const picker = document.createElement('input');
     picker.type = 'file';
@@ -85,6 +90,14 @@ export default function ProductionPanel({ state }: { state: ProjectState }) {
         const settings = chapters[0]?.id === before.id ? state.settings : chapters[0].state.settings;
         const coverReview = !!delivery.approvedDimensions &&
           bookCoverDimensions(settings, pageCount, delivery).signature !== delivery.approvedDimensions;
+        const latestPins = new Set(state.comments?.map(pin => pin.id));
+        const locations = new Map(state.spreads.flatMap((spread, index) => spread.pages.map(page => [page.id, { spread, index }] as const)));
+        const retained = before.state.comments?.filter(pin => pin.id.startsWith('book-proof-note-') && !latestPins.has(pin.id)).map(pin => {
+          const location = pin.pageId && locations.get(pin.pageId);
+          return location ? { ...pin, spreadId: location.spread.id, spreadIndex: location.index } :
+            { ...pin, pageId: undefined, spreadId: undefined, spreadIndex: 0, unplaced: true };
+        });
+        if (retained?.length) state.comments = [...(state.comments || []), ...retained];
         setReplacement({ before, after: { ...before, name: file.name, state }, missing,
           impact: compareChapterImpact(before.state, state), coverReview });
       });
@@ -115,6 +128,15 @@ export default function ProductionPanel({ state }: { state: ProjectState }) {
     <button className="sm-btn" onClick={() => setBundleOpen(true)} disabled={bundleOpen}>Manage publication layouts</button>
     {bundleOpen && <Suspense fallback={<p>Loading layout tools…</p>}><PublicationBundlePanel/></Suspense>}
     <button className="sm-btn" onClick={() => setReviewOpen(true)}>Compare proofs</button>
+    <button className="sm-btn" disabled={busy} onClick={() => void run(async () => {
+      const { idmlHandoffFindings } = await import('../../export/idmlHandoff');
+      setIdmlFindings(idmlHandoffFindings(stateManager.getState()));
+    })}>Check IDML handoff</button>
+    {idmlFindings && <details open>
+      <summary>IDML handoff findings ({idmlFindings.length})</summary>
+      {idmlFindings.length ? <ul>{idmlFindings.slice(0, 40).map((item, index) =>
+        <li key={index}>{item.severity} · {item.elementId} · {item.message}</li>)}</ul> : <p>No findings in the supported checks.</p>}
+    </details>}
     {reviewOpen && <Suspense fallback={<p role="status">Loading proof tools…</p>}><ProofReviewDialog onClose={() => setReviewOpen(false)}/></Suspense>}
     <details><summary>Publication editions</summary>
       <p>Choose which editions to include when exporting the current document. Assign an edition to a selected object here or to a paragraph in Story Editor.</p>
@@ -171,6 +193,7 @@ export default function ProductionPanel({ state }: { state: ProjectState }) {
             if (token !== request.current) return;
             setChapters(saved.chapters); setTitle(saved.title); setReferences(saved.references);
             setDelivery(saved.delivery || defaultBookDelivery);
+            setApprovedProof(saved.proof);
             setMessage(`${saved.chapters.length} chapters loaded locally.`);
             return;
           }
@@ -212,6 +235,11 @@ export default function ProductionPanel({ state }: { state: ProjectState }) {
       }}>Apply chapter refresh</button>
     </section>}
     {chapters.length > 0 && <BookReferencesPanel chapters={chapters} references={references} onChange={setReferences} disabled={editingBook}/>}
+    {chapters.length > 0 && <button className="sm-btn" disabled={editingBook} onClick={() => setBookReviewOpen(true)}>Review book proof</button>}
+    {bookReviewOpen && <Suspense fallback={<p role="status">Loading book proof review…</p>}>
+      <BookProofDialog archive={{ title, chapters, references, delivery, proof: approvedProof }}
+        onApprove={setApprovedProof} onComments={setChapters} onClose={() => setBookReviewOpen(false)}/>
+    </Suspense>}
     {lastChapter && <BookDeliveryPanel recipe={delivery} settings={chapters[0].state.settings}
       pageCount={lastChapter.startPageNumber + lastChapter.pageCount - 1} disabled={editingBook} onChange={setDelivery}
       onCover={file => run(async () => setDelivery({ ...delivery, cover: await readChapterFile(file), approvedDimensions: undefined }))}
@@ -223,7 +251,7 @@ export default function ProductionPanel({ state }: { state: ProjectState }) {
       })}/>}
     <div className="publication-actions">
       <button className="sm-btn" disabled={editingBook || !chapters.length} onClick={() => run(async () => {
-        const archive = JSON.stringify({ version: 2, title, chapters, references, delivery });
+        const archive = JSON.stringify({ version: 2, title, chapters, references, delivery, proof: approvedProof });
         if (new Blob([archive]).size > 128 * 1024 * 1024) throw new Error('Book archives must be smaller than 128 MB.');
         await savePublicationFile(`${safeName}.rectobook`, archive, 'application/json'); setMessage('Book archive saved with all chapter snapshots.');
       })}>Save book archive</button>

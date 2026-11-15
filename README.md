@@ -84,8 +84,8 @@ the layout to another device.
 | **Font files** | TTF, OTF, WOFF and WOFF2 import, face selection from TTC and OTC collections, document-wide font replacement, and searchable PDF embedding for supported static and variable fonts |
 | **Artwork** | Bézier and freehand tools, editable linear and radial gradients, shape-to-path conversion, text wrap, reusable artwork, and alignment and distribution |
 | **Tables and catalogs** | Linked table continuations, repeating headers and footers, row splitting and vertical merges, data merge, and conditional editions |
-| **Press and review** | ICC conversion, separations and ink-coverage previews, printer profiles, spot inks, PDF/X candidates, proof comparison and PDF comment import, cover spines, and booklet imposition |
-| **File handoff** | Editable Scribus 1.6 import, IDML import and export for supported features, and an InDesign round-trip check script |
+| **Press and review** | ICC conversion, separations and ink-coverage previews, printer profiles, spot inks, PDF/X candidates, approved book proofs with revision and cover checks, PDF comment import, and booklet imposition |
+| **File handoff** | Editable Scribus 1.6 import, IDML import and export for supported features, IDML handoff findings, and an InDesign round-trip check script |
 | **Translation** | XLIFF handoff, bilingual review, reusable translation memory, and editable language editions with layout and font checks |
 | **Delivery** | Print and tagged PDFs, PDF/UA-1 export, EPUB 3, HTML flipbooks, publication packages, and headless batch publishing |
 

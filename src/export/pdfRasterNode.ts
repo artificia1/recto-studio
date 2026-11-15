@@ -6,6 +6,27 @@ export async function createNodePdfRaster(bytes: Uint8Array, assets?: { standard
   const task = engine.getDocument({ data: bytes.slice(), useSystemFonts: false, isEvalSupported: false, ...assets });
   const pdf = await task.promise.catch(async (error: unknown) => { await task.destroy(); throw error; });
   return {
+    length: pdf.numPages as number,
+    async scan() {
+      const { proofFingerprint, proofScanEdge } = await import('../engine/proofFingerprint');
+      if (pdf.numPages > 500) throw new Error('Review supports up to 500 pages per PDF.');
+      const pages = [];
+      for (let index = 1; index <= pdf.numPages; index++) {
+        const page = await pdf.getPage(index);
+        try {
+          const natural = page.getViewport({ scale: 1 });
+          if (!(natural.width > 0 && natural.height > 0 && Number.isFinite(natural.width + natural.height))) throw new Error('The PDF contains an invalid page size.');
+          const viewport = page.getViewport({ scale: proofScanEdge / Math.max(natural.width, natural.height) });
+          const canvas = native.createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
+          const context = canvas.getContext('2d');
+          await page.render({ canvas, canvasContext: context, viewport, annotationMode: engine.AnnotationMode.DISABLE, background: '#ffffff' }).promise;
+          const { items } = await page.getTextContent();
+          const text = items.flatMap((item: { str?: string }) => typeof item.str === 'string' ? [item.str] : []).join(' ');
+          pages.push(await proofFingerprint(text, context.getImageData(0, 0, canvas.width, canvas.height).data, natural));
+        } finally { page.cleanup(); }
+      }
+      return pages;
+    },
     async tile(pageIndex: number, x: number, y: number, width: number, height: number, scale: number): Promise<Uint8ClampedArray> {
       const page = await pdf.getPage(pageIndex + 1), canvas = native.createCanvas(width, height), context = canvas.getContext('2d');
       await page.render({ canvas, canvasContext: context, viewport: page.getViewport({ scale }), transform: [1, 0, 0, 1, -x, -y], background: '#ffffff' }).promise;

@@ -15,7 +15,7 @@ import { colorToCmyk, applyCmykTextColor, applyCmykFillColor, applyCmykDrawColor
 export { colorToCmyk, applyCmykTextColor, applyCmykFillColor, applyCmykDrawColor, applySpotColor } from './pdfColors';
 import { fontManager } from '../fontManager';
 import { isDesktop, savePublicationFile } from '../desktop';
-import { layoutStory, measureStoryText } from '../engine/storyLayout';
+import { layoutStory, measureStoryText, type RunStyle, type StoryMeasure } from '../engine/storyLayout';
 import { drawFontText, fontTextWidth, wrapFontText } from './fontOutlines';
 import { ProjectState, Page, Spread, TextElement, ImageElement, ShapeElement, VectorPathElement, TableElement, CanvasElement } from '../types/index';
 import { stateManager, numberToSuperscript } from '../state';
@@ -72,8 +72,9 @@ export async function exportDocumentToPdf(
   if (options.accessibility && options.spreadRange && options.spreadRange !== 'all') throw new Error('Accessible PDF currently exports the whole publication so linked tables and story structure remain complete.');
   if (options.transparency === 'flatten' && (options.tagged || options.accessibility)) throw new Error('Use separate tagged screen and flattened print exports; a flattened print PDF is not an accessible screen edition.');
   await fontManager.restoreFonts(source.embeddedFonts);
+  const measure = pdfStoryMeasure();
   const state = publicationSnapshot(await prepareExportAssets(source, options.fetchExternalAssets ?? typeof window !== 'undefined', false, true,
-    options.visualProof ? warning => options.onWarning?.(warning) : undefined));
+    options.visualProof ? warning => options.onWarning?.(warning) : undefined), measure);
   const publicationIssues = publicationPreflight(state, options.strict ? 'print' : 'editor');
   const tableErrors = publicationIssues.filter(issue => issue.code === 'TABLE_LAYOUT' && issue.severity === 'error');
   if (tableErrors.length && !options.visualProof) throw new Error(tableErrors.map(issue => `Page ${issue.pageNumber}: ${issue.message}`).join('\n'));
@@ -133,6 +134,7 @@ export async function exportDocumentToPdf(
   });
 
   const storyOverflowMap = new Map<string, string[]>();
+  const rasterProperties = new Map<string, { width: number; height: number; fileType: string; alias: string }>();
   doc.setLanguage((state.settings.language || 'en-US') as Parameters<typeof doc.setLanguage>[0]);
   const preflightWarnings: string[] = registerPdfFonts(doc, state.embeddedFonts);
   if (options.visualProof) preflightWarnings.push(...publicationIssues.slice(0, 30).map(issue => `Page ${issue.pageNumber}: ${issue.message}`));
@@ -376,7 +378,7 @@ export async function exportDocumentToPdf(
         const hasWrap = wrapObjects.some(object => object.id !== text.id && object.pageId === text.pageId);
         const flowContent = text.textContent || (hasWrap || semantic ? wrappedPlainContent(text, formatOpenTypeText(publicationText(state, text.text || '', page.pageNumber).replace(/\{index:[^}]+\}/g, ''), text.openTypeFeatures)) : undefined);
         if (flowContent) {
-          const layout = layoutStory(flowContent, text, state.paragraphStyles, state.characterStyles, undefined, totalFnHtMm,
+          const layout = layoutStory(flowContent, text, state.paragraphStyles, state.characterStyles, measure, totalFnHtMm,
             { obstacles: wrapObjects, baselineGrid: state.settings.baselineGrid });
           for (const line of layout.lines) {
           const lineSemantics = semantic?.line(text, flowContent, line.start);
@@ -396,8 +398,7 @@ export async function exportDocumentToPdf(
               applyCmykFillColor(doc, style.color);
               drawFontText(doc, font, segment.text, x, y, style.fontSizePt);
             } else {
-              applyFont(doc, style.fontFamily);
-              doc.setFont(doc.getFont().fontName, style.bold ? (style.italic ? 'bolditalic' : 'bold') : (style.italic ? 'italic' : 'normal'));
+              applyFont(doc, style.fontFamily, pdfFontStyle(style));
               doc.setFontSize(style.fontSizePt);
               doc.setCharSpace(style.letterSpacingPt * 25.4 / 72);
               doc.text(segment.text, x, y);
@@ -408,7 +409,7 @@ export async function exportDocumentToPdf(
               doc.setLineWidth(0.15);
               doc.line(x, y + 0.3, x + segment.width, y + 0.3);
             }
-            end?.(); advance += measureStoryText(part.text, style) + (style.letterSpacingPt || 0) * 25.4 / 72 * Array.from(part.text).length;
+            end?.(); advance += measure(part.text, style) + (style.letterSpacingPt || 0) * 25.4 / 72 * Array.from(part.text).length;
           }
           }
           }
@@ -536,8 +537,14 @@ export async function exportDocumentToPdf(
             let imgH = img.originalHeight || 0;
             let fileType = 'JPEG';
 
+            let raster = rasterProperties.get(source);
             try {
-              const props = managedImage || doc.getImageProperties(source);
+              if (!managedImage && !raster) {
+                const data = doc.getImageProperties(source);
+                raster = { width: data.width, height: data.height, fileType: data.fileType, alias: 'recto-export-raster-' + rasterProperties.size };
+                rasterProperties.set(source, raster);
+              }
+              const props = managedImage || raster;
               if (props && props.width > 0 && props.height > 0) {
                 imgW = props.width;
                 imgH = props.height;
@@ -569,7 +576,7 @@ export async function exportDocumentToPdf(
             }
 
             if (managedImage) doc.addImage(managedImage.bytes, 'RECTOCMYK', fit.drawX, fit.drawY, fit.drawW, fit.drawH, managedImage.alias);
-            else doc.addImage(source, fileType, fit.drawX, fit.drawY, fit.drawW, fit.drawH);
+            else doc.addImage(source, fileType, fit.drawX, fit.drawY, fit.drawW, fit.drawH, raster?.alias);
 
             if (needsClipping) {
               doc.restoreGraphicsState();
@@ -682,25 +689,51 @@ export async function exportDocumentToPdf(
 }
 
 
-// shortcut: custom font embedding requires TTF base64, falls back to PostScript standard 14 when unavailable
-function applyFont(doc: any, fontFamily?: string) {
+const pdfFontStyle = (style: RunStyle) => style.bold ? (style.italic ? 'bolditalic' : 'bold') : (style.italic ? 'italic' : 'normal');
+
+export function pdfStoryMeasure(): StoryMeasure {
+  if (typeof document !== 'undefined') return measureStoryText;
+  const metrics = new jsPDF();
+  const faces = new Map<string, ReturnType<jsPDF['getFont']>>();
+  const widths = new Map<string, number>();
+  return (text, style) => {
+    if (fontManager.getFont(style.fontFamily)) return measureStoryText(text, style);
+    const appearance = pdfFontStyle(style);
+    const key = style.fontFamily + '\0' + appearance;
+    let face = faces.get(key);
+    if (!face) {
+      applyFont(metrics, style.fontFamily, appearance);
+      face = metrics.getFont();
+      faces.set(key, face);
+    }
+    const token = face.id + '\0' + text;
+    let units = widths.get(token);
+    if (units === undefined) {
+      units = metrics.getStringUnitWidth(text, { font: face });
+      if (widths.size < 8192 && text.length <= 128) widths.set(token, units);
+    }
+    return units * style.fontSizePt * 25.4 / 72;
+  };
+}
+
+function applyFont(doc: jsPDF, fontFamily?: string, style = 'normal') {
   if (!fontFamily) {
-    doc.setFont('times', 'normal');
+    doc.setFont('times', style);
     return;
   }
   const cleanName = fontFamily.split(',')[0].trim().replace(/['"]/g, '');
-  const fontList = typeof (doc as any).getFontList === 'function' ? (doc as any).getFontList() : {};
-  if (fontList && (fontList[cleanName] || fontList[cleanName.toLowerCase()])) {
-    doc.setFont(cleanName, 'normal');
+  const fontList = doc.getFontList();
+  if (fontList[cleanName] || fontList[cleanName.toLowerCase()]) {
+    doc.setFont(cleanName, style);
     return;
   }
   const fam = cleanName.toLowerCase();
   if (fam.includes('sans') || fam.includes('inter') || fam.includes('grotesk') || fam.includes('arial')) {
-    doc.setFont('helvetica', 'normal');
+    doc.setFont('helvetica', style);
   } else if (fam.includes('mono') || fam.includes('courier')) {
-    doc.setFont('courier', 'normal');
+    doc.setFont('courier', style);
   } else {
-    doc.setFont('times', 'normal');
+    doc.setFont('times', style);
   }
 }
 

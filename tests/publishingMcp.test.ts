@@ -11,6 +11,8 @@ import { INITIAL_STATE } from '../src/state/defaults';
 import { PDFDocument } from 'pdf-lib';
 import { readZip } from '../src/zip';
 import { bookCoverDimensions, type BookDeliveryRecipe } from '../src/engine/bookDelivery';
+import { assembleArchivedBook, type BookArchive } from '../src/engine/bookArchive';
+import { approveBookProof, makeBookProof } from '../src/engine/bookProof';
 import type { ImageElement, TextElement } from '../src/types';
 
 const timeout = 120_000;
@@ -215,6 +217,24 @@ describe('Recto publishing MCP over stdio', () => {
     await result('recto_export_book_package', { book, revision: approved.revision, output: 'delivery.zip' });
     const entries = await readZip(new Uint8Array(await readFile(files('delivery.zip'))));
     expect([...entries.keys()]).toEqual(expect.arrayContaining(['interior.pdf', 'cover.pdf', 'ebook.epub', 'delivery-report.json']));
+  }, timeout);
+
+  it('compares an approved book with a staged chapter revision and returns the approved page image', async () => {
+    const archive: BookArchive = { title: 'Approved book', references: [],
+      chapters: [{ id: 'chapter-one', name: 'Chapter one', recto: false, state: project }] };
+    const assembled = assembleArchivedBook(archive);
+    const current = await makeBookProof(assembled.source, assembled.pages);
+    archive.proof = await approveBookProof(current.snapshot, current.bytes);
+    const book = 'approved.rectobook';
+    await writeFile(files(book), JSON.stringify({ version: 2, ...archive }));
+    const preview = await result('recto_preview_story_edit', { project: 'original.recto', revision, frameId: 'story',
+      change: { kind: 'replace', start: 0, end: 5, expectedText: 'Print', text: 'Revised' } });
+    const args = { book, chapterId: 'chapter-one', planId: preview.planId };
+    const report = await result('recto_compare_book_proof', args);
+    expect(report).toMatchObject({ changed: 1, moved: 0, rows: [{ change: 'text', after: { pageNumber: 1, chapterId: 'chapter-one' } }] });
+    const png = await call('recto_render_book_proof_page', { book, edition: 'approved', page: 1, maxEdge: 480 }, readClient);
+    expect(png.isError, JSON.stringify(png.content)).not.toBe(true);
+    expect(png.content.find(item => item.type === 'image')).toMatchObject({ mimeType: 'image/png' });
   }, timeout);
 
   it('prints CSV records with a local photo and leaves no batch when a record fails', async () => {

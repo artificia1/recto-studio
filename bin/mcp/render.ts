@@ -28,8 +28,9 @@ export async function compilePublication(project: ProjectState, format: 'epub' |
       project.settings.language || 'en', targetLanguage));
   } else if (format === 'idml') {
     const { exportDocumentToIdml } = await import('../../src/export/idmlExport');
+    const { idmlHandoffFindings } = await import('../../src/export/idmlHandoff');
     bytes = exportDocumentToIdml(project);
-    warnings = ['IDML covers supported interchange features. Review the result in InDesign before handoff.'];
+    warnings = idmlHandoffFindings(project).map(item => item.elementId + ' · ' + item.message);
   } else if (format === 'fixed-epub') {
     const { exportFixedEpub } = await import('../../src/export/fixedEpub');
     bytes = await exportFixedEpub(project);

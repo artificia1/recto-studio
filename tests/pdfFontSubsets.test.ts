@@ -5,6 +5,21 @@ import { fontManager } from '../src/fontManager';
 import { exportDocumentToPdf } from '../src/export/pdfExport';
 import { createNodePdfRaster } from '../src/export/pdfRasterNode';
 import { accessiblePublication } from './fixtures/accessiblePublication';
+import { emptyProductionProject, productionSpread, textFixture } from './fixtures/productionPublications';
+import { plainStory } from '../src/engine/storyContent';
+
+it('positions headless PDF text using the metrics of the standard font it draws', async () => {
+  const state = emptyProductionProject('Standard PDF font metrics');
+  const spread = productionSpread(0, 'font-metrics');
+  const frame = textFixture('copy', spread.pages[0].id, 'The archive records');
+  frame.storyContent = plainStory(frame.text);
+  spread.elements.push(frame);
+  state.spreads.push(spread);
+  const pdf = await exportDocumentToPdf(state, { download: false, compress: false });
+  const content = pdf.output();
+  const x = (word: string) => Number(new RegExp('([\\d.]+) [\\d.]+ Td\\n\\(' + word + '\\) Tj').exec(content)?.[1]);
+  expect(x('archive') - x('The')).toBeCloseTo(19.9, 1);
+});
 
 function requireWholeFont(file: string) {
   const source = new Uint8Array(readFileSync(`tests/fixtures/fonts/${file}`));

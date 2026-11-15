@@ -1,5 +1,33 @@
 # Publishing and export limitations
 
+## Compare against an approved book proof
+
+Open **Pages → Production & books → Review book proof**. Prepare the initial
+proof, inspect its pages, then approve it and save the `.rectobook`. The archive
+keeps the original PDF, its checksum, and the page map. Download the approved
+PDF to send it for annotation. The embedded proof supports up to 500 pages
+and 32 MiB, within the book archive’s overall size limit.
+
+Refresh any chapter from its revised `.recto`, then compare against the
+approved proof. Recto matches the original chapter and page IDs. An unchanged
+page can show as moved, while a printed folio or reference that visibly changed
+still appears as a change. The report also shows introduced and resolved print
+findings and a cover warning when the calculated dimensions change.
+Embed publication fonts to reduce differences between the editor and headless
+proofs. When a font is unavailable, the export may use a substitute.
+
+Import comments from an annotated PDF of the approved edition. Comments move
+with uniquely matched pages whose appearance stayed the same. Check the
+manual placement list and save the archive to retain the imported chapter
+notes. **Save revision report** exports page identities, preflight differences,
+cover status, unplaced comments, and SHA-256 checksums for both PDFs. Reopening
+a book retains the approved proof until you approve a replacement.
+
+The standalone PDF comparison matches unique pages by extracted text and a
+rendered image. Duplicate and unmatched pages can require manual review. Small
+differences can fall below the comparison resolution. Use the source PDF and
+your printer’s workflow for final production checks.
+
 Recto exports ordinary and tagged PDFs, PDF/UA-1 editions, PDF/X candidates, reflowable EPUB packages, HTML flipbooks, and ZIP
 handoff packages. Review the output in its destination reader or printer workflow.
 
@@ -45,7 +73,9 @@ references, linked notes and backlinks. Set publication language and author unde
 Pages; provide image descriptions or explicitly mark decorative images. Reading
 order can be set in Properties. These authoring controls do not guarantee reader
 compatibility or complete accessibility. Publication fixtures are checked with
-EPUBCheck; check each final book as well.
+EPUBCheck in CI for both reflowable and fixed-layout editions. Run
+`python scripts/validate-epub.py` after `npm test` to reproduce those checks.
+Check each final book as well.
 
 Production EPUB and print handoff packages block missing assets, broken references
 and overset copy. Explicit draft exports can retain empty design placeholders.
@@ -199,6 +229,13 @@ Have the final file checked with a dedicated PDF/X preflight tool and approved b
 the printer. veraPDF does not validate PDF/X. Passing a synthetic fixture or
 writing identification metadata does not establish GWG certification; see the
 [GWG conformance process](https://gwg.org/resources/ghent-pdf-output-suite/conformance-certification/).
+
+The CI production benchmark artifact includes both press candidate PDFs and
+`press-checks.json`. Each entry records the PDF and ICC profile checksums and
+the structural checks that ran. The samples use a synthetic profile. For a
+production job, use the printer's profile and run the final files through
+their preflight and RIP. Run the [Ghent Output Suite](https://gwg.org/resources/ghent-pdf-output-suite/)
+through the same setup to check the workflow's handling of the test patches.
 
 **Process-colour trapping** spreads lighter opaque fills into adjacent darker
 fills using polygon offsets and intersections in physical millimetres. It applies

@@ -295,9 +295,9 @@ export class StateManager {
     }
   }
 
-  private pushHistory(composedStoryId?: string) {
+  private pushHistory(composedStoryId?: string, layoutIsCurrent = false) {
     reconcileFrameStoryEdits(this.state, id => this.getStoryHead(id), id => this.getStoryContent(id), id => this.reflowStory(id));
-    this.reflowFormattedStories(composedStoryId);
+    if (!layoutIsCurrent) this.reflowFormattedStories(composedStoryId);
     const autoHeads = this.state.spreads.flatMap(spread => spread.elements)
       .filter((element): element is TextElement => element.type === 'text' && !element.prevFrameId && !!element.autoExtendStory)
       .map(element => element.id);
@@ -311,7 +311,7 @@ export class StateManager {
         if (head) head.autoPaginationError = error instanceof Error ? error.message : String(error);
       }
     }
-    this.refreshPublicationReferences(false, composedStoryId);
+    this.refreshPublicationReferences(false, composedStoryId, !autoHeads.length && !this.state.settings.footnotes?.length);
     this.history.push(this.state);
   }
 
@@ -1425,7 +1425,7 @@ export class StateManager {
     head.storyContent = structuredClone(content);
     head.rawStoryText = storyText(content);
     this.reflowStory(head.id);
-    this.pushHistory();
+    this.pushHistory(head.id, true);
     this.notify();
   }
 
@@ -2641,7 +2641,7 @@ export class StateManager {
       this.renumberPages();
       this.reflowFormattedStories();
       if (desktop) this.history.clear();
-      this.pushHistory();
+      this.pushHistory(undefined, true);
     } catch (error) { this.state = previous; throw error; }
     if (desktop) this.autosave.beginDesktopDocument();
     this.documentSession++;
@@ -3431,14 +3431,14 @@ export class StateManager {
     this.reflowFormattedStories();
   }
 
-  public refreshPublicationReferences(recordHistory = true, composedStoryId?: string) {
+  public refreshPublicationReferences(recordHistory = true, composedStoryId?: string, reuseCurrentLayout = false) {
     migrateLegacyNotes(this.state);
     delete this.state.publicationError;
     for (let pass = 0; pass < 8; pass++) {
       const pageCount = this.state.spreads.reduce((n, spread) => n + spread.pages.length, 0);
       const changed = refreshPublication(this.state);
       if (changed) composedStoryId = undefined;
-      this.reflowFormattedStories(composedStoryId);
+      if (changed || !reuseCurrentLayout || pass > 0) this.reflowFormattedStories(composedStoryId);
       for (const head of storyHeads(this.state).filter(head => head.autoExtendStory)) {
         try { this.paginateStory(head.id, 200, false); delete head.autoPaginationError; }
         catch (error) { head.autoPaginationError = error instanceof Error ? error.message : String(error); }

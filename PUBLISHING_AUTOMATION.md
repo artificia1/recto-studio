@@ -78,6 +78,8 @@ For batch work, use a saved template with `{{field}}` placeholders:
 | Check or deliver a publication | `recto_run_preflight`, `recto_compile_pdf`, `recto_export_publication` (EPUB, fixed-layout EPUB, IDML, XLIFF) |
 | Render a personalized catalog | `recto_render_batch` with CSV or a JSON array |
 | Deliver a book | `recto_inspect_book`, `recto_compile_book`, `recto_export_book_package` |
+| Compare a revised book with its approved proof | `recto_compare_book_proof`, `recto_render_book_proof_page` |
+| Check interchange before exporting | `recto_check_idml_handoff` |
 | Share an editor theme | `recto_appearance`, `recto_save_appearance` |
 
 **Story edits.** Read the uncomposed story and work with its UTF-16 offsets and
@@ -132,6 +134,12 @@ of up to 100 records and 500 output pages.
 **Books.** Open a portable `.rectobook` archive containing chapter snapshots.
 The inspection reports physical page numbers, inserted blank pages, and any
 saved cover requirements. Export the assembled interior PDF using that revision.
+After approving and saving a proof in the editor, use `recto_compare_book_proof`
+to report moved or changed pages, new findings, and cover dimensions. For an
+unsaved proposal, pass both the chapter ID and the chapter’s `planId`. Render
+either edition by physical page number with `recto_render_book_proof_page`.
+Use the existing desktop proposal handoff to apply a reviewed chapter edit in
+its original document, then refresh that chapter in the book.
 To export the interior, separate cover, EPUB, and delivery report together,
 approve the cover in Recto and save the book archive with its delivery recipe.
 

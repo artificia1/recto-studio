@@ -41,6 +41,11 @@ its artwork editable.
 
 ## Check a Recto export in InDesign
 
+Run **Pages → Production & books → Check IDML handoff** before sending the
+file. The report identifies page objects with unsupported effects or geometry
+and linked assets to include or relink. Publishing automation exposes the same
+report through `recto_check_idml_handoff`.
+
 1. Choose **Export → InDesign Validation Kit** in Recto and extract the ZIP.
    The kit includes the IDML export and validation script. Gather any linked
    images and fonts for the handoff.
@@ -50,12 +55,26 @@ its artwork editable.
    results. InDesign opens the package, exports its own IDML, then reopens it.
 4. Read `roundtrip-report.txt` and open `indesign-roundtrip.idml` in Recto for a
    return check. Compare the rendered pages before approving the handoff.
+   Keep `roundtrip-report.json` with the source and returned IDML files.
 
 The report compares page geometry, parent pages, layers, stories and thread
 counts, artwork bounds, styles, and swatches. It flags missing fonts and links.
 Both temporary documents are closed without saving changes, and the output goes
 into a new folder. These checks cover native serialization. Visual fidelity
 requires comparing the pages against the source publication.
+
+The automated `productionInterchange` test supplies `editorial-interchange.idml`
+in the CI benchmark artifact. It exercises a styled threaded story, parent
+items, and embedded and externally linked images through Recto. Use that file
+with the native validation kit when testing a licensed InDesign installation.
+Resolve the fixture's deliberately missing image before expecting a clean
+native report. CI independently checks the ZIP, `mimetype`, XML manifest, and
+referenced parts. To record a native result and file checksums after running
+the JSX, point the checker at the original file and the result folder.
+
+```sh
+python scripts/validate-idml.py handoff.idml --native-results path/to/results
+```
 
 ## INDD recovery is not layout import
 

@@ -49,16 +49,38 @@ are absent. Other browser tests open print tools, import manuscripts/IDML, and
 download PDF/EPUB files, exercising their first-use loading paths. An aborted EPUB
 module request checks failure feedback and document preservation.
 
-Navigation and canvas-observation timings are diagnostic only: a single local
-browser run does not establish a speedup. Font blocking, disk caches, host load,
-browser instrumentation, and document size affect results. No claim of faster
-canvas rendering, constant frame rate, or large-document speed is made here.
+## Large-publication benchmarks
+
+`npm run benchmark:publications -- --ci` generates a 250-page threaded book and
+a 40-page magazine with three raster placements per page. It measures parsing,
+composition, preflight, opening, spread navigation, a Story Editor commit and
+PDF generation. The same Windows x64 and Node 24.18 setup produced these local
+measurements with the original benchmark fixture before and after the changes.
+
+| Operation | Before | After |
+| --- | ---: | ---: |
+| Open the 250-page book | 7.59 s | 4.49 s |
+| Commit a story edit and reflow the book | 7.86 s | 0.27 s |
+| Export the 40-page magazine PDF | 62.84 s | 30.24 s |
+| Peak benchmark process resident memory | 741 MiB | 727 MiB |
+
+The editor reuses a composed layout when publication references are current.
+PDF export reuses raster metadata and image aliases within a single export.
+The generated PDFs, timings and editable fixtures are written to
+`build/production-benchmark/`. Run `python scripts/validate-production.py` after
+installing `pypdf` to check geometry, text and raster placement independently.
+Add `--render` with `pypdfium2` and `Pillow` installed to save two rendered samples.
+
+Set `RECTO_MEASURE_PUBLICATIONS=1` when running Playwright against a built editor
+to measure project opening, navigation, typing, commit and browser heap usage.
+The browser timings are diagnostic. Font loading, host load, caches and document
+content affect results. CI saves metrics as an artifact and sets time and memory
+ceilings on the standalone benchmark to catch stalled operations.
 
 ## Remaining work
 
 The editor bundle remains above Vite's 500 kB warning threshold; the warning is
 retained. Photoshop support still contributes an eager dependency because current
 layer operations use synchronous APIs. Change that boundary only with dedicated
-PSD workflow checks. Large-publication layout/render profiling is separate work.
-See PUBLISHING.md for independent export validation, publishing limitations, and
+PSD workflow checks. See PUBLISHING.md for independent export validation, publishing limitations, and
 the dependency audit enforced by CI.

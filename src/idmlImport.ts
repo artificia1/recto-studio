@@ -1085,8 +1085,9 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
       const isImage = rXml.includes('<Image') || rXml.includes('Image/');
       if (isImage) {
         let imageSrc = '';
-        const rawAssetUrl = extractXmlAttr(rXml, 'AssetURL') || extractXmlAttr(rXml, 'LinkResourceURI') || '';
-        const cleanName = rawAssetUrl.replace(/\\/g, '/');
+        const rawAssetUrl = decodeStoryXml(extractXmlAttr(rXml, 'AssetURL') || extractXmlAttr(rXml, 'LinkResourceURI') || '');
+        let cleanName = rawAssetUrl.replace(/\\/g, '/');
+        try { cleanName = decodeURIComponent(cleanName); } catch { /* Older links may contain literal percent signs. */ }
         const baseName = cleanName.split('/').pop() || '';
 
         // 1. Check for embedded <Contents> in XML
@@ -1106,12 +1107,8 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
           else if (files.has(`Resources/${baseName}`)) fileBytes = files.get(`Resources/${baseName}`);
           else if (files.has(`Resources/Links/${baseName}`)) fileBytes = files.get(`Resources/Links/${baseName}`);
           else {
-            for (const [k, v] of files.entries()) {
-              if (k.toLowerCase().endsWith(baseName.toLowerCase())) {
-                fileBytes = v;
-                break;
-              }
-            }
+            const matches = [...files].filter(([name]) => name.split('/').at(-1)?.toLowerCase() === baseName.toLowerCase());
+            if (matches.length === 1) fileBytes = matches[0][1];
           }
 
           if (fileBytes && fileBytes.length > 0) {

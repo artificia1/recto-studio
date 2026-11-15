@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { generateFixedEpubPackage } from '../src/export/fixedEpub';
 import { StateManager } from '../src/state/stateManager';
 import type { TextElement } from '../src/types';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { createZipArchive } from '../src/zip';
 
 describe('fixed-layout EPUB', () => {
   it('writes one XHTML page per physical page with live text and explicit reading order', () => {
@@ -25,6 +27,9 @@ describe('fixed-layout EPUB', () => {
     const liveText = page.replace(/<[^>]*>/g, '');
     expect(liveText).toContain('Read first');
     expect(liveText.indexOf('Read first')).toBeLessThan(liveText.indexOf('Read second'));
+    const folder = 'test-results/export-validation';
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(`${folder}/fixed-layout.epub`, createZipArchive(files));
     text.blendMode = 'multiply';
     expect(() => generateFixedEpubPackage(manager.getState())).toThrow(/Page 1: spot inks, blend modes or shadows/);
   });

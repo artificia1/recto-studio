@@ -27,6 +27,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "analyze:bundle": "node scripts/bundle-report.mjs",
+    "benchmark:publications": "node --import tsx scripts/benchmark-publications.ts",
     "preview": "vite preview",
     "test": "node scripts/test.mjs",
     "test:integration": "vitest run --config vitest.integration.config.ts",

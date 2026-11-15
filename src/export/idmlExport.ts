@@ -15,6 +15,7 @@ import { explicitCmyk, rgbColor } from '../engine/inkColors';
 import { gradientCoordinates } from '../engine/fillGradients';
 import type { FillGradient } from '../types';
 import { shapeToPath } from '../engine/vectorPath';
+import { idmlHandoffFindings } from './idmlHandoff';
 
 const MM_TO_PT = 72 / 25.4; // 1 mm = 2.83464567 pt
 const IDML_NS = 'http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging';
@@ -31,12 +32,10 @@ function escapeXml(str: string): string {
 }
 
 export function exportDocumentToIdml(state: ProjectState): Uint8Array {
-  const unsupported = [...state.spreads, ...state.masterSpreads].flatMap(spread => spread.elements).filter(element =>
-    !element.pasteboard && !element.editorialOnly && (
-      (element.type === 'image' && element.adjustments) ||
-      ((element.type === 'shape' || element.type === 'path') && (element.decoration || element.strokePattern))));
+  const unsupported = idmlHandoffFindings(state).filter(item => item.severity === 'error');
   if (unsupported.length) throw new Error(`IDML cannot preserve the image adjustments or vector effects on ${unsupported.length} object(s). Use PDF for the final appearance.`);
-  const files: Record<string, string | Uint8Array> = {};
+  // UCF container identification requires the uncompressed mimetype at offset zero.
+  const files: Record<string, string | Uint8Array> = { mimetype: 'application/vnd.adobe.indesign-idml-package' };
   const swatches = new Map<string, string>();
   const gradients = new Map<string, string>();
   const layers = (state.layers?.length ? [...state.layers] : [DEFAULT_LAYERS[0]]).sort((a, b) => a.order - b.order);
@@ -119,10 +118,7 @@ export function exportDocumentToIdml(state: ProjectState): Uint8Array {
   const rightPt = Math.round((state.settings.margins.outsideMm ?? 18) * MM_TO_PT * 100) / 100;
   const facingPages = Boolean(state.settings.facingPages);
 
-  // 1. mimetype (MUST be first, uncompressed)
-  files['mimetype'] = 'application/vnd.adobe.indesign-idml-package';
-
-  // 2. META-INF/container.xml
+  // META-INF/container.xml
   files['META-INF/container.xml'] = `<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
   <rootfiles>

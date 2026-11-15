@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { stateManager } from '../state';
 import { savePublicationFile } from '../desktop';
-import { compareProofPages, uniqueProofMatches, type ProofChange, type ProofPage } from '../engine/proofComparison';
+import { matchProofPages, uniqueProofMatches, type ProofMatch, type ProofPage } from '../engine/proofComparison';
 import { useModalFocus } from '../hooks/useModalFocus';
 import type { CommentPin } from '../types';
 import { openReviewPdf, proofDifference } from '../export/pdfReview';
 import './proofReview.css';
 
-const labels: Record<ProofChange, string> = { unchanged: 'No difference detected', text: 'Text changed', artwork: 'Artwork or layout changed', size: 'Page size changed', added: 'Added page', removed: 'Removed page' };
+const labels: Record<ProofMatch['change'], string> = { unchanged: 'No difference detected', text: 'Text changed', artwork: 'Artwork or layout changed', size: 'Page size changed', added: 'Added page', removed: 'Removed page', uncertain: 'Match needs review' };
 type Reader = Awaited<ReturnType<typeof openReviewPdf>>;
 interface Proofs { before: Reader; after: Reader; baseline: ProofPage[]; revised: ProofPage[] }
 
@@ -18,7 +18,7 @@ export default function ProofReviewDialog({ onClose }: { onClose(): void }) {
   const [files, setFiles] = useState<[File?, File?]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
-  const [changes, setChanges] = useState<ProofChange[]>([]);
+  const [changes, setChanges] = useState<ProofMatch[]>([]);
   const [page, setPage] = useState(0);
   const [images, setImages] = useState<string[]>([]);
   const [difference, setDifference] = useState('');
@@ -34,9 +34,9 @@ export default function ProofReviewDialog({ onClose }: { onClose(): void }) {
     finally { if (!controller.current.signal.aborted) setBusy(false); }
   };
 
-  const show = async (index: number, pair: Proofs) => {
-    const next = await Promise.all([pair.before.preview(index), pair.after.preview(index)]);
-    const overlay = pair.baseline[index]?.signature !== pair.revised[index]?.signature ? await proofDifference(next[0], next[1]) : '';
+  const show = async (index: number, row: ProofMatch, pair: Proofs) => {
+    const next = await Promise.all([row.before === null ? '' : pair.before.preview(row.before), row.after === null ? '' : pair.after.preview(row.after)]);
+    const overlay = row.change !== 'unchanged' ? await proofDifference(next[0], next[1]) : '';
     if (!controller.current.signal.aborted) { setPage(index); setImages(next); setDifference(overlay); }
   };
 
@@ -52,11 +52,13 @@ export default function ProofReviewDialog({ onClose }: { onClose(): void }) {
       after = await openReviewPdf(b, signal);
       const baseline = await before.scan(index => setMessage(`Scanning original proof ${index} / ${before.length}`));
       const revised = await after.scan(index => setMessage(`Scanning revised proof ${index} / ${after!.length}`));
-      const results = compareProofPages(baseline, revised);
+      const results = matchProofPages(baseline, revised);
       const pair = { before, after, baseline, revised };
-      await show(Math.max(0, results.findIndex(change => change !== 'unchanged')), pair);
-      proofs.current = pair; setChanges(results); setOnlyChanges(results.some(change => change !== 'unchanged'));
-      setMessage(`${results.filter(change => change !== 'unchanged').length} of ${results.length} page positions changed.`);
+      const first = Math.max(0, results.findIndex(row => row.change !== 'unchanged' || row.moved));
+      await show(first, results[first], pair);
+      proofs.current = pair; setChanges(results); setOnlyChanges(results.some(row => row.change !== 'unchanged' || row.moved));
+      const moved = results.filter(row => row.moved).length, changed = results.filter(row => row.change !== 'unchanged').length;
+      setMessage(moved ? `${changed} changed or unmatched · ${moved} moved.` : `${changed} of ${results.length} page positions changed.`);
     } catch (error) { await before.close(); await after?.close(); throw error; }
   };
 
@@ -94,9 +96,10 @@ export default function ProofReviewDialog({ onClose }: { onClose(): void }) {
     } finally { await reader.close(); }
   };
 
+  const selected = changes[page];
   return <div className="modal-overlay" onKeyDown={event => { event.stopPropagation(); if (event.key === 'Escape') onClose(); }}>
     <div className="proof-dialog" role="dialog" aria-modal="true" aria-label="Compare proofs" ref={dialog}>
-      <header><div><h2>Compare proofs</h2><p>Compare PDF pages by position. Small details can fall below the preview resolution.</p></div><button className="sm-btn" onClick={onClose}>Close</button></header>
+      <header><div><h2>Compare proofs</h2><p>Match unique pages by appearance and extracted text. Uncertain pages stay available for manual review.</p></div><button className="sm-btn" onClick={onClose}>Close</button></header>
       <div className="proof-inputs">{(['Original proof', 'Revised proof'] as const).map((label, index) => <label key={label}>{label}
         <input aria-label={label} type="file" accept="application/pdf,.pdf" disabled={busy} onChange={event => {
           const next = [...files] as [File?, File?]; next[index] = event.currentTarget.files?.[0];
@@ -118,7 +121,10 @@ export default function ProofReviewDialog({ onClose }: { onClose(): void }) {
           {difference && <button className="sm-btn" aria-pressed={highlight} onClick={() => setHighlight(!highlight)}>Highlight changes</button>}
           <button className="sm-btn" disabled={busy} onClick={() => void act(() => importNotes(proofs.current!))}>Import comments from revised proof</button>
           <button className="sm-btn" disabled={busy} onClick={() => void act(async () => {
-            const report = { original: files[0]?.name, revised: files[1]?.name, pages: changes.map((change, index) => ({ page: index + 1, change })) };
+            const report = { original: files[0]?.name, revised: files[1]?.name, pages: changes.map(row => ({
+              originalPage: row.before === null ? null : row.before + 1, revisedPage: row.after === null ? null : row.after + 1,
+              change: row.change, moved: row.moved,
+            })) };
             await savePublicationFile('proof-comparison.json', JSON.stringify(report, null, 2), 'application/json');
             setMessage('Comparison report saved.');
           })}>Save comparison report</button>
@@ -127,12 +133,14 @@ export default function ProofReviewDialog({ onClose }: { onClose(): void }) {
       <p role="status">{message || (busy ? 'Working…' : '')}</p>
       {!!changes.length && <div className="proof-workspace">
         <aside><label><input type="checkbox" checked={onlyChanges} onChange={event => setOnlyChanges(event.currentTarget.checked)}/>Changed pages only</label>
-          <ol aria-label="Proof page changes">{changes.map((change, index) => (!onlyChanges || change !== 'unchanged') && <li key={index}>
-            <button className="sm-btn" disabled={busy} aria-current={page === index ? 'page' : undefined} onClick={() => void act(() => show(index, proofs.current!))}>Page {index + 1} · {labels[change]}</button>
+          <ol aria-label="Proof page changes">{changes.map((row, index) => (!onlyChanges || row.moved || row.change !== 'unchanged') && <li key={index}>
+            <button className="sm-btn" disabled={busy} aria-current={page === index ? 'page' : undefined} onClick={() => void act(() => show(index, row, proofs.current!))}>
+              Page {row.moved ? (row.before! + 1) + ' → ' + (row.after! + 1) : (row.after ?? row.before!) + 1} · {row.moved && row.change === 'unchanged' ? 'Moved' : labels[row.change]}
+            </button>
           </li>)}</ol></aside>
         <section className="proof-pair" aria-label={`Proof previews for page ${page + 1}`}>
-          {highlight && difference ? <figure><figcaption>Changed pixels · Page {page + 1}</figcaption><img src={difference} alt={`Highlighted changes on page ${page + 1}`}/></figure> : images.map((image, index) => <figure key={index}><figcaption>{index ? 'Revised' : 'Original'} · Page {page + 1}</figcaption>
-            {image ? <img src={image} alt={`${index ? 'Revised' : 'Original'} proof page ${page + 1}`}/> : <p>No page at this position.</p>}
+          {highlight && difference ? <figure><figcaption>Changed pixels</figcaption><img src={difference} alt="Highlighted proof changes"/></figure> : images.map((image, index) => <figure key={index}><figcaption>{index ? 'Revised' : 'Original'}{image ? ' · Page ' + ((index ? selected.after! : selected.before!) + 1) : ''}</figcaption>
+            {image ? <img src={image} alt={index ? 'Revised proof page' : 'Original proof page'}/> : <p>No matching page.</p>}
           </figure>)}
         </section>
       </div>}

@@ -4,7 +4,10 @@ Run after npm test. Requires pypdf; optional --render also requires pypdfium2.
 These structural checks do not certify PDF/X, PDF/UA, or EPUB conformance.
 """
 import argparse
+import hashlib
 import io
+import json
+import shutil
 from pathlib import Path
 import posixpath
 import xml.etree.ElementTree as ET
@@ -96,6 +99,15 @@ def validate_press_candidate(path, flattened):
         else:
             assert page['/Group']['/CS'] == '/DeviceCMYK'
             assert any(state.get_object().get('/ca') == 0.5 for state in states.values())
+    with path.open('rb') as source:
+        digest = hashlib.file_digest(source, 'sha256').hexdigest()
+    return {
+        'sha256': digest,
+        'outputProfileSha256': hashlib.sha256(profile.get_data()).hexdigest(),
+        'target': expected,
+        'pages': len(reader.pages),
+        'transparency': 'flattened' if flattened else 'live',
+    }
 
 
 def main():
@@ -114,8 +126,21 @@ def main():
                 pdf[0].render(scale=1).to_pil().save(path.with_suffix('.png'))
                 pdf.close()
     validate_epub(folder / 'publication.epub')
-    validate_press_candidate(folder / 'pdfx1a-2003.pdf', flattened=True)
-    validate_press_candidate(folder / 'pdfx4.pdf', flattened=False)
+    evidence = Path('build/production-benchmark/press-verification')
+    evidence.mkdir(parents=True, exist_ok=True)
+    candidates = []
+    for filename, flattened in [('pdfx1a-2003.pdf', True), ('pdfx4.pdf', False)]:
+        path = folder / filename
+        candidates.append({'file': filename, **validate_press_candidate(path, flattened)})
+        shutil.copyfile(path, evidence / filename)
+    report = {
+        'version': 1,
+        'fixtureProfile': 'Synthetic CMYK profile for engineering tests',
+        'checksPerformed': ['Identification', 'CMYK output intent', 'Page boxes', 'Transparency resources'],
+        'externalChecksPending': ['PDF/X preflight with the receiver’s rules', 'RIP or separation output review'],
+        'candidates': candidates,
+    }
+    (evidence / 'press-checks.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
     accessible = PdfReader(folder / 'accessible-ua1.pdf', strict=True)
     assert 'café' in accessible.pages[0].extract_text()
     assert accessible.trailer['/Root']['/StructTreeRoot']['/K'][0].get_object()['/S'] == '/Document'

@@ -11,7 +11,7 @@ export function createIdmlValidationKit(fileName: string, idml: Uint8Array) {
       '2. In a licensed InDesign installation, open Window > Utilities > Scripts.',
       '3. Reveal the User scripts folder and copy Recto-Validate-IDML.jsx into it.',
       `4. Run the script and choose ${fileName}. Choose a folder for the results.`,
-      '5. Read roundtrip-report.txt and compare the rendered pages.',
+      '5. Read roundtrip-report.txt and compare the rendered pages. The JSON report records the structural checks.',
       '6. Open indesign-roundtrip.idml in Recto to complete the return check.',
       '', 'The script writes to a separate folder and leaves the input file untouched.', '',
     ].join('\n'),
