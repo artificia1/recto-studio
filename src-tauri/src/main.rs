@@ -3,6 +3,7 @@
 
 mod project_files;
 mod proposal_inbox;
+mod raster_headers;
 
 use project_files::{is_native_project, persist_file, ProjectFile, ProjectFiles, MAX_FILE_BYTES};
 use proposal_inbox::ProposalInbox;
@@ -149,6 +150,14 @@ mod tests {
     }
 }
 
+#[tauri::command]
+fn desktop_probe_raster(request: tauri::ipc::Request<'_>) -> Option<serde_json::Value> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return None };
+    let media_type = request.headers().get("x-recto-raster-type")?.to_str().ok()?;
+    let result = raster_headers::probe(bytes, media_type)?;
+    Some(serde_json::json!({ "width": result.width, "height": result.height, "cmyk": result.cmyk }))
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(ProjectRegistry::default())
@@ -156,6 +165,7 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             desktop_open_document, desktop_save_project, desktop_save_file, desktop_bundled_mcp,
+            desktop_probe_raster,
             proposal_inbox::desktop_begin_proposal_review, proposal_inbox::desktop_read_proposal,
             proposal_inbox::desktop_end_proposal_review,
         ])

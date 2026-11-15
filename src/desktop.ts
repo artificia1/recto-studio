@@ -3,6 +3,21 @@ export function isDesktop(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
+export async function probeDesktopRaster(bytes: Uint8Array, mediaType: string) {
+  if (!isDesktop()) return null;
+  // Send enough for ordinary image headers without copying the full raster across IPC.
+  const header = bytes.slice(0, mediaType === 'image/jpeg' ? 16 * 1024 : 30);
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return await invoke<{ width: number; height: number; cmyk: boolean } | null>('desktop_probe_raster', header, {
+      headers: { 'x-recto-raster-type': mediaType },
+    });
+  } catch {
+    // Older desktop builds and WebViews without binary IPC use the existing reader.
+    return null;
+  }
+}
+
 export interface DesktopProjectFile {
   handle: string;
   name: string;

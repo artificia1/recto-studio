@@ -1,4 +1,5 @@
 import { embeddedAsset } from '../export/publicationAssets';
+import { probeDesktopRaster } from '../desktop';
 
 /** Read dimensions before native decoding or allocating a pixel surface. */
 export function rasterDimensions(bytes: Uint8Array, type: string) {
@@ -10,9 +11,11 @@ export function rasterDimensions(bytes: Uint8Array, type: string) {
     for (let offset = 2; offset + 4 < bytes.length;) {
       if (bytes[offset++] !== 255) throw new Error('Malformed JPEG marker.');
       while (bytes[offset] === 255) offset++;
+      if (offset >= bytes.length) throw new Error('Truncated JPEG segment.');
       const marker = bytes[offset++];
       if (marker === 0xda || marker === 0xd9) break;
       if (marker === 1 || marker >= 0xd0 && marker <= 0xd8) continue;
+      if (offset + 2 > bytes.length) throw new Error('Truncated JPEG segment.');
       const length = view.getUint16(offset);
       if (length < 2 || offset + length > bytes.length) throw new Error('Truncated JPEG segment.');
       if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker) && length >= 8) {
@@ -31,7 +34,8 @@ export function rasterDimensions(bytes: Uint8Array, type: string) {
 }
 
 export async function decodeSrgbRaster(src: string, maxEdge?: number, allowCmyk = false) {
-  const asset = embeddedAsset(src), original = rasterDimensions(asset.bytes, asset.mediaType);
+  const asset = embeddedAsset(src);
+  const original = await probeDesktopRaster(asset.bytes, asset.mediaType) ?? rasterDimensions(asset.bytes, asset.mediaType);
   if (original.cmyk && !allowCmyk) throw new Error('CMYK JPEG conversion requires a known source profile. Supply an sRGB image or use PDF without ICC conversion.');
   const scale = maxEdge ? Math.min(1, maxEdge / Math.max(original.width, original.height)) : 1;
   const width = Math.max(1, Math.round(original.width * scale)), height = Math.max(1, Math.round(original.height * scale));

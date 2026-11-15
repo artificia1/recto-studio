@@ -104,6 +104,10 @@ over, which checks run automatically, and what needs review before production.
 
 ## Upcoming work
 
+- **Rust migration in progress.** Desktop raster processing now probes image
+  dimensions in Rust before allocating pixel surfaces. The browser and headless
+  CLI use the TypeScript reader, which also handles desktop IPC fallbacks.
+
 - **Editorial interchange.** Expand IDML and Scribus coverage for compound
   paths, complex groups, linked images, and advanced typography. Run a broader
   handoff corpus through licensed InDesign installations.
