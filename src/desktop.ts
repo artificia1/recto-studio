@@ -18,6 +18,24 @@ export async function probeDesktopRaster(bytes: Uint8Array, mediaType: string) {
   }
 }
 
+export async function adjustDesktopRaster(pixels: Uint8Array, table: Uint8Array, grayscale: boolean): Promise<boolean> {
+  if (!isDesktop() || !pixels.length || pixels.length > 1024 * 1024 || pixels.length % 4 || table.length !== 256) return false;
+  // Binary layout shared with raster_adjustments.rs: flag, lookup table, RGBA pixels.
+  const packet = new Uint8Array(1 + table.length + pixels.length);
+  packet[0] = grayscale ? 1 : 0;
+  packet.set(table, 1);
+  packet.set(pixels, 1 + table.length);
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const result = await invoke<ArrayBuffer>('desktop_adjust_raster', packet);
+    if (!(result instanceof ArrayBuffer) || result.byteLength !== pixels.byteLength) return false;
+    pixels.set(new Uint8Array(result));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export interface DesktopProjectFile {
   handle: string;
   name: string;

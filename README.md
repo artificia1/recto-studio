@@ -105,8 +105,9 @@ over, which checks run automatically, and what needs review before production.
 ## Upcoming work
 
 - **Rust migration in progress.** Desktop raster processing now probes image
-  dimensions in Rust before allocating pixel surfaces. The browser and headless
-  CLI use the TypeScript reader, which also handles desktop IPC fallbacks.
+  dimensions before allocating pixel surfaces. Small desktop exports can also
+  apply grayscale, levels, and curves in Rust. Live previews, larger rasters,
+  browser and CLI jobs, and desktop IPC fallbacks use the TypeScript path.
 
 - **Editorial interchange.** Expand IDML and Scribus coverage for compound
   paths, complex groups, linked images, and advanced typography. Run a broader
