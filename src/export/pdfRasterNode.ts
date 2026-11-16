@@ -1,9 +1,16 @@
+import { pdfRangeOptions } from './pdfRanges';
+import type { PdfPayload } from './pdfPayload';
+
 /** Native canvas is only loaded by the headless exporter, never bundled into the app. */
-export async function createNodePdfRaster(bytes: Uint8Array, assets?: { standardFontDataUrl: string; cMapUrl: string; wasmUrl: string }) {
+export async function createNodePdfRaster(source: Uint8Array | PdfPayload, assets?: { standardFontDataUrl: string; cMapUrl: string; wasmUrl: string }) {
   const canvasModule = '@napi-rs/canvas', pdfModule = 'pdfjs-dist/legacy/build/pdf.mjs';
   const native = await import(/* @vite-ignore */ canvasModule);
   const engine = await import(/* @vite-ignore */ pdfModule);
-  const task = engine.getDocument({ data: bytes.slice(), useSystemFonts: false, isEvalSupported: false, ...assets });
+  const task = engine.getDocument({
+    ...(source instanceof Uint8Array ? { data: new Uint8Array(source) }
+      : pdfRangeOptions(engine.PDFDataRangeTransport, source, () => { void task.destroy().catch(() => {}); })),
+    useSystemFonts: false, isEvalSupported: false, ...assets,
+  });
   const pdf = await task.promise.catch(async (error: unknown) => { await task.destroy(); throw error; });
   return {
     length: pdf.numPages as number,

@@ -124,7 +124,7 @@ describe('Project import validation and legacy defaults', () => {
   });
 
   it('validates the file API and rejects before replacing the open project', async () => {
-    const file = { text: async () => '{"settings":{}}' } as File;
+    const file = new File(['{"settings":{}}'], 'invalid.recto');
     await expect(manager.importProjectFile(file)).rejects.toThrow(ProjectValidationError);
     expect(manager.getState()).toEqual(original);
     await expect(RectoDB.importProjectFile(file, original)).rejects.toThrow(ProjectValidationError);

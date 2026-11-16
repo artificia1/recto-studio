@@ -234,6 +234,10 @@ const layer = object({ id: identifier, name: text, colorHex: text, visible: bool
 export function parseProject(json: string, defaults: ProjectState): ProjectState {
   let value: unknown;
   try { value = JSON.parse(json); } catch { fail('Project', 'the file is not valid JSON'); }
+  return validateProjectValue(value, defaults);
+}
+
+export function validateProjectValue(value: unknown, defaults: ProjectState): ProjectState {
   const data = record(value, 'Project');
   const settings = record(data.settings, 'Project.settings');
   // Never turn a missing document or missing page dimensions into a default document.

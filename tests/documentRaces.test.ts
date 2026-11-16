@@ -16,6 +16,20 @@ function projectFile(title: string) {
   return new File([JSON.stringify(publication(title).getState())], `${title}.recto`);
 }
 
+async function delayProjectRead(file: File) {
+  const contents = new Uint8Array(await file.arrayBuffer());
+  let finish!: () => void;
+  const pending = new Promise<void>(resolve => { finish = resolve; });
+  vi.spyOn(file, 'stream').mockImplementation(() => new ReadableStream({
+    async pull(controller) {
+      await pending;
+      controller.enqueue(contents);
+      controller.close();
+    },
+  }));
+  return finish;
+}
+
 function imagePublication() {
   const manager = publication('Artwork');
   manager.addElement({
@@ -33,12 +47,10 @@ describe('Background document and asset work', () => {
   it('opens the most recently requested project even if an earlier read finishes last', async () => {
     const manager = publication('Current');
     const file = projectFile('Slow');
-    const contents = await file.text();
-    let finish!: (contents: string) => void;
-    vi.spyOn(file, 'text').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const finish = await delayProjectRead(file);
     const slow = expect(manager.importProjectFile(file)).rejects.toThrow(/opening|superseded/i);
     await manager.importProjectFile(projectFile('Latest'));
-    finish(contents);
+    finish();
     await slow;
     expect(manager.getState().settings.title).toBe('Latest');
   });
@@ -46,12 +58,10 @@ describe('Background document and asset work', () => {
   it('keeps edits made while a project file is being read', async () => {
     const manager = publication('Current');
     const file = projectFile('Slow');
-    const contents = await file.text();
-    let finish!: (contents: string) => void;
-    vi.spyOn(file, 'text').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const finish = await delayProjectRead(file);
     const opening = expect(manager.importProjectFile(file)).rejects.toThrow(/document changed/i);
     manager.updateSettings({ title: 'Edited while opening' });
-    finish(contents);
+    finish();
     await opening;
     expect(manager.getState().settings.title).toBe('Edited while opening');
   });

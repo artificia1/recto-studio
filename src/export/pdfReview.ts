@@ -1,7 +1,9 @@
-import { AnnotationMode, getDocument, GlobalWorkerOptions, type PDFPageProxy } from 'pdfjs-dist';
+import { AnnotationMode, getDocument, GlobalWorkerOptions, PDFDataRangeTransport, type PDFPageProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import type { ProofPage } from '../engine/proofComparison';
 import { proofFingerprint, proofScanEdge } from '../engine/proofFingerprint';
+import { pdfRangeOptions } from './pdfRanges';
+import type { PdfPayload } from './pdfPayload';
 
 const limit = 75 * 1024 * 1024;
 const maximumPages = 500;
@@ -42,12 +44,14 @@ export async function proofDifference(before: string, after: string): Promise<st
   return canvas.toDataURL('image/png');
 }
 
-export async function openReviewPdf(input: File | ArrayBuffer, signal?: AbortSignal) {
+export async function openReviewPdf(input: Blob | PdfPayload | ArrayBuffer, signal?: AbortSignal) {
   if ((input instanceof ArrayBuffer ? input.byteLength : input.size) > limit) throw new Error('Choose a PDF up to 75 MiB.');
-  const data = new Uint8Array(input instanceof ArrayBuffer ? input : await input.arrayBuffer());
   signal?.throwIfAborted();
   GlobalWorkerOptions.workerSrc = workerUrl;
-  const task = getDocument({ data, useSystemFonts: true, maxImageSize: 20_000_000, canvasMaxAreaInBytes: 64 * 1024 * 1024, stopAtErrors: true });
+  const source = input instanceof ArrayBuffer
+    ? { data: new Uint8Array(input) }
+    : pdfRangeOptions(PDFDataRangeTransport, input, () => { void close(); });
+  const task = getDocument({ ...source, useSystemFonts: true, maxImageSize: 20_000_000, canvasMaxAreaInBytes: 64 * 1024 * 1024, stopAtErrors: true });
   let closing: Promise<void> | undefined;
   const close = () => closing ??= task.destroy().catch(() => {});
   const abort = () => { void close(); };

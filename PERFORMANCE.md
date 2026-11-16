@@ -87,17 +87,20 @@ releases PDF tile surfaces after each render. Decoded source images still need
 their own buffers.
 
 PDF downloads serialize into byte chunks using the existing writers' object
-offset and cross-reference calculations. Tagged and press exports share one
-PDF object graph through finalization. Reading that graph from the initial
-render and rendering transparency with PDF.js still require contiguous input.
-Callers requesting `output('arraybuffer')` explicitly also receive a
-contiguous buffer for compatibility.
+offset and cross-reference calculations. Tagged and press exports parse the
+initial render from those chunks and share one PDF object graph through
+finalization. PDF.js receives byte ranges for transparency rendering and proof
+review. Its worker owns any document-sized buffer required by its renderer.
+ZIP packages and headless PDF writers accept the original PDF chunks.
+Callers requesting `output('arraybuffer')` receive a contiguous buffer for
+compatibility.
 
 Desktop project open and save use one MiB transfers. Project saves serialize
 JSON in batches and stage it in a temporary file. Rust checks for external
-edits before replacing a bound project. The editor still parses the full JSON
-document when opening a project. Older desktop shells support the legacy
-commands.
+edits before replacing a bound project. The editor builds and validates the
+project object from UTF-8 chunks, including for files opened in the browser.
+The parsed project still needs to fit in editor memory. Older desktop shells
+support the legacy commands.
 
 To regenerate the bundled raster module, run `rustup target add
 wasm32-unknown-unknown` and then `node scripts/build-raster-wasm.mjs`. Normal

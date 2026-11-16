@@ -54,6 +54,7 @@ export async function buildBookDelivery(source: ProjectState, delivery: BookDeli
   if (recipe.approvedDimensions !== dimensions.signature) throw new Error('Review and approve the cover dimensions for this book before exporting.');
   const warnings: string[] = [];
   const { exportDocumentToPdf } = await import('../export/pdfExport');
+  const { pdfExportPayload } = await import('../export/pdfPayload');
   const { exportDocumentToEpubAsync } = await import('../epubExport');
   const pdfOptions = { ...PDF_PRESETS[recipe.preset].options, spreadRange: 'all' as const,
     download: false, strict: true, onWarning: (warning: string) => warnings.push(warning) };
@@ -62,21 +63,21 @@ export async function buildBookDelivery(source: ProjectState, delivery: BookDeli
     const { fontManager } = await import('../fontManager');
     return fontManager.withProjectFonts(project.embeddedFonts, run);
   };
-  const interior = new Uint8Array((await withFonts(book, () => exportDocumentToPdf(book, pdfOptions))).output('arraybuffer'));
+  const interior = pdfExportPayload(await withFonts(book, () => exportDocumentToPdf(book, pdfOptions)));
   const coverProject = recipe.cover;
-  const cover = new Uint8Array((await withFonts(coverProject, () => exportDocumentToPdf(coverProject, pdfOptions))).output('arraybuffer'));
+  const cover = pdfExportPayload(await withFonts(coverProject, () => exportDocumentToPdf(coverProject, pdfOptions)));
   const ebook = await withFonts(book, () => exportDocumentToEpubAsync(book, { download: false, strict: true }));
   warnings.push(...ebook.warnings);
 
-  const { PDFDocument } = await import('pdf-lib');
-  const expectedPages = (await PDFDocument.load(interior)).getPageCount() === dimensions.pageCount &&
-    (await PDFDocument.load(cover)).getPageCount() === 1;
+  const { loadGeneratedPdf } = await import('../export/pdfChunkReader');
+  const expectedPages = (await loadGeneratedPdf(interior)).getPageCount() === dimensions.pageCount &&
+    (await loadGeneratedPdf(cover)).getPageCount() === 1;
   const epubFiles = await readZip(ebook.buffer, 256 * 1024 * 1024);
   if (!expectedPages || new TextDecoder().decode(epubFiles.get('mimetype')) !== 'application/epub+zip' ||
     !epubFiles.has('META-INF/container.xml')) throw new Error('One or more delivery files failed the package checks.');
   const report = { title: book.settings.title, preset: recipe.preset, dimensions,
     checks: ['Interior and cover page counts', 'EPUB mimetype and container'],
     issues: publicationPreflight(book, 'print'), warnings };
-  return createZipArchive({ 'interior.pdf': interior, 'cover.pdf': cover, 'ebook.epub': ebook.buffer,
+  return createZipArchive({ 'interior.pdf': interior.parts(), 'cover.pdf': cover.parts(), 'ebook.epub': ebook.buffer,
     'delivery-report.json': JSON.stringify(report, null, 2) });
 }

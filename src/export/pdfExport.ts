@@ -664,8 +664,8 @@ export async function exportDocumentToPdf(
     semantic ? [...reading!.groups, ...semantic.groups] : reading?.groups, structure ? pagesToExport.map(({ page }) => page.id) : undefined,
   ) : undefined;
   if (!pdf && (options.transparency === 'flatten' || options.accessibility || options.pressStandard)) {
-    const { PDFDocument } = await import('pdf-lib');
-    pdf = await PDFDocument.load(serializeJsPdf(doc).bytes(), { updateMetadata: false });
+    const { loadGeneratedPdf } = await import('./pdfChunkReader');
+    pdf = await loadGeneratedPdf(serializeJsPdf(doc));
   }
   let objectStreams = options.compress !== false;
   let version: string | undefined;

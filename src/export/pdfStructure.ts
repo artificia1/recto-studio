@@ -6,6 +6,7 @@ import { storyText } from '../engine/storyContent';
 import { publicationHeadings } from '../engine/publicationReferences';
 import { savePublicationFile } from '../desktop';
 import { finalizedPdfPayloads, serializeJsPdf, type PdfPayload } from './pdfPayload';
+import { loadGeneratedPdf } from './pdfChunkReader';
 import type { PdfStructureGroup } from './pdfSemantics';
 import { installPdfFonts } from './pdfFontResources';
 import { installPdfGradients } from './pdfGradients';
@@ -60,7 +61,7 @@ function attachHeadingBookmarks(pdf: PDFDocument, state: ProjectState, pageIds: 
 
 /** Repair resources and attach a real structure/parent tree without claiming PDF/UA conformance. */
 export async function finishPdf(doc: jsPDF, state: ProjectState, spots: FreeToneSpotColor[], tags?: PdfContentTag[], groups?: PdfStructureGroup[], pageIds?: string[]) {
-  const pdf = await PDFDocument.load(serializeJsPdf(doc).bytes(), { updateMetadata: false });
+  const pdf = await loadGeneratedPdf(serializeJsPdf(doc));
   installPdfFonts(doc, pdf);
   const { context } = pdf;
   for (const page of pdf.getPages()) {

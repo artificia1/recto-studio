@@ -3,6 +3,9 @@ import { PDFDocument } from 'pdf-lib';
 import { expect, it } from 'vitest';
 import { serializeJsPdf } from '../src/export/pdfPayload';
 import { serializePdf } from '../src/export/pdfWriter';
+import { loadGeneratedPdf } from '../src/export/pdfChunkReader';
+import { createNodePdfRaster } from '../src/export/pdfRasterNode';
+import { createZipArchive, readZip } from '../src/zip';
 
 it('streams jsPDF bytes and preserves offsets across large embedded streams', async () => {
   const doc = new jsPDF();
@@ -14,6 +17,7 @@ it('streams jsPDF bytes and preserves offsets across large embedded streams', as
   expect(payload.size).toBeGreaterThan(1024 * 1024);
   expect(Buffer.from(await payload.blob().arrayBuffer()).equals(expected)).toBe(true);
   expect((await PDFDocument.load(payload.bytes())).getPageCount()).toBe(2);
+  expect((await loadGeneratedPdf(payload)).getPageCount()).toBe(2);
   doc.text('Page remains editable', 10, 45);
   expect(doc.output('arraybuffer').byteLength).toBeGreaterThan(expected.length);
 });
@@ -29,4 +33,19 @@ it.each([false, true])('matches the pdf-lib serializer with object streams set t
   const output = await serializePdf(clone, objectStreams);
   expect(Buffer.from(output.bytes()).equals(baseline)).toBe(true);
   expect((await PDFDocument.load(output.bytes())).getPageCount()).toBe(1);
+  expect((await loadGeneratedPdf(output)).getPageCount()).toBe(1);
+});
+
+it('reads and renders a large generated PDF from ranges and archives its original chunks', async () => {
+  const pdf = await PDFDocument.create();
+  pdf.context.register(pdf.context.stream(new Uint8Array(2 * 1024 * 1024).fill(42)));
+  pdf.addPage([100, 100]).drawRectangle({ x: 10, y: 10, width: 80, height: 80 });
+  const payload = await serializePdf(pdf, false);
+  const renderer = await createNodePdfRaster(payload);
+  try {
+    const tile = await renderer.tile(0, 48, 48, 4, 4, 1);
+    expect(Array.from(tile.subarray(0, 4))).toEqual([0, 0, 0, 255]);
+  } finally { await renderer.destroy(); }
+  const archive = await readZip(createZipArchive({ 'proof.pdf': payload.parts() }), 4 * 1024 * 1024);
+  expect(Buffer.from(archive.get('proof.pdf')!).equals(payload.bytes())).toBe(true);
 });

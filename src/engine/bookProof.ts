@@ -6,6 +6,7 @@ import { publicationPreflight } from './publicationPreflight';
 import { captureComposedLayout } from './layoutChanges';
 import { matchProofPages, type ProofPage } from './proofComparison';
 import { fontManager } from '../fontManager';
+import { PdfPayload, pdfExportPayload } from '../export/pdfPayload';
 
 export const maxBookProofBytes = 32 * 1024 * 1024;
 export const maxBookProofPages = 500;
@@ -62,21 +63,39 @@ export function readApprovedBookProof(value: unknown): ApprovedBookProof {
   return proof as ApprovedBookProof;
 }
 
-async function digest(bytes: Uint8Array<ArrayBuffer>) {
-  const result = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
-  return Array.from(result, byte => byte.toString(16).padStart(2, '0')).join('');
+async function digest(source: Uint8Array | PdfPayload) {
+  const { sha256 } = await import('@noble/hashes/sha2.js');
+  const hash = sha256.create();
+  for (const part of source instanceof PdfPayload ? source.parts() : [source]) hash.update(part);
+  return Array.from(hash.digest(), byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
 export async function approvedProofPdf(proof: ApprovedBookProof) {
-  const bytes = new Uint8Array(base64ToUint8Array(proof.pdf));
-  if (bytes.byteLength > maxBookProofBytes || await digest(bytes) !== proof.sha256) throw new Error('The approved PDF no longer matches its recorded checksum.');
-  return bytes;
+  return (await approvedProofPayload(proof)).bytes();
 }
 
-export async function approveBookProof(snapshot: BookProofSnapshot, bytes: Uint8Array<ArrayBuffer>): Promise<ApprovedBookProof> {
-  if (bytes.byteLength > maxBookProofBytes) throw new Error('The approved PDF must be at most 32 MiB.');
+export async function approvedProofPayload(proof: ApprovedBookProof) {
+  const payload = new PdfPayload();
+  for (let offset = 0; offset < proof.pdf.length; offset += 1024 * 1024) {
+    payload.append(base64ToUint8Array(proof.pdf.slice(offset, offset + 1024 * 1024)));
+    if (payload.size > maxBookProofBytes) throw new Error('The approved PDF no longer matches its recorded checksum.');
+  }
+  if (await digest(payload) !== proof.sha256) throw new Error('The approved PDF no longer matches its recorded checksum.');
+  return payload;
+}
+
+export async function approveBookProof(snapshot: BookProofSnapshot, source: Uint8Array | PdfPayload): Promise<ApprovedBookProof> {
+  const size = source instanceof PdfPayload ? source.size : source.byteLength;
+  if (size > maxBookProofBytes) throw new Error('The approved PDF must be at most 32 MiB.');
+  const chunks: string[] = [];
+  // All non-final chunks contain a multiple of three bytes, so only the final chunk gets padding.
+  const chunkBytes = 3 * 256 * 1024;
+  for (let offset = 0; offset < size; offset += chunkBytes) {
+    const chunk = source instanceof PdfPayload ? source.range(offset, offset + chunkBytes) : source.subarray(offset, offset + chunkBytes);
+    chunks.push(uint8ArrayToBase64(chunk));
+  }
   return readApprovedBookProof({
-    ...snapshot, version: 1, approvedAt: new Date().toISOString(), pdf: uint8ArrayToBase64(bytes), sha256: await digest(bytes),
+    ...snapshot, version: 1, approvedAt: new Date().toISOString(), pdf: chunks.join(''), sha256: await digest(source),
   });
 }
 
@@ -102,9 +121,9 @@ export async function makeBookProof(source: ProjectState, pages: BookProofPage[]
   const pdf = await exportDocumentToPdf(source, { download: false, fetchExternalAssets: false, visualProof: true,
     overprintBlack: false, onWarning: warning => warnings.add(warning) });
   if (pdf.getNumberOfPages() !== pages.length) throw new Error('The proof page map does not match the exported PDF.');
-  const bytes = new Uint8Array(pdf.output('arraybuffer'));
-  if (bytes.byteLength > maxBookProofBytes) throw new Error('The proof PDF exceeds 32 MiB. Reduce the size of embedded artwork before reviewing.');
-  return { snapshot, bytes, warnings: [...warnings] };
+  const payload = pdfExportPayload(pdf);
+  if (payload.size > maxBookProofBytes) throw new Error('The proof PDF exceeds 32 MiB. Reduce the size of embedded artwork before reviewing.');
+  return { snapshot, payload, get bytes() { return payload.bytes(); }, warnings: [...warnings] };
 }
 
 export function compareBookProof(before: BookProofSnapshot, after: BookProofSnapshot, original: ProofPage[], revised: ProofPage[]) {
@@ -130,7 +149,7 @@ export async function describeBookProofRevision(approved: ApprovedBookProof,
     version: 1,
     approvedAt: approved.approvedAt,
     approvedSha256: approved.sha256,
-    currentSha256: await digest(current.bytes),
+    currentSha256: await digest(current.payload),
     ...comparison,
     rows: comparison.rows.map(({ before, after, ...row }) => ({
       ...row,

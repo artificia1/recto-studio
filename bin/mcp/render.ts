@@ -5,15 +5,16 @@ import { PDF_PRESETS, type PdfPreset } from '../../src/export/presets';
 import { limits, sha256, type PublishingWorkspace } from './workspace';
 import { composedPreflight, confirmProjectRevision, summarizeIssues, type LoadedProject } from './publication';
 import { publicationSnapshot } from '../../src/engine/publicationReferences';
+import { pdfExportPayload } from '../../src/export/pdfPayload';
 
 export async function compilePdf(project: ProjectState, preset: PdfPreset) {
   const warnings = new Set<string>();
   const { exportDocumentToPdf } = await import('../../src/export/pdfExport');
   const pdf = await exportDocumentToPdf(project, { ...PDF_PRESETS[preset].options, strict: true,
     download: false, fetchExternalAssets: false, onWarning: warning => warnings.add(warning) });
-  const bytes = Buffer.from(pdf.output('arraybuffer'));
-  if (bytes.length > limits.pdf) throw new Error('The PDF exceeds 64 MiB. Use a smaller publication.');
-  return { bytes, pages: pdf.getNumberOfPages(), warnings: [...warnings].slice(0, 50),
+  const payload = pdfExportPayload(pdf);
+  if (payload.size > limits.pdf) throw new Error('The PDF exceeds 64 MiB. Use a smaller publication.');
+  return { bytes: payload.parts(), pages: pdf.getNumberOfPages(), warnings: [...warnings].slice(0, 50),
     preset, description: PDF_PRESETS[preset].description };
 }
 
@@ -70,7 +71,7 @@ export async function renderDataset(workspace: PublishingWorkspace, project: Loa
   if (data.records.length * template.spreads.reduce((pages, spread) => pages + spread.pages.length, 0) > limits.pages) {
     throw new Error('Split the batch into at most 500 output pages.');
   }
-  const outputFiles: { name: string; bytes: Uint8Array }[] = [];
+  const outputFiles: { name: string; bytes: Uint8Array | readonly Uint8Array[] }[] = [];
   const results: { name: string; pages: number; warnings: string[] }[] = [];
   let total = 0;
   for (const [index, record] of data.records.entries()) {
@@ -89,7 +90,7 @@ export async function renderDataset(workspace: PublishingWorkspace, project: Loa
           element.type === 'image' ? { ...record, ...photos } : record));
       }
       const compilation = await compilePdf(merged, preset);
-      total += compilation.bytes.length;
+      total += compilation.bytes.reduce((size, chunk) => size + chunk.byteLength, 0);
       if (total > limits.batch) throw new Error('The batch exceeds 128 MiB. Split the dataset into smaller batches.');
       const name = `record-${String(index + 1).padStart(4, '0')}.pdf`;
       outputFiles.push({ name, bytes: compilation.bytes });

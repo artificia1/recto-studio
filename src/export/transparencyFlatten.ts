@@ -4,6 +4,7 @@ import { convertIcc } from '../engine/colorService';
 import { profileBytes } from '../engine/iccProfiles';
 import { prepareRasterTile } from '../engine/rasterPrepress';
 import { requirePdfFonts } from './pdfPress';
+import { serializePdf } from './pdfWriter';
 
 export interface PixelRect { x: number; y: number; width: number; height: number }
 
@@ -66,7 +67,7 @@ export async function flattenPdfTransparency(pdf: PDFDocument, state: ProjectSta
   if (hasRegions) requirePdfFonts(pdf);
   let renderer;
   if (hasRegions) {
-    const bytes = await pdf.save({ useObjectStreams: false, updateFieldAppearances: false });
+    const bytes = await serializePdf(pdf, false);
     renderer = typeof document === 'undefined'
       ? await (await import('./pdfRasterNode')).createNodePdfRaster(bytes)
       : await (await import('./pdfRasterBrowser')).createBrowserPdfRaster(bytes);

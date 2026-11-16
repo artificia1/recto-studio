@@ -20,7 +20,7 @@ describe('approved book proof', () => {
     ] };
     const baseline = assembleArchivedBook(draft);
     const before = await makeBookProof(baseline.source, baseline.pages, draft.delivery);
-    const proof = await approveBookProof(before.snapshot, before.bytes);
+    const proof = await approveBookProof(before.snapshot, before.payload);
     expect(await approvedProofPdf(proof)).toEqual(before.bytes);
     await expect(approvedProofPdf({ ...proof, sha256: '0'.repeat(64) })).rejects.toThrow(/checksum/);
     expect(() => readApprovedBookProof({ ...proof, pages: [proof.pages[0], { ...proof.pages[0], pageNumber: 2 }] })).toThrow(/invalid/);

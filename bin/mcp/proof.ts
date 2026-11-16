@@ -2,10 +2,11 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import type { ProjectState } from '../../src/types';
 import { createNodePdfRaster } from '../../src/export/pdfRasterNode';
+import { pdfExportPayload, type PdfPayload } from '../../src/export/pdfPayload';
 
 export type ProofTarget = { page: number } | { spread: number };
 
-export function openProof(bytes: Uint8Array) {
+export function openProof(bytes: Uint8Array | PdfPayload) {
   const root = path.dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'));
   const asset = (folder: string) => path.join(root, folder).replaceAll('\\', '/') + '/';
   return createNodePdfRaster(bytes, {
@@ -26,8 +27,8 @@ export async function renderProof(source: ProjectState, target: ProofTarget, max
     spreadRange: [index], fetchExternalAssets: false, download: false, visualProof: true,
     overprintBlack: false, onWarning: warning => warnings.add(warning),
   });
-  const bytes = new Uint8Array(pdf.output('arraybuffer'));
-  if (bytes.length > 64 * 1024 * 1024) throw new Error('The proof exceeds the intermediate PDF size limit.');
+  const bytes = pdfExportPayload(pdf);
+  if (bytes.size > 64 * 1024 * 1024) throw new Error('The proof exceeds the intermediate PDF size limit.');
   const renderer = await openProof(bytes);
   try {
     const png = await renderer.png(selected.map(page => page.index), maxEdge);

@@ -1,4 +1,4 @@
-import { approvedProofPdf, compareBookProof, describeBookProofRevision, makeBookProof, type ApprovedBookProof } from '../../src/engine/bookProof';
+import { approvedProofPayload, compareBookProof, describeBookProofRevision, makeBookProof, type ApprovedBookProof } from '../../src/engine/bookProof';
 import { fontManager } from '../../src/fontManager';
 import { openProof } from './proof';
 import { loadBook, replaceBookProofChapter } from './book';
@@ -25,10 +25,10 @@ export async function reviewBook(workspace: PublishingWorkspace, plans: DraftPla
   const book = await currentBook(workspace, plans, args);
   const approved = requireProof(book.archive.proof);
   const current = await fontManager.withProjectFonts(book.source.embeddedFonts, () => makeBookProof(book.source, book.pages, book.delivery));
-  const before = await openProof(await approvedProofPdf(approved));
+  const before = await openProof(await approvedProofPayload(approved));
   let after: Awaited<ReturnType<typeof openProof>> | undefined;
   try {
-    after = await openProof(current.bytes);
+    after = await openProof(current.payload);
     const report = compareBookProof(approved, current.snapshot, await before.scan(), await after.scan());
     return { revision: book.revision, ...await describeBookProofRevision(approved, current, report), warnings: current.warnings.slice(0, 30) };
   } finally { await after?.destroy(); await before.destroy(); }
@@ -41,8 +41,8 @@ export async function renderBookProofPage(workspace: PublishingWorkspace, plans:
   const proof = args.edition === 'approved' ? requireProof(book.archive.proof) : undefined;
   const page = (proof?.pages || book.pages)[args.page - 1];
   if (!page) throw new Error('The requested page is missing from this edition.');
-  const bytes = proof ? await approvedProofPdf(proof) :
-    (await fontManager.withProjectFonts(book.source.embeddedFonts, () => makeBookProof(book.source, book.pages, book.delivery))).bytes;
+  const bytes = proof ? await approvedProofPayload(proof) :
+    (await fontManager.withProjectFonts(book.source.embeddedFonts, () => makeBookProof(book.source, book.pages, book.delivery))).payload;
   const renderer = await openProof(bytes);
   try {
     if (renderer.length !== (proof?.pages || book.pages).length) throw new Error('The proof page map does not match its PDF.');

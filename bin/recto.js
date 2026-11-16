@@ -346,8 +346,9 @@ Options:
           includeRegistrationMarks: parsed.registration,
           includeColorBars: parsed.colorBars,
         });
-        const pdfArrayBuffer = masterPdf.output('arraybuffer');
-        fs.writeFileSync(outDest, Buffer.from(pdfArrayBuffer));
+        const { pdfExportPayload } = await import('../src/export/pdfPayload.js');
+        const { writeFile } = await import('node:fs/promises');
+        await writeFile(outDest, pdfExportPayload(masterPdf).parts());
         const stats = fs.statSync(outDest);
         console.log(`[Recto CLI] ✓ Unified Book compilation complete!`);
         console.log(`  Destination : ${outDest}`);

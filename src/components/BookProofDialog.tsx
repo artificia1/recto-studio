@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { savePublicationFile } from '../desktop';
 import { useModalFocus } from '../hooks/useModalFocus';
 import { assembleArchivedBook, type ArchivedChapter, type BookArchive } from '../engine/bookArchive';
-import { approveBookProof, approvedProofPdf, compareBookProof, describeBookProofRevision, makeBookProof, type ApprovedBookProof } from '../engine/bookProof';
+import { approveBookProof, approvedProofPayload, compareBookProof, describeBookProofRevision, makeBookProof, type ApprovedBookProof } from '../engine/bookProof';
 import { uniqueProofMatches, type ProofMatch, type ProofPage } from '../engine/proofComparison';
 import type { CommentPin } from '../types';
 import { openReviewPdf, proofDifference, type PdfReviewNote } from '../export/pdfReview';
@@ -65,11 +65,11 @@ export default function BookProofDialog({ archive, onApprove, onComments, onClos
     setMessage('Rendering the current book proof…');
     const current = await makeBookProof(book.source, book.pages, archive.delivery);
     signal.throwIfAborted();
-    const after = await openReviewPdf(current.bytes.slice().buffer, signal);
+    const after = await openReviewPdf(current.payload, signal);
     let before: Reader | undefined;
     try {
       if (approved) {
-        before = await openReviewPdf((await approvedProofPdf(approved)).buffer, signal);
+        before = await openReviewPdf(await approvedProofPayload(approved), signal);
         const original = await before.scan(page => setMessage('Scanning approved page ' + page + ' of ' + approved.pages.length + '…'));
         const revised = await after.scan(page => setMessage('Scanning current page ' + page + ' of ' + current.snapshot.pages.length + '…'));
         const comparison = compareBookProof(approved, current.snapshot, original, revised);
@@ -142,14 +142,14 @@ export default function BookProofDialog({ archive, onApprove, onComments, onClos
       <div className="publication-actions">
         <button className="sm-btn" disabled={busy} onClick={() => void run(prepare)}>{approved ? 'Compare against approved proof' : 'Prepare book proof'}</button>
         {approved && <button className="sm-btn" disabled={busy} onClick={() => void run(async () => {
-          await savePublicationFile('approved-book-proof.pdf', await approvedProofPdf(approved), 'application/pdf');
+          await savePublicationFile('approved-book-proof.pdf', (await approvedProofPayload(approved)).blob(), 'application/pdf');
         })}>Download approved proof</button>}
         {candidate && <>
           <button className="sm-btn" disabled={busy} onClick={() => void run(async () => {
-            await savePublicationFile('book-review.pdf', candidate.bytes, 'application/pdf');
+            await savePublicationFile('book-review.pdf', candidate.payload.blob(), 'application/pdf');
           })}>Download current proof</button>
           <button className="sm-btn" disabled={busy} onClick={() => void run(async () => {
-            const next = await approveBookProof(candidate.snapshot, candidate.bytes);
+            const next = await approveBookProof(candidate.snapshot, candidate.payload);
             abort.current.signal.throwIfAborted(); onApprove(next); setApproved(next);
             setReport(undefined); setCandidate(undefined); setSelected(undefined);
             setMessage('Proof approved. Save the book archive to keep this baseline.');

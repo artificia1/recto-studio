@@ -6,7 +6,8 @@
 // Recto Print Packaging Engine: One-Click Print Handoff Archive
 import { ProjectState, TextElement, ImageElement } from './types';
 import { exportDocumentToPdf } from './pdfExport';
-import { createZipArchive } from './zip';
+import { createZipArchive, type ZipContent } from './zip';
+import { pdfExportPayload } from './export/pdfPayload';
 import { publicationSnapshot } from './engine/publicationReferences';
 import { publicationPreflight } from './engine/publicationPreflight';
 import { embeddedAsset, prepareExportAssets } from './export/publicationAssets';
@@ -149,7 +150,7 @@ export async function packageDocument(
   const state = publicationSnapshot(await prepareExportAssets(source, typeof window !== 'undefined', true));
   const baseTitle = state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'recto-project';
   const packageDirName = `${baseTitle}-package`;
-  const files: Record<string, string | Uint8Array> = {};
+  const files: Record<string, ZipContent> = {};
 
   // 1. Native .recto Project JSON
   const projectJson = JSON.stringify(state, null, 2);
@@ -165,8 +166,7 @@ export async function packageDocument(
     spreadRange: 'all',
     download: false, strict: options.strict !== false,
   });
-  const pdfArrayBuffer = pdfDoc.output('arraybuffer');
-  files[`${baseTitle}-print.pdf`] = new Uint8Array(pdfArrayBuffer);
+  files[`${baseTitle}-print.pdf`] = pdfExportPayload(pdfDoc).parts();
 
   // Archive controlled filenames, never user-provided paths or colliding image names.
   let assetIdx = 1;

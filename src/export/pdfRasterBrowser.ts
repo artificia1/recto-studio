@@ -1,9 +1,14 @@
-import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
+import { getDocument, GlobalWorkerOptions, PDFDataRangeTransport } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
+import { pdfRangeOptions } from './pdfRanges';
+import type { PdfPayload } from './pdfPayload';
 
-export async function createBrowserPdfRaster(bytes: Uint8Array) {
+export async function createBrowserPdfRaster(source: PdfPayload) {
   GlobalWorkerOptions.workerSrc = workerUrl;
-  const task = getDocument({ data: bytes.slice(), useSystemFonts: false });
+  const task = getDocument({
+    ...pdfRangeOptions(PDFDataRangeTransport, source, () => { void task.destroy().catch(() => {}); }),
+    useSystemFonts: false,
+  });
   const pdf = await task.promise.catch(async error => { await task.destroy(); throw error; });
   return {
     async tile(pageIndex: number, x: number, y: number, width: number, height: number, scale: number) {

@@ -10,6 +10,7 @@ import { publicationPreflight } from '../../engine/publicationPreflight';
 import { documentFontUsage } from '../../engine/documentFonts';
 import { PDF_PRESETS, type PdfPreset } from '../../export/presets';
 import { savePublicationFile } from '../../desktop';
+import { pdfExportBlob } from '../../export/pdfPayload';
 import { checkPrinterProfile, type PrinterProfile } from '../../engine/printerProfiles';
 import PrinterProfilesPanel from './PrinterProfilesPanel';
 import BookReferencesPanel from './BookReferencesPanel';
@@ -266,7 +267,7 @@ export default function ProductionPanel({ state }: { state: ProjectState }) {
         const { exportDocumentToPdf } = await import('../../export/pdfExport');
         const warnings = printer ? printerWarnings(publicationSnapshot(combined)) : [];
         const doc = await exportDocumentToPdf(combined, { ...exportOptions, download: false, onWarning: warning => warnings.push(warning) });
-        await savePublicationFile(`${safeName}.pdf`, doc.output('arraybuffer'), 'application/pdf'); setMessage(`Book exported: ${combined.spreads.reduce((n, spread) => n + spread.pages.length, 0)} pages.${warnings.length ? ` Review: ${warnings.join(' ')}` : ''}`);
+        await savePublicationFile(`${safeName}.pdf`, pdfExportBlob(doc), 'application/pdf'); setMessage(`Book exported: ${combined.spreads.reduce((n, spread) => n + spread.pages.length, 0)} pages.${warnings.length ? ` Review: ${warnings.join(' ')}` : ''}`);
       })}>Export book PDF</button>
       <button className="sm-btn" disabled={editingBook || !chapters.length} onClick={() => run(async () => {
         const entries = bookEngine.generateUnifiedBookToc(book(), load);

@@ -16,7 +16,19 @@ export const limits = {
 };
 
 export const sha256 = (bytes: Uint8Array | string) => createHash('sha256').update(bytes).digest('hex');
-type OutputFile = { name: string; bytes: Uint8Array };
+type OutputBytes = Uint8Array | readonly Uint8Array[];
+type OutputFile = { name: string; bytes: OutputBytes };
+
+function outputSummary(bytes: OutputBytes) {
+  if (bytes instanceof Uint8Array) return { bytes: bytes.byteLength, sha256: sha256(bytes) };
+  const hash = createHash('sha256');
+  let length = 0;
+  for (const chunk of bytes) {
+    hash.update(chunk);
+    length += chunk.byteLength;
+  }
+  return { bytes: length, sha256: hash.digest('hex') };
+}
 
 /** All tool paths are relative to the directory chosen by the operator at launch. */
 export class PublishingWorkspace {
@@ -100,7 +112,7 @@ export class PublishingWorkspace {
     await this.outputPath(name, extension ? [extension] : undefined);
   }
 
-  private async writeOne(target: string, bytes: Uint8Array) {
+  private async writeOne(target: string, bytes: OutputBytes) {
     const temporary = path.join(path.dirname(target), `.recto-${randomUUID()}.tmp`);
     const handle = await open(temporary, 'wx', 0o600);
     try {
@@ -114,9 +126,9 @@ export class PublishingWorkspace {
     } finally { await rm(temporary, { force: true }); }
   }
 
-  async write(name: string, extension: string, bytes: Uint8Array) {
+  async write(name: string, extension: string, bytes: OutputBytes) {
     await this.writeOne(await this.outputPath(name, [extension]), bytes);
-    return { path: name, bytes: bytes.byteLength, sha256: sha256(bytes) };
+    return { path: name, ...outputSummary(bytes) };
   }
 
   async writeBatch(directory: string, files: OutputFile[]) {
@@ -139,6 +151,6 @@ export class PublishingWorkspace {
       await rmdir(target).catch(() => {});
       throw error;
     }
-    return entries.map(({ path: file, bytes }) => ({ path: file, bytes: bytes.byteLength, sha256: sha256(bytes) }));
+    return entries.map(({ path: file, bytes }) => ({ path: file, ...outputSummary(bytes) }));
   }
 }

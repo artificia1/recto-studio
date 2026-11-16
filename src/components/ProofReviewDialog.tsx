@@ -5,6 +5,7 @@ import { matchProofPages, uniqueProofMatches, type ProofMatch, type ProofPage } 
 import { useModalFocus } from '../hooks/useModalFocus';
 import type { CommentPin } from '../types';
 import { openReviewPdf, proofDifference } from '../export/pdfReview';
+import { pdfExportBlob, pdfExportPayload } from '../export/pdfPayload';
 import './proofReview.css';
 
 const labels: Record<ProofMatch['change'], string> = { unchanged: 'No difference detected', text: 'Text changed', artwork: 'Artwork or layout changed', size: 'Page size changed', added: 'Added page', removed: 'Removed page', uncertain: 'Match needs review' };
@@ -71,7 +72,7 @@ export default function ProofReviewDialog({ onClose }: { onClose(): void }) {
     const { exportDocumentToPdf } = await import('../export/pdfExport');
     setMessage('Checking comment positions against the current document…');
     const current = await exportDocumentToPdf(source, { download: false, fetchExternalAssets: false });
-    const reader = await openReviewPdf(current.output('arraybuffer'), controller.current.signal);
+    const reader = await openReviewPdf(pdfExportPayload(current), controller.current.signal);
     try {
       const currentMatches = uniqueProofMatches(await reader.scan());
       const baselineMatches = uniqueProofMatches(pair.baseline);
@@ -114,7 +115,7 @@ export default function ProofReviewDialog({ onClose }: { onClose(): void }) {
           const pdf = await exportDocumentToPdf(source, { download: false, fetchExternalAssets: false });
           controller.current.signal.throwIfAborted();
           const name = source.settings.title.replace(/[^\p{L}\p{N} _-]/gu, '').trim().slice(0, 80) || 'publication';
-          await savePublicationFile(`${name}-review.pdf`, pdf.output('arraybuffer'), 'application/pdf');
+          await savePublicationFile(`${name}-review.pdf`, pdfExportBlob(pdf), 'application/pdf');
           setMessage('Review PDF saved. Keep this original to compare with the annotated copy.');
         })}>Download current review PDF</button>
         {!!changes.length && <>

@@ -141,23 +141,29 @@ for (let n = 0; n < 256; n++) {
 }
 
 export function crc32(data: Uint8Array): number {
-  let crc = 0 ^ (-1);
+  return (updateCrc32(-1, data) ^ (-1)) >>> 0;
+}
+
+function updateCrc32(crc: number, data: Uint8Array): number {
   for (let i = 0; i < data.length; i++) {
     crc = (crc >>> 8) ^ CRC_TABLE[(crc ^ data[i]) & 0xff];
   }
-  return (crc ^ (-1)) >>> 0;
+  return crc;
 }
 
+export type ZipContent = string | Uint8Array | readonly Uint8Array[];
+
 // Simple ZIP archive generator for creating tests or packages (Stored mode: 0)
-export function createZipArchive(files: Record<string, string | Uint8Array>): Uint8Array {
-  const fileEntries: { name: Uint8Array; data: Uint8Array; offset: number; crc: number }[] = [];
+export function createZipArchive(files: Record<string, ZipContent>): Uint8Array {
+  const fileEntries: { name: Uint8Array; size: number; offset: number; crc: number }[] = [];
   const parts: Uint8Array[] = [];
   let currentOffset = 0;
 
   for (const [name, content] of Object.entries(files)) {
     const nameBytes = new TextEncoder().encode(name);
-    const dataBytes = typeof content === 'string' ? new TextEncoder().encode(content) : content;
-    const fileCrc = crc32(dataBytes);
+    const chunks = typeof content === 'string' ? [new TextEncoder().encode(content)] : content instanceof Uint8Array ? [content] : content;
+    const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+    const fileCrc = (chunks.reduce(updateCrc32, -1) ^ (-1)) >>> 0;
 
     const localHeader = new Uint8Array(30 + nameBytes.length);
     const lv = new DataView(localHeader.buffer);
@@ -168,15 +174,16 @@ export function createZipArchive(files: Record<string, string | Uint8Array>): Ui
     lv.setUint16(10, 0, true); // Time
     lv.setUint16(12, 0, true); // Date
     lv.setUint32(14, fileCrc, true); // CRC32
-    lv.setUint32(18, dataBytes.length, true); // Compressed size
-    lv.setUint32(22, dataBytes.length, true); // Uncompressed size
+    lv.setUint32(18, size, true); // Compressed size
+    lv.setUint32(22, size, true); // Uncompressed size
     lv.setUint16(26, nameBytes.length, true); // Filename length
     lv.setUint16(28, 0, true); // Extra field length
     localHeader.set(nameBytes, 30);
 
-    fileEntries.push({ name: nameBytes, data: dataBytes, offset: currentOffset, crc: fileCrc });
-    parts.push(localHeader, dataBytes);
-    currentOffset += localHeader.length + dataBytes.length;
+    fileEntries.push({ name: nameBytes, size, offset: currentOffset, crc: fileCrc });
+    parts.push(localHeader);
+    for (const chunk of chunks) parts.push(chunk);
+    currentOffset += localHeader.length + size;
   }
 
   const cdStart = currentOffset;
@@ -191,8 +198,8 @@ export function createZipArchive(files: Record<string, string | Uint8Array>): Ui
     cv.setUint16(12, 0, true);
     cv.setUint16(14, 0, true);
     cv.setUint32(16, entry.crc, true); // CRC32
-    cv.setUint32(20, entry.data.length, true);
-    cv.setUint32(24, entry.data.length, true);
+    cv.setUint32(20, entry.size, true);
+    cv.setUint32(24, entry.size, true);
     cv.setUint16(28, entry.name.length, true);
     cv.setUint16(30, 0, true);
     cv.setUint16(32, 0, true);
