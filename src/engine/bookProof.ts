@@ -6,7 +6,7 @@ import { publicationPreflight } from './publicationPreflight';
 import { captureComposedLayout } from './layoutChanges';
 import { matchProofPages, type ProofPage } from './proofComparison';
 import { fontManager } from '../fontManager';
-import { PdfPayload, pdfExportPayload } from '../export/pdfPayload';
+import { PdfPayload, pdfExportPayload, pdfSha256 } from '../export/pdfPayload';
 
 export const maxBookProofBytes = 32 * 1024 * 1024;
 export const maxBookProofPages = 500;
@@ -63,13 +63,6 @@ export function readApprovedBookProof(value: unknown): ApprovedBookProof {
   return proof as ApprovedBookProof;
 }
 
-async function digest(source: Uint8Array | PdfPayload) {
-  const { sha256 } = await import('@noble/hashes/sha2.js');
-  const hash = sha256.create();
-  for (const part of source instanceof PdfPayload ? source.parts() : [source]) hash.update(part);
-  return Array.from(hash.digest(), byte => byte.toString(16).padStart(2, '0')).join('');
-}
-
 export async function approvedProofPdf(proof: ApprovedBookProof) {
   return (await approvedProofPayload(proof)).bytes();
 }
@@ -80,7 +73,7 @@ export async function approvedProofPayload(proof: ApprovedBookProof) {
     payload.append(base64ToUint8Array(proof.pdf.slice(offset, offset + 1024 * 1024)));
     if (payload.size > maxBookProofBytes) throw new Error('The approved PDF no longer matches its recorded checksum.');
   }
-  if (await digest(payload) !== proof.sha256) throw new Error('The approved PDF no longer matches its recorded checksum.');
+  if (await pdfSha256(payload) !== proof.sha256) throw new Error('The approved PDF no longer matches its recorded checksum.');
   return payload;
 }
 
@@ -95,7 +88,7 @@ export async function approveBookProof(snapshot: BookProofSnapshot, source: Uint
     chunks.push(uint8ArrayToBase64(chunk));
   }
   return readApprovedBookProof({
-    ...snapshot, version: 1, approvedAt: new Date().toISOString(), pdf: chunks.join(''), sha256: await digest(source),
+    ...snapshot, version: 1, approvedAt: new Date().toISOString(), pdf: chunks.join(''), sha256: await pdfSha256(source),
   });
 }
 
@@ -149,7 +142,7 @@ export async function describeBookProofRevision(approved: ApprovedBookProof,
     version: 1,
     approvedAt: approved.approvedAt,
     approvedSha256: approved.sha256,
-    currentSha256: await digest(current.payload),
+    currentSha256: await pdfSha256(current.payload),
     ...comparison,
     rows: comparison.rows.map(({ before, after, ...row }) => ({
       ...row,

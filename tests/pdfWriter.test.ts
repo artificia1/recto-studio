@@ -3,7 +3,7 @@ import { PDFDocument } from 'pdf-lib';
 import { expect, it } from 'vitest';
 import { serializeJsPdf } from '../src/export/pdfPayload';
 import { serializePdf } from '../src/export/pdfWriter';
-import { loadGeneratedPdf } from '../src/export/pdfChunkReader';
+import { loadPdfChunks } from '../src/export/pdfChunkReader';
 import { createNodePdfRaster } from '../src/export/pdfRasterNode';
 import { createZipArchive, readZip } from '../src/zip';
 
@@ -17,7 +17,7 @@ it('streams jsPDF bytes and preserves offsets across large embedded streams', as
   expect(payload.size).toBeGreaterThan(1024 * 1024);
   expect(Buffer.from(await payload.blob().arrayBuffer()).equals(expected)).toBe(true);
   expect((await PDFDocument.load(payload.bytes())).getPageCount()).toBe(2);
-  expect((await loadGeneratedPdf(payload)).getPageCount()).toBe(2);
+  expect((await loadPdfChunks(payload)).getPageCount()).toBe(2);
   doc.text('Page remains editable', 10, 45);
   expect(doc.output('arraybuffer').byteLength).toBeGreaterThan(expected.length);
 });
@@ -33,7 +33,7 @@ it.each([false, true])('matches the pdf-lib serializer with object streams set t
   const output = await serializePdf(clone, objectStreams);
   expect(Buffer.from(output.bytes()).equals(baseline)).toBe(true);
   expect((await PDFDocument.load(output.bytes())).getPageCount()).toBe(1);
-  expect((await loadGeneratedPdf(output)).getPageCount()).toBe(1);
+  expect((await loadPdfChunks(output)).getPageCount()).toBe(1);
 });
 
 it('reads and renders a large generated PDF from ranges and archives its original chunks', async () => {

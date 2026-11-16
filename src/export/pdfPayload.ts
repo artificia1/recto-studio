@@ -78,6 +78,13 @@ export function pdfExportBlob(doc: jsPDF) {
   return pdfExportPayload(doc).blob();
 }
 
+export async function pdfSha256(source: Uint8Array | PdfPayload) {
+  const { sha256 } = await import('@noble/hashes/sha2.js');
+  const hash = sha256.create();
+  for (const part of source instanceof PdfPayload ? source.parts() : [source]) hash.update(part);
+  return Array.from(hash.digest(), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
 /** Capture jsPDF's binary strings before its writer joins the whole document. */
 export function serializeJsPdf(doc: jsPDF): PdfPayload {
   const payload = new PdfPayload();

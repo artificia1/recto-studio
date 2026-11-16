@@ -1,7 +1,7 @@
 import { NextByteAssertionError, PDFDocument, PDFParser, type PDFContext } from 'pdf-lib';
-import { type PdfPayload } from './pdfPayload';
+import { PdfPayload } from './pdfPayload';
 
-/** ByteStream-compatible cursor for Recto-generated PDF data. */
+/** ByteStream-compatible cursor for segmented PDF data. */
 class PdfChunkReader {
   private index = 0;
   private line = 0;
@@ -37,13 +37,27 @@ class PdfChunkReader {
 }
 
 /** Keep pdf-lib's parser and object normalization while supplying segmented bytes. */
-export async function loadGeneratedPdf(payload: PdfPayload): Promise<PDFDocument> {
-  const parser = PDFParser.forBytesWithOptions(new Uint8Array(0), 100);
+export async function loadPdfChunks(payload: PdfPayload, throwOnInvalidObject = false): Promise<PDFDocument> {
+  const parser = PDFParser.forBytesWithOptions(new Uint8Array(0), 100, throwOnInvalidObject);
   const source = parser as unknown as { bytes?: unknown };
   // Both hooks belong to the pinned pdf-lib 1.17.1 parser API. Keep an upgrade fallback.
-  if (!source.bytes) return PDFDocument.load(payload.bytes(), { updateMetadata: false });
+  if (!source.bytes) return PDFDocument.load(payload.bytes(), { updateMetadata: false, throwOnInvalidObject });
   source.bytes = new PdfChunkReader(payload);
   const context = await parser.parseDocument();
   const Document = PDFDocument as unknown as new (context: PDFContext, ignoreEncryption: boolean, updateMetadata: boolean) => PDFDocument;
   return new Document(context, false, false);
+}
+
+export async function readPdfChunks(file: Blob) {
+  const payload = new PdfPayload();
+  const reader = file.stream().getReader();
+  try {
+    for (;;) {
+      const part = await reader.read();
+      if (part.done) return payload;
+      payload.append(part.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }

@@ -69,9 +69,9 @@ export async function buildBookDelivery(source: ProjectState, delivery: BookDeli
   const ebook = await withFonts(book, () => exportDocumentToEpubAsync(book, { download: false, strict: true }));
   warnings.push(...ebook.warnings);
 
-  const { loadGeneratedPdf } = await import('../export/pdfChunkReader');
-  const expectedPages = (await loadGeneratedPdf(interior)).getPageCount() === dimensions.pageCount &&
-    (await loadGeneratedPdf(cover)).getPageCount() === 1;
+  const { loadPdfChunks } = await import('../export/pdfChunkReader');
+  const expectedPages = (await loadPdfChunks(interior)).getPageCount() === dimensions.pageCount &&
+    (await loadPdfChunks(cover)).getPageCount() === 1;
   const epubFiles = await readZip(ebook.buffer, 256 * 1024 * 1024);
   if (!expectedPages || new TextDecoder().decode(epubFiles.get('mimetype')) !== 'application/epub+zip' ||
     !epubFiles.has('META-INF/container.xml')) throw new Error('One or more delivery files failed the package checks.');

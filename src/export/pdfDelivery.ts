@@ -1,7 +1,9 @@
-import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRawStream, PDFString, type PDFObject, type PDFPage } from 'pdf-lib';
+import { PDFArray, PDFDict, PDFHexString, PDFName, PDFNumber, PDFRawStream, PDFString, type PDFDocument, type PDFObject, type PDFPage } from 'pdf-lib';
 import { inspectIccHeader, MAX_ICC_BYTES } from '../engine/iccProfiles';
 import type { PrinterProfile } from '../engine/printerProfiles';
 import { pageResources } from './pdfPress';
+import { loadPdfChunks, readPdfChunks } from './pdfChunkReader';
+import { pdfSha256 } from './pdfPayload';
 
 const MAX_BYTES = 75 * 1024 * 1024;
 const MAX_PAGES = 500;
@@ -215,16 +217,17 @@ async function inspectOutputIntents(pdf: PDFDocument, findings: DeliveryFinding[
 
 export async function inspectDeliveryPdf(file: File, printer?: PrinterProfile) {
   if (file.size > MAX_BYTES) throw new Error('Choose a delivery PDF up to 75 MiB.');
-  const data = new Uint8Array(await file.arrayBuffer());
+  const [header, trailer] = await Promise.all([file.slice(0, 1024).arrayBuffer(), file.slice(-1024).arrayBuffer()]);
   const decoder = new TextDecoder();
-  const version = decoder.decode(data.subarray(0, 1024)).match(/%PDF-(\d\.\d)/)?.[1];
-  if (!version || !/%%EOF[\x00\t\f\r\n ]*$/.test(decoder.decode(data.subarray(-1024)))) {
+  const version = decoder.decode(header).match(/%PDF-(\d\.\d)/)?.[1];
+  if (!version || !/%%EOF[\x00\t\f\r\n ]*$/.test(decoder.decode(trailer))) {
     throw new Error('Choose a complete PDF file.');
   }
   let pdf: PDFDocument;
   let pdfPages: PDFPage[];
+  const payload = await readPdfChunks(file);
   try {
-    pdf = await PDFDocument.load(data, { updateMetadata: false, throwOnInvalidObject: true });
+    pdf = await loadPdfChunks(payload, true);
     pdfPages = pdf.getPages();
   } catch {
     throw new Error('Could not read this PDF. Choose a complete, unlocked copy.');
@@ -248,7 +251,7 @@ export async function inspectDeliveryPdf(file: File, printer?: PrinterProfile) {
   return {
     format: 'recto-pdf-delivery-report',
     version: 1,
-    source: { name: file.name, sizeBytes: data.byteLength, sha256: await sha256(data), pdfHeaderVersion: version,
+    source: { name: file.name, sizeBytes: payload.size, sha256: await pdfSha256(payload), pdfHeaderVersion: version,
       pdfCatalogVersion: named(pdf.catalog.lookup(PDFName.of('Version'))) },
     printer: printer && { name: printer.name, minimumBleedMm: printer.bleedMm, iccSha256: printer.iccId },
     pages, outputIntents, fonts, tagged: pdf.catalog.lookup(PDFName.of('StructTreeRoot')) instanceof PDFDict,
