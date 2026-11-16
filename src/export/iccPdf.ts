@@ -5,6 +5,7 @@ import { convertIcc } from '../engine/colorService';
 import { explicitCmyk, rgbColor, type Cmyk } from '../engine/inkColors';
 import { setManagedPdfColors } from './pdfColors';
 import { decodeSrgbRaster } from '../engine/rasterPixels';
+import { ICC_TILE_PIXELS, prepareRasterTile } from '../engine/rasterPrepress';
 
 function binary(bytes: Uint8Array): string {
   const chunks: string[] = [];
@@ -86,19 +87,19 @@ export async function prepareManagedPdf(doc: jsPDF, state: ProjectState) {
         const alias = `RectoICC${++nextRaster}`;
         cache.set(src, (async () => {
         const image = await decodeSrgbRaster(src), count = image.width * image.height;
-        const ink = new Uint8Array(count * 4), alpha = new Uint8Array(count);
-        let transparent = false;
-        for (let start = 0; start < count; start += 262144) {
-          const length = Math.min(262144, count - start), rgb = new Uint8Array(length * 3);
-          for (let pixel = 0; pixel < length; pixel++) {
-            const offset = (start + pixel) * 4;
-            rgb.set(image.data.subarray(offset, offset + 3), pixel * 3);
-            alpha[start + pixel] = image.data[offset + 3]; transparent ||= alpha[start + pixel] < 255;
+        const ink = new Uint8Array(count * 4);
+        let alpha: Uint8Array | undefined;
+        for (let start = 0; start < count; start += ICC_TILE_PIXELS) {
+          const end = Math.min(start + ICC_TILE_PIXELS, count);
+          const tilePixels = await prepareRasterTile(image.data.subarray(start * 4, end * 4), 'split');
+          if (tilePixels.alpha) {
+            alpha ??= new Uint8Array(count).fill(255);
+            alpha.set(tilePixels.alpha, start);
           }
-          const tile = await transform(rgb);
+          const tile = await transform(tilePixels.rgb);
           for (let byte = 0; byte < tile.length; byte++) ink[start * 4 + byte] = 255 - tile[byte];
         }
-        const data = await deflate(ink), mask = transparent ? await deflate(alpha) : new Uint8Array();
+        const data = await deflate(ink), mask = alpha ? await deflate(alpha) : new Uint8Array();
         const bytes = new Uint8Array(20 + data.length + mask.length), view = new DataView(bytes.buffer);
         bytes.set([82, 67, 77, 89]);
         view.setUint32(4, image.width); view.setUint32(8, image.height); view.setUint32(12, data.length); view.setUint32(16, mask.length);

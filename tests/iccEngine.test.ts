@@ -74,5 +74,13 @@ describe('LittleCMS ICC colour management', () => {
     mkdirSync('test-results/icc', { recursive: true });
     writeFileSync('test-results/icc/managed.pdf', Buffer.from(doc.output('arraybuffer')));
     expect(doc.getNumberOfPages()).toBe(1);
+
+    const multiTile = new Resvg('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="257"><rect width="1024" height="256" fill="red"/><rect y="256" width="1024" height="1" fill="red" opacity="0.5"/></svg>').render();
+    const raster = await managed.raster(`data:image/png;base64,${multiTile.asPng().toString('base64')}`);
+    const header = new DataView(raster.bytes.buffer, raster.bytes.byteOffset, raster.bytes.byteLength);
+    const mask = inflateSync(raster.bytes.subarray(20 + header.getUint32(12)));
+    expect(mask).toHaveLength(1024 * 257);
+    expect(mask.subarray(0, 1024 * 256).every(value => value === 255)).toBe(true);
+    expect(mask.subarray(1024 * 256).every(value => value === 128)).toBe(true);
   });
 });

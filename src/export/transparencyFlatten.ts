@@ -2,6 +2,7 @@ import { PDFArray, PDFDict, PDFDocument, PDFName, PDFRawStream } from 'pdf-lib';
 import type { CanvasElement, ProjectState } from '../types';
 import { convertIcc } from '../engine/colorService';
 import { profileBytes } from '../engine/iccProfiles';
+import { prepareRasterTile } from '../engine/rasterPrepress';
 import { requirePdfFonts } from './pdfPress';
 
 export interface PixelRect { x: number; y: number; width: number; height: number }
@@ -87,8 +88,8 @@ export async function flattenPdfTransparency(bytes: Uint8Array, state: ProjectSt
         const width = Math.min(1024, region.width - dx), height = Math.min(1024, region.height - dy), x = region.x + dx, y = region.y + dy;
         pixelsProcessed += width * height;
         if (pixelsProcessed > 250_000_000 || ++rasterTiles > 4096) throw new Error('This flattening job exceeds 250 million pixels or 4,096 tiles. Export a smaller page range.');
-        const rgba = await renderer!.tile(index, x, y, width, height, scale), rgb = new Uint8Array(width * height * 3);
-        for (let p = 0; p < width * height; p++) for (let c = 0; c < 3; c++) rgb[p * 3 + c] = Math.round(255 + (rgba[p * 4 + c] - 255) * rgba[p * 4 + 3] / 255);
+        const rgba = await renderer!.tile(index, x, y, width, height, scale);
+        const { rgb } = await prepareRasterTile(rgba, 'paper');
         const cmyk = await convertIcc({ pixels: rgb, profile: profileBytes(settings.outputProfile), direction: 'rgb-to-cmyk', intent: settings.intent, blackPointCompensation: settings.blackPointCompensation, preservePureBlack: settings.preservePureBlack });
         const image = pdf.context.register(pdf.context.flateStream(cmyk, { Type: 'XObject', Subtype: 'Image', Width: width, Height: height, ColorSpace: 'DeviceCMYK', BitsPerComponent: 8 }));
         const name = `RectoFlat${rasterTiles}`; images.set(PDFName.of(name), image);

@@ -5,6 +5,7 @@ mod project_files;
 mod proposal_inbox;
 mod raster_adjustments;
 mod raster_headers;
+mod raster_prepress;
 
 use project_files::{is_native_project, persist_file, ProjectFile, ProjectFiles, MAX_FILE_BYTES};
 use proposal_inbox::ProposalInbox;
@@ -169,6 +170,18 @@ fn desktop_adjust_raster(request: tauri::ipc::Request<'_>) -> Result<tauri::ipc:
         .ok_or("Invalid raster adjustment payload.")
 }
 
+#[tauri::command]
+fn desktop_prepare_raster_tile(request: tauri::ipc::Request<'_>) -> Result<tauri::ipc::Response, &'static str> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("Raster preparation requires a binary payload.");
+    };
+    let mode = request.headers().get("x-recto-raster-mode").and_then(|value| value.to_str().ok())
+        .ok_or("Raster preparation mode is required.")?;
+    raster_prepress::prepare_tile(bytes, mode)
+        .map(tauri::ipc::Response::new)
+        .ok_or("Invalid raster preparation payload.")
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(ProjectRegistry::default())
@@ -176,7 +189,7 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             desktop_open_document, desktop_save_project, desktop_save_file, desktop_bundled_mcp,
-            desktop_probe_raster, desktop_adjust_raster,
+            desktop_probe_raster, desktop_adjust_raster, desktop_prepare_raster_tile,
             proposal_inbox::desktop_begin_proposal_review, proposal_inbox::desktop_read_proposal,
             proposal_inbox::desktop_end_proposal_review,
         ])

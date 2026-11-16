@@ -106,8 +106,9 @@ over, which checks run automatically, and what needs review before production.
 
 - **Rust migration in progress.** Desktop raster processing now probes image
   dimensions before allocating pixel surfaces. Small desktop exports can also
-  apply grayscale, levels, and curves in Rust. Live previews, larger rasters,
-  browser and CLI jobs, and desktop IPC fallbacks use the TypeScript path.
+  apply grayscale, levels, and curves in Rust. Desktop prepress uses Rust on
+  eligible raster tiles to prepare ICC color samples and flatten onto white.
+  Live previews, browser and CLI jobs, and desktop IPC fallbacks use TypeScript.
 
 - **Editorial interchange.** Expand IDML and Scribus coverage for compound
   paths, complex groups, linked images, and advanced typography. Run a broader
