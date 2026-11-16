@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { layoutStory } from '../src/engine/storyLayout';
 import { plainStory, storyText } from '../src/engine/storyContent';
 import { hyphenateLanguage } from '../src/engine/languageHyphenation';
+import { layoutKernels, warmLayout } from '../src/engine/layoutRuntime';
 import type { ParagraphStyle, StoryContent, TextElement } from '../src/types';
 
 const frame: TextElement = { id: 'f', type: 'text', pageId: 'p', x: 0, y: 0, width: 10, height: 9,
@@ -14,6 +15,21 @@ const measure = (text: string) => text.length;
 const paragraph = (text: string, styleId = 'body') => ({ styleId, runs: [{ text }] });
 
 describe('Paragraph composition rules', () => {
+  it('preserves positions and source offsets through Rust-composed columns and overset', async () => {
+    const text = 'One two  three café text with tabs\tand several more words in a single paragraph. '.repeat(8);
+    const content: StoryContent = { version: 1, paragraphs: [paragraph('Short first paragraph.'), paragraph(text)] };
+    const frames = [
+      { ...frame, x: 1.23, height: 18, width: 61, columns: 2, alignment: 'justify' },
+      { ...frame, x: 38.7, height: 120, width: 57.2, columns: 3, alignment: 'center' },
+      { ...frame, x: -9.9, height: 80, width: 34, alignment: 'right' },
+    ] as const;
+    const expected = frames.map(testFrame => layoutStory(content, testFrame, [], [], measure));
+    expect(expected[0].overset).toBe(true);
+    expect(expected[0].lines.some(line => line.column === 1)).toBe(true);
+    await warmLayout();
+    expect(layoutKernels?.uniformLines).toBeTypeOf('function');
+    frames.forEach((testFrame, index) => expect(layoutStory(content, testFrame, [], [], measure)).toEqual(expected[index]));
+  });
   it('stops resolving styles when the current frame is full', () => {
     let styleReads = 0;
     const namedStyle = { ...style({}), get id() { styleReads++; return 'body'; } };

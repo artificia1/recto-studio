@@ -6,6 +6,10 @@ interface RasterExports {
   raster_table(): number;
   raster_run(mode: number, length: number, grayscale: number): number;
   raster_mark_diff?(length: number): number;
+  layout_optimal_breaks?(count: number, widths: number, tolerance: number, hyphenCost: number): number;
+  layout_uniform_lines?(count: number, columns: number, y: number, padding: number, bottom: number, height: number): number;
+  pdf_classic_xref?(count: number): number;
+  pdf_classic_footer?(offset: bigint): number;
 }
 
 /** Mark corresponding RGBA tiles in place. Older packaged modules use the JS path. */
@@ -44,8 +48,11 @@ export async function markProofPixels(before: Uint8ClampedArray, after: Uint8Cla
 }
 
 let initialized: Promise<RasterExports | undefined> | undefined;
+let loaded: RasterExports | undefined;
 
-function loadRasterWasm() {
+export function getRasterWasm() { return loaded; }
+
+export function loadRasterWasm() {
   initialized ??= (async () => {
     const url = new URL('../wasm/raster-kernels.wasm?no-inline', import.meta.url);
     let bytes: ArrayBuffer;
@@ -60,7 +67,7 @@ function loadRasterWasm() {
     const { instance } = await WebAssembly.instantiate(bytes);
     const engine = instance.exports as unknown as RasterExports;
     if (engine.raster_capacity() !== 1024 * 1024 || engine.memory.buffer.byteLength > 3 * 1024 * 1024) return undefined;
-    return engine;
+    return loaded = engine;
   })().catch(() => undefined);
   return initialized;
 }

@@ -3,6 +3,7 @@ import { layoutFrameNotes, publicationSnapshot, publicationText } from '../engin
 import { publicationPreflight } from '../engine/publicationPreflight';
 import { embeddedAsset, prepareExportAssets } from './publicationAssets';
 import { registerPdfFonts, usedPdfFonts } from './pdfFonts';
+import { warmLayout } from '../engine/layoutRuntime';
 /**
  * Recto Studio — High-Precision Desktop Publishing Engine
  * Copyright (c) 2022-2026 Abhinav. All rights reserved.
@@ -72,7 +73,7 @@ export async function exportDocumentToPdf(
   if (options.accessibility && options.accessibility !== 'pdfua1') throw new Error('Only PDF/UA-1 (PDF 1.7) output is supported. PDF/UA-2 requires a separate PDF 2.0 pipeline.');
   if (options.accessibility && options.spreadRange && options.spreadRange !== 'all') throw new Error('Accessible PDF currently exports the whole publication so linked tables and story structure remain complete.');
   if (options.transparency === 'flatten' && (options.tagged || options.accessibility)) throw new Error('Use separate tagged screen and flattened print exports; a flattened print PDF is not an accessible screen edition.');
-  await fontManager.restoreFonts(source.embeddedFonts);
+  await Promise.all([warmLayout(), fontManager.restoreFonts(source.embeddedFonts)]);
   const measure = pdfStoryMeasure();
   const state = publicationSnapshot(await prepareExportAssets(source, options.fetchExternalAssets ?? typeof window !== 'undefined', false, true,
     options.visualProof ? warning => options.onWarning?.(warning) : undefined), measure);

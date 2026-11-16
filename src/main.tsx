@@ -7,6 +7,7 @@ import { fontManager } from './fontManager';
 import { initializeAppearance } from './appearance';
 import { isDesktop } from './desktop';
 import { listenForWebInstall } from './webInstall';
+import { warmLayout } from './engine/layoutRuntime';
 
 initializeAppearance();
 if (!isDesktop()) listenForWebInstall();
@@ -24,6 +25,7 @@ async function start() {
   });
   if (mountPoint) {
     render(<App />, mountPoint);
+    void warmLayout();
     const counter = import.meta.env.VITE_VISIT_COUNTER_URL;
     if (counter && !isDesktop() && location.origin === 'https://artificia1.github.io' && location.pathname.startsWith('/recto-studio/')) {
       void import('./siteVisits').then(({ recordWebsiteVisit }) => recordWebsiteVisit(counter)).catch(() => {});

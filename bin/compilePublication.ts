@@ -1,5 +1,6 @@
 import { parseDocxContent, parseMarkdownContent } from '../src/contentImport';
 import { composeManuscript } from '../src/engine/manuscriptCompilation';
+import { warmLayout } from '../src/engine/layoutRuntime';
 import { fontManager } from '../src/fontManager';
 import { pdfExportPayload, pdfSha256 } from '../src/export/pdfPayload';
 import { PDF_PRESETS } from '../src/export/presets';
@@ -36,7 +37,7 @@ async function withManuscriptLayout<T>(workspace: PublishingWorkspace, args: Pub
   const heading = manuscript.content?.paragraphs.find(paragraph => paragraph.styleId === 'style-h1' || paragraph.styleId === 'style-title');
   const title = args.title || heading?.runs.map(run => run.text).join('').trim().slice(0, 200)
     || args.manuscript.split('/').at(-1)!.replace(/\.(?:md|docx)$/i, '').slice(0, 200);
-  const { pdfStoryMeasure } = await import('../src/export/pdfExport');
+  const [{ pdfStoryMeasure }] = await Promise.all([import('../src/export/pdfExport'), warmLayout()]);
 
   return fontManager.withProjectFonts(fonts, async () => {
     const layout = composeManuscript(manuscript, {

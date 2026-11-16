@@ -5,6 +5,7 @@
  */
 
 import { hyphenateWord } from './hyphenation';
+import { layoutKernels } from './layoutRuntime';
 
 /**
  * Knuth-Plass Global Paragraph Composer:
@@ -207,7 +208,12 @@ export class KnuthPlassComposer {
       }
       return lineWidths;
     };
+    const native = layoutKernels?.optimalBreaks(items, lineWidths, this.options.tolerance, this.options.consecutiveHyphenPenalty);
+    const breaks = native === undefined ? this.findBreaks(items, getLineWidth) : native;
+    return breaks ? this.materializeLines(items, breaks) : this.fallbackGreedyBreak(items, getLineWidth(0));
+  }
 
+  private findBreaks(items: KnuthItem[], getLineWidth: (line: number) => number): BreakNode[] | null {
     // Active nodes in the DAG
     let activeNodes: BreakNode[] = [
       {
@@ -304,19 +310,19 @@ export class KnuthPlassComposer {
       }
     }
 
-    // Fallback if no feasible path met tolerance: greedy recovery
-    if (!bestFinalNode) {
-      return this.fallbackGreedyBreak(items, getLineWidth(0));
-    }
+    if (!bestFinalNode) return null;
 
     // Reconstruct lines backwards from optimal terminal node
     const breakNodes: BreakNode[] = [];
     let curr: BreakNode | null = bestFinalNode;
     while (curr && curr.itemIndex !== -1) {
-      breakNodes.unshift(curr);
+      breakNodes.push(curr);
       curr = curr.previous;
     }
+    return breakNodes.reverse();
+  }
 
+  private materializeLines(items: KnuthItem[], breakNodes: Pick<BreakNode, 'itemIndex' | 'ratio'>[]): ComposedLine[] {
     const resultLines: ComposedLine[] = [];
     let startIdx = 0;
 

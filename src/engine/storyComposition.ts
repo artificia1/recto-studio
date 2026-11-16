@@ -1,5 +1,6 @@
 import type { CanvasElement, FontAsset, ProjectState, StoryContent, TextElement } from '../types';
 import { fontManager } from '../fontManager';
+import { warmLayout } from './layoutRuntime';
 import { reflowStoryState, storyHeads, type StoryLayoutState } from './publicationReferences';
 import { publicationWrapObjects } from './publicationWrap';
 import { measureStoryText, resolveParagraphStyle, resolveRunStyle, type RunStyle } from './storyLayout';
@@ -95,7 +96,7 @@ export function fontMeasurementsMatch(probes: FontProbe[]): boolean {
 }
 
 export async function composeStoryInBackground(request: StoryCompositionRequest): Promise<StoryComposition | null> {
-  await fontManager.restoreFonts(request.fonts);
+  await Promise.all([warmLayout(), fontManager.restoreFonts(request.fonts)]);
   if (!fontMeasurementsMatch(request.probes)) return null;
   const head = request.layout.spreads.flatMap(spread => spread.elements).find(frame => frame.id === request.headId);
   if (head?.type !== 'text') return null;
