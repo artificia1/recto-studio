@@ -5,6 +5,42 @@ interface RasterExports {
   raster_output(): number;
   raster_table(): number;
   raster_run(mode: number, length: number, grayscale: number): number;
+  raster_mark_diff?(length: number): number;
+}
+
+/** Mark corresponding RGBA tiles in place. Older packaged modules use the JS path. */
+export async function markProofPixels(before: Uint8ClampedArray, after: Uint8ClampedArray) {
+  if (before.length !== after.length || before.length % 4) throw new Error('Proof pixels must have matching RGBA dimensions.');
+  const engine = before.length >= 64 * 1024 ? await loadRasterWasm() : undefined;
+  let changed = 0;
+  let offset = 0;
+  if (engine?.raster_mark_diff) {
+    const capacity = engine.raster_capacity();
+    const memory = engine.memory.buffer;
+    const input = new Uint8Array(memory, engine.raster_input(), capacity);
+    const output = new Uint8Array(memory, engine.raster_output(), capacity);
+    for (; offset < after.length;) {
+      const end = Math.min(after.length, offset + capacity);
+      input.set(before.subarray(offset, end));
+      output.set(after.subarray(offset, end));
+      let result;
+      try { result = engine.raster_mark_diff(end - offset); } catch { break; }
+      if (result < 0 || result > (end - offset) / 4) break;
+      after.set(output.subarray(0, end - offset), offset);
+      changed += result;
+      offset = end;
+    }
+  }
+  for (; offset < after.length; offset += 4) {
+    if (Math.abs(before[offset] - after[offset]) <= 16 &&
+        Math.abs(before[offset + 1] - after[offset + 1]) <= 16 &&
+        Math.abs(before[offset + 2] - after[offset + 2]) <= 16) continue;
+    after[offset] = 225;
+    after[offset + 1] = 40;
+    after[offset + 2] = 80;
+    changed++;
+  }
+  return changed;
 }
 
 let initialized: Promise<RasterExports | undefined> | undefined;

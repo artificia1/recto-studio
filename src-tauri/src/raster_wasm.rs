@@ -9,6 +9,17 @@ static mut OUTPUT: [u8; TILE_BYTES] = [0; TILE_BYTES];
 static mut TABLE: [u8; 256] = [0; 256];
 
 #[no_mangle]
+pub extern "C" fn raster_mark_diff(length: usize) -> usize {
+    if length > TILE_BYTES || length % 4 != 0 {
+        return usize::MAX;
+    }
+    // The two scratch arrays are disjoint. The host provides corresponding RGBA tiles.
+    let before = unsafe { slice::from_raw_parts(raster_input(), length) };
+    let after = unsafe { slice::from_raw_parts_mut(raster_output(), length) };
+    raster_kernel::mark_proof_difference(before, after)
+}
+
+#[no_mangle]
 pub extern "C" fn raster_capacity() -> usize { TILE_BYTES }
 
 #[no_mangle]

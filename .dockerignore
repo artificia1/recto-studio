@@ -1,0 +1,9 @@
+**
+!Dockerfile
+!package.json
+!package-lock.json
+!tsconfig.json
+!src/
+!src/**
+!bin/
+!bin/**

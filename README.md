@@ -97,6 +97,7 @@ over, which checks run automatically, and what needs review before production.
 - [Manuscripts and stories](MANUSCRIPTS.md)
 - [Fonts, variable axes, and PDF embedding](FONTS.md)
 - [Publishing, proof review, and prepress](PUBLISHING.md)
+- [Compile Markdown or DOCX into an editable book and proof](MANUSCRIPT-COMPILATION.md)
 - [InDesign and IDML handoff](INDESIGN_IMPORT.md)
 - [Collaboration](COLLABORATION.md) · [Scripting](SCRIPTING.md)
 - [Desktop installation](DESKTOP.md) · [Performance](PERFORMANCE.md)

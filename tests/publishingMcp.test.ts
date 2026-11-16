@@ -87,6 +87,55 @@ describe('Recto publishing MCP over stdio', () => {
     });
   }, timeout);
 
+  it('compiles a declarative manuscript and a repeatable visual proof without overwrites', async () => {
+    await writeFile(files('manuscript.md'), '# A printer proof\n\nManuscript with *emphasis* and a note.[^a]\n\n[^a]: In the harbor.');
+    const args = { manuscript: 'manuscript.md', output: 'compiled-manuscript', pagesPerSignature: 4, targetSignatures: 1, sheetProof: true,
+      paperSpec: { caliperMm: 0.105, gsm: 80 } };
+    expect(await result('recto_plan_publication', { manuscript: args.manuscript, pagesPerSignature: 4 }, readClient))
+      .toMatchObject({ budget: { manuscriptPages: 1, deliveredPages: 4 } });
+    const readOnlyCall = await call('recto_compile_publication', args, readClient).catch((error: unknown) => {
+      expect(String(error)).toMatch(/recto_compile_publication not found/);
+      return { isError: true };
+    });
+    expect(readOnlyCall.isError).toBe(true);
+    await expect(readFile(files('compiled-manuscript/interior.pdf'))).rejects.toMatchObject({ code: 'ENOENT' });
+    const reply = await call('recto_compile_publication', args);
+    expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
+    expect(reply.structuredContent).toMatchObject({ report: {
+      pageBudget: { manuscriptPages: 1, deliveredPages: 4, blankPages: 3 }, spine: { textBlockMm: 0.21 }, independentlyCertified: false,
+    } });
+    expect((reply.content as { type: string }[]).some(block => block.type === 'image')).toBe(true);
+    expect((await PDFDocument.load(await readFile(files('compiled-manuscript/interior.pdf')))).getPageCount()).toBe(4);
+    const handoff = JSON.parse(await readFile(files('compiled-manuscript/printer-handoff.json'), 'utf8'));
+    expect(handoff.interior).toMatchObject({ file: 'interior.pdf', pages: 4, order: 'reader' });
+    const plan = JSON.parse(await readFile(files('compiled-manuscript/signature-plan.json'), 'utf8'));
+    expect(plan.sheetSides[0]).toMatchObject({ leftPageNumber: null, rightPageNumber: 1 });
+    const sheets = await PDFDocument.load(await readFile(files('compiled-manuscript/signature-sheets-proof.pdf')));
+    expect(sheets.getPageCount()).toBe(2);
+    expect(sheets.getPage(0).getWidth()).toBeCloseTo(864);
+    const compared = await result('recto_compile_publication', { ...args, output: 'compared-manuscript', previousPdf: 'compiled-manuscript/interior.pdf' });
+    expect(compared).toMatchObject({ report: { comparison: { comparable: true } } });
+    expect((compared as any).report.comparison.changedPixels).toBeLessThanOrEqual(50);
+    expect((await readFile(files('compared-manuscript/proof-diff.png'))).subarray(1, 4).toString()).toBe('PNG');
+    expect((await call('recto_compile_publication', args)).isError).toBe(true);
+  }, timeout);
+
+  it('inspects, compares and locates a quote in the same signed-off PDF bytes', async () => {
+    const source = await PDFDocument.create();
+    source.addPage([360, 540]);
+    source.addPage([360, 540]).drawText('A printer proof', { x: 55, y: 450, size: 14 });
+    const pdfPath = 'located-proof.pdf';
+    await writeFile(files(pdfPath), await source.save());
+    expect(await result('recto_inspect_delivery_pdf', { pdf: pdfPath, limit: 1 }, readClient))
+      .toMatchObject({ pageCount: 2, nextOffset: 1 });
+    expect(await result('recto_compare_pdf_proofs', { before: pdfPath, after: pdfPath, beforePage: 2, afterPage: 2 }, readClient))
+      .toMatchObject({ comparable: true, changedPixels: 0, preview: 'difference' });
+    const location = await call('recto_locate_pdf_text', { pdf: pdfPath, quote: 'A printer proof', pageLimit: 2 }, readClient);
+    expect(location.isError, JSON.stringify(location.content)).not.toBe(true);
+    expect(location.structuredContent).toMatchObject({ pageCount: 2, nextPage: null, matches: [{ page: 2 }] });
+    expect((location.content as { type: string }[]).some(block => block.type === 'image')).toBe(true);
+  }, timeout);
+
   it('previews rich text, refuses stale and overwriting drafts, then compiles the saved copy', async () => {
     const input = { project: 'original.recto', revision, frameId: 'story' };
     const change = { kind: 'replace', start: 0, end: 5, expectedText: 'Print', text: 'Proof' };

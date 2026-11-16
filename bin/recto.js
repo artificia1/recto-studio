@@ -18,6 +18,11 @@ async function main() {
     await runPublishingServer(process.argv.slice(3));
     return;
   }
+  if (process.argv[2] === 'compile') {
+    const { runCompileCommand } = await import('./compilePublication.js');
+    await runCompileCommand(process.argv.slice(3));
+    return;
+  }
 
   async function readProject(inputPath) {
     const { parseProject } = await import('../src/state/projectValidation.js');
@@ -32,6 +37,7 @@ Recto Studio Headless Publishing Engine (CLI)
 Usage:
   recto build <file.recto|file.json> [options]
   recto render <template.recto> --data <file|-> --output <new-directory>
+  recto compile <recipe.json> [--workspace <folder>]
   recto book <action> <manifest.rectobook> [options]
   recto preflight <file.recto|file.json>
   recto mcp --workspace <folder> [--allow-write]
@@ -41,6 +47,7 @@ Usage:
 Commands:
   build <input>         Compile document headlessly into production print PDF, EPUB 3, or Flipbook
   render <template>     Write a separate PDF per JSON or CSV record; --data - reads stdin
+  compile <recipe>      Lay out Markdown or DOCX as an editable book edition, PDF and proof
                        Options: --preset <preset>, --edition <name>, --importer <trusted-local-module>
   book <action> <file>  Multi-document book management: sync, toc, or build stitched PDF
   preflight <input>     Execute automated prepress preflight audit (overset text, DPI, bleed)

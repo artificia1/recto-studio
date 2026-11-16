@@ -47,6 +47,7 @@ export interface ExportOptions {
   fetchExternalAssets?: boolean;
   download?: boolean;
   includeCropMarks?: boolean;
+  includeSlugText?: boolean;
   includeBleed?: boolean;
   includeRegistrationMarks?: boolean;
   includeColorBars?: boolean;
@@ -217,7 +218,7 @@ export async function exportDocumentToPdf(
     if (includeColorBars) {
       drawCMYKCalibrationBar(doc, originX, originY, widthMm);
     }
-    if (slug > 0) {
+    if (slug > 0 && options.includeSlugText !== false) {
       drawSlugMetadata(
         doc,
         originX,

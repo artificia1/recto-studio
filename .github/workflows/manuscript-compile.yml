@@ -1,0 +1,57 @@
+name: Verify headless manuscript delivery
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'action.yml'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'bin/**'
+      - 'src/**'
+      - 'examples/manuscript/**'
+      - 'scripts/check-manuscript-edition.py'
+      - '.github/workflows/manuscript-compile.yml'
+  pull_request:
+    paths:
+      - 'action.yml'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'bin/**'
+      - 'src/**'
+      - 'examples/manuscript/**'
+      - 'scripts/check-manuscript-edition.py'
+      - '.github/workflows/manuscript-compile.yml'
+permissions:
+  contents: read
+jobs:
+  delivery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install independent PDF inspector
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils
+      - name: Prepare report fixture
+        run: cp examples/manuscript/{recipe.json,manuscript.md} .
+      - uses: ./
+        id: action-edition
+        with:
+          recipe: recipe.json
+      - name: Verify Action edition
+        run: python3 scripts/check-manuscript-edition.py edition
+      - name: Compile in Docker and verify its edition
+        run: |
+          docker build -t recto-manuscript-test .
+          fixture="$(mktemp -d)"
+          chmod 0777 "$fixture"
+          cp examples/manuscript/{recipe.json,manuscript.md} "$fixture/"
+          docker run --rm --network none -v "$fixture:/workspace" recto-manuscript-test compile recipe.json
+          python3 scripts/check-manuscript-edition.py "$fixture/edition"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manuscript-proof
+          path: edition/
+          if-no-files-found: error

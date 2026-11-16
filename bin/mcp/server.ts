@@ -9,6 +9,7 @@ import { plainStory, storyText } from '../../src/engine/storyContent';
 import { limits, PublishingWorkspace, sha256 } from './workspace';
 import { confirmProjectRevision, headlessLayoutNotice, loadProject, previewDraft, proposeStoryChange, resolveStory, withPublication } from './publication';
 import { DraftPlans } from './plans';
+import { publicationPlan, publicationRecipe } from '../publicationRecipe';
 import { documentChange, proposeDocumentChanges } from './documentTools';
 import { appearanceThemes, defaultAppearance, parseAppearance, pasteboardColors, serializeAppearance } from '../../src/appearance';
 
@@ -51,6 +52,58 @@ function createPublishingServer(workspace: PublishingWorkspace) {
       } finally { busy = false; }
     });
   }
+
+  tool('recto_plan_publication', 'Compose a Markdown or DOCX manuscript to estimate pagination, signatures, and spine before exporting. This does not write files.', publicationPlan, async args => {
+    const { planPublication } = await import('../compilePublication');
+    return planPublication(workspace, args);
+  });
+
+  tool('recto_inspect_delivery_pdf', 'Inspect a local PDF’s page geometry, font embedding, output ICC profiles, and findings. This is a document inspection, not standards certification.', z.strictObject({
+    pdf: file, ...pagination,
+  }), async args => {
+    const bytes = await workspace.read(args.pdf, ['.pdf'], limits.pdf);
+    const { inspectDeliveryPdf } = await import('../../src/export/pdfDelivery');
+    const { pages, findings, fonts, ...metadata } = await inspectDeliveryPdf(new File([bytes], args.pdf.split('/').at(-1)!));
+    return { ...metadata, pageCount: pages.length, pages: pages.slice(args.offset, args.offset + args.limit),
+      nextOffset: args.offset + args.limit < pages.length ? args.offset + args.limit : null,
+      fonts: fonts.slice(0, 50), fontCount: fonts.length, findings: findings.slice(0, 50), findingCount: findings.length };
+  });
+
+  tool('recto_compare_pdf_proofs', 'Compare chosen physical pages in two workspace PDFs and return a PNG with changed pixels marked. Use page numbers after accounting for repagination.', z.strictObject({
+    before: file, after: file, beforePage: z.int().min(1).max(500).default(1), afterPage: z.int().min(1).max(500).default(1),
+  }), async (args, images) => {
+    const { buildProof, visualDiff } = await import('./proof');
+    const before = await workspace.read(args.before, ['.pdf'], limits.pdf);
+    const oldProof = await buildProof(before, args.beforePage);
+    const after = await workspace.read(args.after, ['.pdf'], limits.pdf);
+    const newProof = await buildProof(after, args.afterPage);
+    const diff = await visualDiff(oldProof, newProof);
+    const preview = diff.comparable ? diff.bytes : newProof.bytes;
+    if (preview.length <= 3 * 1024 * 1024) images.push({ type: 'image', mimeType: 'image/png', data: preview.toString('base64') });
+    return { before: { sha256: sha256(before), page: args.beforePage, width: oldProof.width, height: oldProof.height },
+      after: { sha256: sha256(after), page: args.afterPage, width: newProof.width, height: newProof.height },
+      comparable: diff.comparable, changedPixels: diff.comparable ? diff.changedPixels : null,
+      preview: diff.comparable ? 'difference' : 'current' };
+  });
+
+  tool('recto_locate_pdf_text', 'Locate selectable text in a saved PDF. Return physical page numbers, text fragment bounds, and a highlighted PNG. Scanned pages need a text layer.', z.strictObject({
+    pdf: file, quote: z.string().trim().min(1).max(500), matchCase: z.boolean().default(false),
+    startPage: z.int().min(1).max(500).default(1), pageLimit: z.int().min(1).max(30).default(12),
+  }), async (args, images) => {
+    const bytes = await workspace.read(args.pdf, ['.pdf'], limits.pdf);
+    const { locatePdfProofText } = await import('./proof');
+    const { preview, ...result } = await locatePdfProofText(bytes, args.quote, args.matchCase, args.startPage, args.pageLimit);
+    if (preview && preview.length <= 3 * 1024 * 1024) images.push({ type: 'image', mimeType: 'image/png', data: preview.toString('base64') });
+    return { ...result, sha256: sha256(bytes), coordinates: 'Page-relative fractions, measured from top left. Bounds cover matched text fragments.' };
+  });
+
+  tool('recto_compile_publication', 'Compile a Markdown or DOCX manuscript into an editable book, reader-order PDF, and PNG proof. Optionally budget offset signatures and compare a prior PDF.', publicationRecipe, async (args, images) => {
+    workspace.assertWritable();
+    const { compilePublication } = await import('../compilePublication');
+    const { report, outputs, preview } = await compilePublication(workspace, args);
+    if (preview.byteLength <= 3 * 1024 * 1024) images.push({ type: 'image', mimeType: 'image/png', data: preview.toString('base64') });
+    return { report, outputs };
+  }, true);
 
   tool('recto_inspect_publication', 'List spreads, pages, and headings. Use the returned revision to guard changes and exports.', z.strictObject({
     ...projectInput, ...pagination,
@@ -265,7 +318,8 @@ function createPublishingServer(workspace: PublishingWorkspace) {
       'appearance profiles', 'XLIFF review', 'preflight', 'PDF and EPUB export', 'IDML import and export', 'Scribus import', 'batch publishing',
       'book archive inspection, approved proof comparison, interior PDF and delivery ZIP', 'visual proof images', 'shared desktop canvas snapshots',
       'desktop edit proposals', 'frame geometry and style application', 'image levels and curves', 'vector decorations',
-      'table merging, row splitting and continuation pages'],
+      'table merging, row splitting and continuation pages', 'manuscript layout planning and compilation',
+      'delivery PDF inspection', 'PDF proof comparison and text location'],
     editorOnly: ['live canvas gestures', 'continuous screen sharing', 'live collaboration', 'native dialogs and updater',
       'freehand drawing', 'advanced style authoring'],
   }));

@@ -1,0 +1,6 @@
+{
+  "manuscript": "manuscript.md",
+  "output": "edition",
+  "preset": "trade-paperback-6x9",
+  "paperSpec": { "caliperMm": 0.1, "gsm": 80, "finish": "cream" }
+}

@@ -14,6 +14,33 @@ export async function createNodePdfRaster(source: Uint8Array | PdfPayload, asset
   const pdf = await task.promise.catch(async (error: unknown) => { await task.destroy(); throw error; });
   return {
     length: pdf.numPages as number,
+    async locateText(query: string, matchCase: boolean, startPage: number, endPage: number, limit: number) {
+      const { locateProofText } = await import('./proofTextLocator');
+      const matches = [];
+      let nextPage: number | null = null;
+      for (let index = startPage; index <= Math.min(endPage, pdf.numPages); index++) {
+        const page = await pdf.getPage(index);
+        try {
+          const viewport = page.getViewport({ scale: 1 });
+          const { items } = await page.getTextContent();
+          const found = locateProofText(items.filter((item: { str?: string }) => typeof item.str === 'string'),
+            query, matchCase, viewport, limit + 1);
+          if (matches.length && matches.length + found.length > limit) {
+            nextPage = index;
+            break;
+          }
+          matches.push(...found.slice(0, limit).map(match => ({ ...match, page: index })));
+          if (found.length > limit) return { matches, nextPage: index < pdf.numPages ? index + 1 : null, pageTruncated: index };
+          if (matches.length >= limit || index === endPage) {
+            nextPage = index < pdf.numPages ? index + 1 : null;
+            break;
+          }
+        } finally {
+          page.cleanup();
+        }
+      }
+      return { matches, nextPage, pageTruncated: null };
+    },
     async scan() {
       const { proofFingerprint, proofScanEdge } = await import('../engine/proofFingerprint');
       if (pdf.numPages > 500) throw new Error('Review supports up to 500 pages per PDF.');

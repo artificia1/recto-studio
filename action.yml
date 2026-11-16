@@ -1,0 +1,37 @@
+name: Compile a Recto publication
+description: Build an editable book edition, PDF, proof, and report from a Markdown or DOCX manuscript.
+inputs:
+  recipe:
+    description: Workspace-relative path to a Recto compilation recipe
+    required: true
+outputs:
+  directory:
+    description: Workspace-relative path to the compiled edition
+    value: ${{ steps.compile.outputs.directory }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+    - name: Install Recto
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: npm ci --omit=dev
+    - name: Compile the publication
+      id: compile
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        RECTO_RECIPE: ${{ inputs.recipe }}
+      run: |
+        report="$(mktemp)"
+        trap 'rm -f "$report"' EXIT
+        node bin/recto.js compile "$RECTO_RECIPE" --workspace "$GITHUB_WORKSPACE" > "$report"
+        cat "$report"
+        node --input-type=module - "$report" <<'JS'
+        import { appendFileSync, readFileSync } from 'node:fs';
+        import { posix } from 'node:path';
+        const result = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+        appendFileSync(process.env.GITHUB_OUTPUT, 'directory=' + posix.dirname(result.outputs[0].path) + '\n');
+        JS
