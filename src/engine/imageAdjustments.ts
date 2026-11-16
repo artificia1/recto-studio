@@ -40,13 +40,20 @@ export async function adjustedRasterSource(source: string, settings: ImageAdjust
   const { data, width, height } = await decodeSrgbRaster(source);
   const values = adjustmentLookup(settings);
   const grayscale = !!settings.grayscale;
-  if (!await adjustDesktopRaster(data, values, grayscale)) applyLookup(data, values, grayscale);
+  const processed = data.length >= 64 * 1024
+    ? await import('./rasterWasm').then(module => module.mutateWasmRaster(data, values, grayscale)).catch(() => 0)
+    : 0;
+  if (processed < data.length && (processed > 0 || !await adjustDesktopRaster(data, values, grayscale))) {
+    applyLookup(data.subarray(processed), values, grayscale);
+  }
   if (typeof OffscreenCanvas !== 'undefined') {
     const canvas = new OffscreenCanvas(width, height);
     const context = canvas.getContext('2d');
     if (!context) throw new Error('Could not render adjusted artwork.');
-    const pixels = context.createImageData(width, height);
-    pixels.data.set(data);
+    const pixels = typeof ImageData === 'function'
+      ? new ImageData(new Uint8ClampedArray(data.buffer as ArrayBuffer, data.byteOffset, data.byteLength), width, height)
+      : context.createImageData(width, height);
+    if (pixels.data.buffer !== data.buffer) pixels.data.set(data);
     context.putImageData(pixels, 0, 0);
     const png = await canvas.convertToBlob({ type: 'image/png' });
     return `data:image/png;base64,${uint8ArrayToBase64(new Uint8Array(await png.arrayBuffer()))}`;

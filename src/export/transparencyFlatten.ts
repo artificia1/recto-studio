@@ -40,11 +40,12 @@ function bounds(element: CanvasElement, origin: number, scale: number): PixelRec
 
 const intersects = (a: PixelRect, b: PixelRect) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 /** Rasterize transparency regions, retain vectors elsewhere, then remove live transparency resources. */
-export async function flattenPdfTransparency(bytes: Uint8Array, state: ProjectState, pageArtwork: CanvasElement[][], originMm: number, dpi = 300) {
+export async function flattenPdfTransparency(pdf: PDFDocument, state: ProjectState, pageArtwork: CanvasElement[][], originMm: number, dpi = 300) {
   if (!Number.isFinite(dpi) || dpi < 150 || dpi > 600) throw new Error('Flattening resolution must be between 150 and 600 dpi.');
   const settings = state.settings.colorManagement;
   if (!settings?.convertPdf) throw new Error('Import a CMYK output ICC profile and enable PDF conversion before flattening for print.');
-  const pdf = await PDFDocument.load(bytes, { updateMetadata: false }), scale = dpi / 72, mmScale = dpi / 25.4;
+  const profile = profileBytes(settings.outputProfile);
+  const scale = dpi / 72, mmScale = dpi / 25.4;
   if (pdf.getPageCount() !== pageArtwork.length) throw new Error('The flattening page map does not match the PDF.');
   const plans = pdf.getPages().map((page, index) => {
     const elements = pageArtwork[index];
@@ -63,7 +64,13 @@ export async function flattenPdfTransparency(bytes: Uint8Array, state: ProjectSt
   });
   const hasRegions = plans.some(regions => regions.length);
   if (hasRegions) requirePdfFonts(pdf);
-  const renderer = !hasRegions ? undefined : typeof document === 'undefined' ? await (await import('./pdfRasterNode')).createNodePdfRaster(bytes) : await (await import('./pdfRasterBrowser')).createBrowserPdfRaster(bytes);
+  let renderer;
+  if (hasRegions) {
+    const bytes = await pdf.save({ useObjectStreams: false, updateFieldAppearances: false });
+    renderer = typeof document === 'undefined'
+      ? await (await import('./pdfRasterNode')).createNodePdfRaster(bytes)
+      : await (await import('./pdfRasterBrowser')).createBrowserPdfRaster(bytes);
+  }
   let rasterTiles = 0, pixelsProcessed = 0;
   try {
     for (const [index, page] of pdf.getPages().entries()) {
@@ -90,7 +97,7 @@ export async function flattenPdfTransparency(bytes: Uint8Array, state: ProjectSt
         if (pixelsProcessed > 250_000_000 || ++rasterTiles > 4096) throw new Error('This flattening job exceeds 250 million pixels or 4,096 tiles. Export a smaller page range.');
         const rgba = await renderer!.tile(index, x, y, width, height, scale);
         const { rgb } = await prepareRasterTile(rgba, 'paper');
-        const cmyk = await convertIcc({ pixels: rgb, profile: profileBytes(settings.outputProfile), direction: 'rgb-to-cmyk', intent: settings.intent, blackPointCompensation: settings.blackPointCompensation, preservePureBlack: settings.preservePureBlack });
+        const cmyk = await convertIcc({ pixels: rgb, profile, direction: 'rgb-to-cmyk', intent: settings.intent, blackPointCompensation: settings.blackPointCompensation, preservePureBlack: settings.preservePureBlack }, true);
         const image = pdf.context.register(pdf.context.flateStream(cmyk, { Type: 'XObject', Subtype: 'Image', Width: width, Height: height, ColorSpace: 'DeviceCMYK', BitsPerComponent: 8 }));
         const name = `RectoFlat${rasterTiles}`; images.set(PDFName.of(name), image);
         draw.push(`q ${width / scale} 0 0 ${height / scale} ${x / scale} ${page.getHeight() - (y + height) / scale} cm /${name} Do Q`);
@@ -110,5 +117,5 @@ export async function flattenPdfTransparency(bytes: Uint8Array, state: ProjectSt
     } else if (value instanceof PDFArray) value.asArray().forEach(scrub);
   };
   pdf.context.enumerateIndirectObjects().forEach(([, value]) => scrub(value));
-  return { bytes: await pdf.save({ useObjectStreams: false, updateFieldAppearances: false }), rasterTiles, flattenedPages: plans.filter(regions => regions.length).length };
+  return { rasterTiles, flattenedPages: plans.filter(regions => regions.length).length };
 }

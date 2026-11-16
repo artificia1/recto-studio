@@ -7,7 +7,12 @@ use std::path::{Path, PathBuf};
 pub const MAX_FILE_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_PROJECT_HANDLES: usize = 16;
 const EXTERNAL_CHANGE: &str = "The project file changed on disk. Use Save As to keep your edits in a separate file.";
-type Fingerprint = [u8; 32];
+pub type Fingerprint = [u8; 32];
+
+pub enum ProjectWrite {
+    SaveAs,
+    Existing { handle: String, expected: Fingerprint },
+}
 
 #[derive(Debug, serde::Serialize)]
 pub struct ProjectFile {
@@ -33,7 +38,7 @@ fn file_name(path: &Path) -> Result<String, String> {
         .ok_or_else(|| "Invalid project file name.".into())
 }
 
-fn fingerprint(path: &Path) -> Result<Fingerprint, String> {
+pub fn fingerprint(path: &Path) -> Result<Fingerprint, String> {
     if !path.is_file() {
         return Err(EXTERNAL_CHANGE.into());
     }
@@ -78,14 +83,50 @@ pub fn is_native_project(path: &Path) -> bool {
 
 impl ProjectFiles {
     pub fn remember(&mut self, path: PathBuf, bytes: &[u8]) -> Result<ProjectFile, String> {
+        self.remember_fingerprint(path, Sha256::digest(bytes).into())
+    }
+
+    pub fn remember_fingerprint(&mut self, path: PathBuf, fingerprint: Fingerprint) -> Result<ProjectFile, String> {
         let name = file_name(&path)?;
         self.next_id += 1;
         let id = self.next_id;
-        self.files.push_back(OpenProject { id, path, fingerprint: Sha256::digest(bytes).into() });
+        self.files.push_back(OpenProject { id, path, fingerprint });
         if self.files.len() > MAX_PROJECT_HANDLES {
             self.files.pop_front();
         }
         Ok(ProjectFile { handle: id.to_string(), name })
+    }
+
+    pub fn save_target(&self, handle: &str) -> Result<(PathBuf, Fingerprint), String> {
+        let id = handle.parse::<u64>().ok();
+        self.files.iter().find(|project| Some(project.id) == id)
+            .map(|project| (project.path.clone(), project.fingerprint))
+            .ok_or_else(|| "The project location is unavailable. Use Save As to choose a location.".into())
+    }
+
+    pub fn publish_staged(
+        &mut self, path: PathBuf, temporary: tempfile::NamedTempFile,
+        binding: ProjectWrite,
+    ) -> Result<ProjectFile, String> {
+        let next = fingerprint(temporary.path())?;
+        if let ProjectWrite::Existing { handle, expected } = binding {
+            let (current_path, current) = self.save_target(&handle)?;
+            if current_path != path || current != expected || fingerprint(&path)? != expected {
+                return Err(EXTERNAL_CHANGE.into());
+            }
+            let name = file_name(&path)?;
+            temporary.persist(&path).map_err(|error| error.to_string())?;
+            let id = handle.parse::<u64>().ok();
+            for project in &mut self.files {
+                if Some(project.id) == id {
+                    project.fingerprint = next;
+                }
+            }
+            Ok(ProjectFile { handle, name })
+        } else {
+            temporary.persist(&path).map_err(|error| error.to_string())?;
+            self.remember_fingerprint(path, next)
+        }
     }
 
     pub fn save(&mut self, handle: &str, bytes: &[u8]) -> Result<ProjectFile, String> {

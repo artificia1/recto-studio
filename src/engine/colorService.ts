@@ -11,7 +11,7 @@ function stop(reason: Error) {
   pending.clear();
 }
 
-async function execute<T>(command: ColorCommand): Promise<T> {
+async function execute<T>(command: ColorCommand, transferPixels = false): Promise<T> {
   if (typeof Worker === 'undefined') {
     const engine = await import('./iccEngine');
     await engine.initializeCms();
@@ -34,7 +34,12 @@ async function execute<T>(command: ColorCommand): Promise<T> {
     const id = ++nextId;
     const timer = setTimeout(() => stop(new Error('ICC processing exceeded 45 seconds. Try a smaller profile or image tile.')), 45000);
     pending.set(id, { resolve: value => resolve(value as T), reject, timer });
-    try { worker!.postMessage({ id, command }); }
+    try {
+      const pixels = transferPixels && command.kind === 'transform' ? command.pixels : undefined;
+      const buffer = pixels?.buffer;
+      const transfer = buffer instanceof ArrayBuffer && pixels?.byteOffset === 0 && pixels.byteLength === buffer.byteLength ? [buffer] : [];
+      worker!.postMessage({ id, command }, transfer);
+    }
     catch (reason) {
       pending.delete(id); clearTimeout(timer);
       reject(reason instanceof Error ? reason : new Error(String(reason)));
@@ -43,4 +48,6 @@ async function execute<T>(command: ColorCommand): Promise<T> {
 }
 
 export const describeIcc = (profile: Uint8Array) => execute<string>({ kind: 'describe', profile });
-export const convertIcc = (options: IccTransformOptions) => execute<Uint8Array>({ kind: 'transform', ...options });
+// A caller may hand over an owned tile once it has finished reading it.
+export const convertIcc = (options: IccTransformOptions, transferPixels = false) =>
+  execute<Uint8Array>({ kind: 'transform', ...options }, transferPixels);

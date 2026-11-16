@@ -5,6 +5,7 @@ import { getSafeSpotName, type FreeToneSpotColor } from '../engine/spotColors';
 import { storyText } from '../engine/storyContent';
 import { publicationHeadings } from '../engine/publicationReferences';
 import { savePublicationFile } from '../desktop';
+import { finalizedPdfPayloads, serializeJsPdf, type PdfPayload } from './pdfPayload';
 import type { PdfStructureGroup } from './pdfSemantics';
 import { installPdfFonts } from './pdfFontResources';
 import { installPdfGradients } from './pdfGradients';
@@ -58,8 +59,8 @@ function attachHeadingBookmarks(pdf: PDFDocument, state: ProjectState, pageIds: 
 }
 
 /** Repair resources and attach a real structure/parent tree without claiming PDF/UA conformance. */
-export async function finishPdf(doc: jsPDF, state: ProjectState, spots: FreeToneSpotColor[], tags?: PdfContentTag[], compress = true, groups?: PdfStructureGroup[], pageIds?: string[]) {
-  const pdf = await PDFDocument.load(doc.output('arraybuffer'), { updateMetadata: false });
+export async function finishPdf(doc: jsPDF, state: ProjectState, spots: FreeToneSpotColor[], tags?: PdfContentTag[], groups?: PdfStructureGroup[], pageIds?: string[]) {
+  const pdf = await PDFDocument.load(serializeJsPdf(doc).bytes(), { updateMetadata: false });
   installPdfFonts(doc, pdf);
   const { context } = pdf;
   for (const page of pdf.getPages()) {
@@ -119,31 +120,30 @@ export async function finishPdf(doc: jsPDF, state: ProjectState, spots: FreeTone
     pdf.catalog.set(PDFName.of('ViewerPreferences'), context.obj({ DisplayDocTitle: true }));
     if (pageIds) attachHeadingBookmarks(pdf, state, pageIds);
   }
-  const bytes = await pdf.save({ useObjectStreams: compress, addDefaultPage: false, updateFieldAppearances: false });
-  bindFinalizedPdf(doc, bytes);
-  return bytes;
+  return pdf;
 }
 
-export function bindFinalizedPdf(doc: jsPDF, bytes: Uint8Array) {
+export function bindFinalizedPdf(doc: jsPDF, payload: PdfPayload) {
+  finalizedPdfPayloads.set(doc, payload);
   // Exported documents are complete snapshots. Preserve jsPDF's public output formats
   // while ensuring every consumer (downloads, packages and CLI) receives fixed bytes.
-  const blob = () => new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
   const binary = () => {
+    const bytes = payload.bytes();
     const chunks: string[] = [];
     for (let offset = 0; offset < bytes.length; offset += 8192) chunks.push(String.fromCharCode(...bytes.subarray(offset, offset + 8192)));
     return chunks.join('');
   };
   doc.save = ((filename = 'document.pdf', options?: { returnPromise?: boolean }) => {
-    const saved = savePublicationFile(filename, new Uint8Array(bytes), 'application/pdf');
+    const saved = savePublicationFile(filename, payload.blob(), 'application/pdf');
     if (options?.returnPromise) return saved.then(() => doc);
     void saved.catch(error => console.error('PDF could not be saved:', error));
     return doc;
   }) as jsPDF['save'];
   doc.output = ((format?: string) => {
     if (!format) return binary();
-    if (format === 'arraybuffer') return new Uint8Array(bytes).buffer;
-    if (format === 'blob') return blob();
-    if (format === 'bloburi' || format === 'bloburl') return URL.createObjectURL(blob());
+    if (format === 'arraybuffer') return payload.bytes().buffer;
+    if (format === 'blob') return payload.blob();
+    if (format === 'bloburi' || format === 'bloburl') return URL.createObjectURL(payload.blob());
     if (format === 'datauristring' || format === 'dataurlstring') return `data:application/pdf;base64,${btoa(binary())}`;
     throw new Error(`Output format “${format}” is unavailable for finalized PDFs. Use arraybuffer or blob.`);
   }) as jsPDF['output'];

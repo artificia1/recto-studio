@@ -1,4 +1,5 @@
-import { desktopProjectFiles, isDesktop, openDesktopDocument, savePublicationFile, type DesktopProjectFile } from './desktop';
+import { desktopProjectFiles, isDesktop, maxDesktopBytes, openDesktopDocument, saveDesktopProject, savePublicationFile, type DesktopProjectFile } from './desktop';
+import { projectSnapshotBlob } from './projectSnapshot';
 import { stateManager } from './state';
 
 let binding: (DesktopProjectFile & { session: number }) | undefined;
@@ -42,13 +43,9 @@ export async function saveCurrentProject(saveAs: boolean): Promise<void> {
   await runDesktopFileOperation(async () => {
     const session = stateManager.getDocumentSession();
     const revision = stateManager.getDocumentRevision();
-    const bytes = new TextEncoder().encode(stateManager.exportJson());
-    if (bytes.byteLength > 128 * 1024 * 1024) throw new Error('This project exceeds the 128 MB desktop save limit.');
     const handle = !saveAs && binding?.session === session ? binding.handle : null;
-    const { invoke } = await import('@tauri-apps/api/core');
-    const project = await invoke<DesktopProjectFile | null>('desktop_save_project', {
-      handle, suggestedName, bytes: Array.from(bytes),
-    });
+    const snapshot = projectSnapshotBlob(stateManager.getState(), maxDesktopBytes);
+    const project = await saveDesktopProject(handle, suggestedName, snapshot);
     if (!project || stateManager.getDocumentSession() !== session) return;
     binding = { ...project, session };
     stateManager.autosave.markDesktopSaved(project.name, stateManager.getDocumentRevision() === revision);

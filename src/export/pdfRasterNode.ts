@@ -29,8 +29,13 @@ export async function createNodePdfRaster(bytes: Uint8Array, assets?: { standard
     },
     async tile(pageIndex: number, x: number, y: number, width: number, height: number, scale: number): Promise<Uint8ClampedArray> {
       const page = await pdf.getPage(pageIndex + 1), canvas = native.createCanvas(width, height), context = canvas.getContext('2d');
-      await page.render({ canvas, canvasContext: context, viewport: page.getViewport({ scale }), transform: [1, 0, 0, 1, -x, -y], background: '#ffffff' }).promise;
-      const pixels = context.getImageData(0, 0, width, height).data; page.cleanup(); return pixels;
+      try {
+        await page.render({ canvas, canvasContext: context, viewport: page.getViewport({ scale }), transform: [1, 0, 0, 1, -x, -y], background: '#ffffff' }).promise;
+        return context.getImageData(0, 0, width, height).data;
+      } finally {
+        page.cleanup();
+        canvas.width = canvas.height = 1;
+      }
     },
     async png(pageIndices: readonly number[], maxEdge: number) {
       const pages = await Promise.all(pageIndices.map(index => pdf.getPage(index + 1)));

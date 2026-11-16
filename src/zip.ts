@@ -231,8 +231,10 @@ export function createZipArchive(files: Record<string, string | Uint8Array>): Ui
 
 export function uint8ArrayToBase64(bytes: Uint8Array): string {
   if (typeof Buffer !== 'undefined') {
-    return Buffer.from(bytes).toString('base64');
+    return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('base64');
   }
+  const native = (bytes as Uint8Array & { toBase64?: () => string }).toBase64;
+  if (native) return native.call(bytes);
   let binary = '';
   const len = bytes.byteLength;
   const chunkSize = 8192;
@@ -248,6 +250,8 @@ export function base64ToUint8Array(base64Str: string): Uint8Array {
   if (typeof Buffer !== 'undefined') {
     return new Uint8Array(Buffer.from(clean, 'base64'));
   }
+  const native = (Uint8Array as typeof Uint8Array & { fromBase64?: (value: string) => Uint8Array }).fromBase64;
+  if (native) return native.call(Uint8Array, clean);
   const binary = atob(clean);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {

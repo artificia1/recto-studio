@@ -9,6 +9,10 @@ export async function prepareRasterTile(rgba: Uint8Array | Uint8ClampedArray, mo
   if (rgba.length % 4) throw new Error('Invalid RGBA raster tile.');
   const count = rgba.length / 4;
   const rgbLength = count * 3;
+  if (rgba.length >= 64 * 1024) {
+    const native = await import('./rasterWasm').then(module => module.prepareWasmRaster(rgba, mode === 'paper')).catch(() => undefined);
+    if (native) return native;
+  }
   if (isDesktop() && count > 0 && count <= ICC_TILE_PIXELS) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');

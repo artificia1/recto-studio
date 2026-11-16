@@ -46,7 +46,9 @@ export async function decodeSrgbRaster(src: string, maxEdge?: number, allowCmyk 
       const context = new OffscreenCanvas(width, height).getContext('2d', { colorSpace: 'srgb', willReadFrequently: true });
       if (!context) throw new Error('Could not create an sRGB image surface.');
       context.drawImage(image, 0, 0);
-      return { width, height, originalWidth: original.width, originalHeight: original.height, data: new Uint8Array(context.getImageData(0, 0, width, height).data) };
+      const pixels = context.getImageData(0, 0, width, height).data;
+      const data = new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength);
+      return { width, height, originalWidth: original.width, originalHeight: original.height, data };
     } finally { image.close(); }
   }
   const { Resvg } = await import('@resvg/resvg-js');
@@ -54,7 +56,10 @@ export async function decodeSrgbRaster(src: string, maxEdge?: number, allowCmyk 
   const rendered = new Resvg(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><image width="${width}" height="${height}" href="${safeSource}"/></svg>`, { font: { loadSystemFonts: false } }).render();
   const data = new Uint8Array(rendered.pixels);
   // tiny-skia exposes premultiplied pixels; callers need straight RGB samples.
-  for (let offset = 0; offset < data.length; offset += 4) {
+  const processed = data.length >= 64 * 1024
+    ? await import('./rasterWasm').then(module => module.mutateWasmRaster(data)).catch(() => 0)
+    : 0;
+  for (let offset = processed; offset < data.length; offset += 4) {
     const alpha = data[offset + 3];
     if (alpha && alpha < 255) for (let channel = 0; channel < 3; channel++) data[offset + channel] = Math.min(255, Math.round(data[offset + channel] * 255 / alpha));
   }

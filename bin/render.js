@@ -4,6 +4,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseMergeData, substituteElementTokens, substituteTokens } from '../src/dataMerge.js';
 import { exportDocumentToPdf } from '../src/export/pdfExport.js';
+import { pdfExportBlob } from '../src/export/pdfPayload.js';
 import { PDF_PRESETS } from '../src/export/presets.js';
 import { parseProject } from '../src/state/projectValidation.js';
 import { INITIAL_STATE } from '../src/state/defaults.js';
@@ -83,7 +84,7 @@ export async function renderBatch(args) {
         const pdf = await exportDocumentToPdf(project, { ...PDF_PRESETS[options.preset].options, download: false, strict: true,
           fetchExternalAssets: false, onWarning: warning => warnings.add(warning) });
         files.push(filename);
-        await writeFile(path.join(staging, filename), Buffer.from(pdf.output('arraybuffer')), { flag: 'wx' });
+        await writeFile(path.join(staging, filename), pdfExportBlob(pdf).stream(), { flag: 'wx' });
       } catch (error) {
         throw new Error(`Record ${index + 1} failed: ${error instanceof Error ? error.message : String(error)}`);
       }

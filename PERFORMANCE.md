@@ -79,6 +79,30 @@ ceilings on the standalone benchmark to catch stalled operations.
 
 ## Remaining work
 
+The Rust raster module processes larger RGBA buffers one MiB at a time and
+caps its WebAssembly memory at three MiB. Tone adjustment, straight-alpha
+restoration, ICC sample preparation and compositing onto white share the same
+kernels. The app can hand off consumed ICC buffers to its color worker and
+releases PDF tile surfaces after each render. Decoded source images still need
+their own buffers.
+
+PDF downloads serialize into byte chunks using the existing writers' object
+offset and cross-reference calculations. Tagged and press exports share one
+PDF object graph through finalization. Reading that graph from the initial
+render and rendering transparency with PDF.js still require contiguous input.
+Callers requesting `output('arraybuffer')` explicitly also receive a
+contiguous buffer for compatibility.
+
+Desktop project open and save use one MiB transfers. Project saves serialize
+JSON in batches and stage it in a temporary file. Rust checks for external
+edits before replacing a bound project. The editor still parses the full JSON
+document when opening a project. Older desktop shells support the legacy
+commands.
+
+To regenerate the bundled raster module, run `rustup target add
+wasm32-unknown-unknown` and then `node scripts/build-raster-wasm.mjs`. Normal
+web builds use the bundled module.
+
 The editor bundle remains above Vite's 500 kB warning threshold; the warning is
 retained. Photoshop support still contributes an eager dependency because current
 layer operations use synchronous APIs. Change that boundary only with dedicated

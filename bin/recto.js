@@ -200,14 +200,16 @@ Examples:
         console.log(`[Recto CLI] Compiling PDF with process-color helpers...`);
         const { exportDocumentToPdf } = await import('../src/export/pdfExport.js');
         const pdf = await exportDocumentToPdf(state, {
+          download: false,
           includeBleed: parsed.bleed,
           includeCropMarks: parsed.cropMarks,
           includeRegistrationMarks: parsed.registration,
           includeColorBars: parsed.colorBars,
         });
 
-        const pdfArrayBuffer = pdf.output('arraybuffer');
-        fs.writeFileSync(outputPath, Buffer.from(pdfArrayBuffer));
+        const { pdfExportBlob } = await import('../src/export/pdfPayload.js');
+        const { writeFile } = await import('node:fs/promises');
+        await writeFile(outputPath, pdfExportBlob(pdf).stream());
         const stats = fs.statSync(outputPath);
         console.log(`[Recto CLI] ✓ PDF compilation complete!`);
         console.log(`  Destination : ${outputPath}`);

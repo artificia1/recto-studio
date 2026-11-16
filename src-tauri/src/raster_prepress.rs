@@ -4,33 +4,19 @@ pub fn prepare_tile(rgba: &[u8], mode: &str) -> Option<Vec<u8>> {
     if rgba.is_empty() || rgba.len() > MAX_TILE_BYTES || rgba.len() % 4 != 0 {
         return None;
     }
-    let count = rgba.len() / 4;
-    let mut rgb = Vec::with_capacity(count * 3);
-    match mode {
-        "split" => {
-            let mut transparent = false;
-            for pixel in rgba.chunks_exact(4) {
-                rgb.extend_from_slice(&pixel[..3]);
-                transparent |= pixel[3] != 255;
-            }
-            // An optional alpha plane follows RGB, in the same pixel order.
-            if transparent {
-                rgb.reserve_exact(count);
-                rgb.extend(rgba.chunks_exact(4).map(|pixel| pixel[3]));
-            }
-        }
-        "paper" => {
-            for pixel in rgba.chunks_exact(4) {
-                let alpha = u16::from(pixel[3]);
-                rgb.extend(pixel[..3].iter().map(|channel| {
-                    let ink = (255 - u16::from(*channel)) * alpha;
-                    (255 - (ink + 127) / 255) as u8
-                }));
-            }
-        }
+    let paper = match mode {
+        "split" => false,
+        "paper" => true,
         _ => return None,
+    };
+    let rgb_length = rgba.len() / 4 * 3;
+    let mut output = vec![0; rgb_length];
+    if write_rgb(rgba, &mut output, paper) && !paper {
+        output.reserve_exact(rgba.len() - rgb_length);
+        output.resize(rgba.len(), 0);
+        write_alpha(rgba, &mut output[rgb_length..]);
     }
-    Some(rgb)
+    Some(output)
 }
 
 #[cfg(test)]
@@ -57,3 +43,4 @@ mod tests {
         assert!(prepare_tile(&[0; 4], "unknown").is_none());
     }
 }
+use crate::raster_kernel::{write_alpha, write_rgb};

@@ -3,8 +3,7 @@ import type { ProjectState } from '../types';
 import { escapeXml as xml, requirePdfFonts } from './pdfPress';
 
 /** Declare PDF/UA-1 only after the strict exporter has built its supported semantics. */
-export async function identifyPdfUa1(bytes: Uint8Array, state: ProjectState) {
-  const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
+export function identifyPdfUa1(pdf: PDFDocument, state: ProjectState) {
   if (!state.settings.title.trim()) throw new Error('Accessible PDF requires a document title.');
   try { Intl.getCanonicalLocales(state.settings.language || 'en-US'); } catch { throw new Error('Set a valid document language before accessible PDF export.'); }
   if (!pdf.catalog.has(PDFName.of('StructTreeRoot'))) throw new Error('The PDF has no accessibility structure tree.');
@@ -22,5 +21,4 @@ export async function identifyPdfUa1(bytes: Uint8Array, state: ProjectState) {
 </rdf:RDF></x:xmpmeta>
 <?xpacket end="w"?>`;
   pdf.catalog.set(PDFName.of('Metadata'), pdf.context.register(pdf.context.flateStream(new TextEncoder().encode(metadata), { Type: 'Metadata', Subtype: 'XML' })));
-  return pdf.save({ useObjectStreams: true, updateFieldAppearances: false });
 }

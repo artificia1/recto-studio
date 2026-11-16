@@ -14,7 +14,7 @@ import { masterTargetPage } from '../engine/pageLabels';
 import { colorToCmyk, applyCmykTextColor, applyCmykFillColor, applyCmykDrawColor, applySpotColor } from './pdfColors';
 export { colorToCmyk, applyCmykTextColor, applyCmykFillColor, applyCmykDrawColor, applySpotColor } from './pdfColors';
 import { fontManager } from '../fontManager';
-import { isDesktop, savePublicationFile } from '../desktop';
+import { savePublicationFile } from '../desktop';
 import { layoutStory, measureStoryText, type RunStyle, type StoryMeasure } from '../engine/storyLayout';
 import { drawFontText, fontTextWidth, wrapFontText } from './fontOutlines';
 import { ProjectState, Page, Spread, TextElement, ImageElement, ShapeElement, VectorPathElement, TableElement, CanvasElement } from '../types/index';
@@ -657,34 +657,41 @@ export async function exportDocumentToPdf(
   for (const warning of preflightWarnings) options.onWarning?.(warning);
   semantic?.validate();
 
-  let finalized = (structure || usedSpotColors.size || usedPdfFonts(doc).length || hasPdfGradients(doc)) ? await (structure || await import('./pdfStructure')).finishPdf(
-    doc, state, [...usedSpotColors.values()], semantic?.tags || (structure ? tags : undefined), options.compress !== false,
+  const needsStructure = structure || usedSpotColors.size || usedPdfFonts(doc).length || hasPdfGradients(doc);
+  const { serializeJsPdf } = await import('./pdfPayload');
+  let pdf = needsStructure ? await (structure || await import('./pdfStructure')).finishPdf(
+    doc, state, [...usedSpotColors.values()], semantic?.tags || (structure ? tags : undefined),
     semantic ? [...reading!.groups, ...semantic.groups] : reading?.groups, structure ? pagesToExport.map(({ page }) => page.id) : undefined,
   ) : undefined;
+  if (!pdf && (options.transparency === 'flatten' || options.accessibility || options.pressStandard)) {
+    const { PDFDocument } = await import('pdf-lib');
+    pdf = await PDFDocument.load(serializeJsPdf(doc).bytes(), { updateMetadata: false });
+  }
+  let objectStreams = options.compress !== false;
+  let version: string | undefined;
   if (options.transparency === 'flatten') {
     const { flattenPdfTransparency } = await import('./transparencyFlatten');
-    const result = await flattenPdfTransparency(new Uint8Array(doc.output('arraybuffer')), state, flattenArtwork, slug + bleed, options.flattenDpi || 300);
-    finalized = result.bytes; (doc as any).flatteningReport = { rasterTiles: result.rasterTiles, flattenedPages: result.flattenedPages };
-    (await import('./pdfStructure')).bindFinalizedPdf(doc, finalized);
+    (doc as any).flatteningReport = await flattenPdfTransparency(pdf!, state, flattenArtwork, slug + bleed, options.flattenDpi || 300);
+    objectStreams = false;
   }
   if (options.accessibility) {
-    finalized = await (await import('./pdfUa')).identifyPdfUa1(new Uint8Array(doc.output('arraybuffer')), state);
-    (await import('./pdfStructure')).bindFinalizedPdf(doc, finalized);
+    (await import('./pdfUa')).identifyPdfUa1(pdf!, state);
+    objectStreams = true;
     (doc as any).accessibilityReport = { standard: 'PDF/UA-1', humanReviewRequired: true, limits: ['No interactive annotation tagging', 'Embeddable fonts with Unicode mappings required', 'Content-sized tables required'] };
     options.onWarning?.('Accessible PDF/UA-1 prepared. Validate the final publication and review image descriptions and reading order with assistive technology.');
   }
   if (options.pressStandard) {
-    const result = await (await import('./pdfPress')).preparePressPdf(new Uint8Array(doc.output('arraybuffer')), state, options.pressStandard);
-    finalized = result.bytes; (doc as any).pressReport = result.report;
-    (await import('./pdfStructure')).bindFinalizedPdf(doc, finalized);
+    const result = (await import('./pdfPress')).configurePressPdf(pdf!, state, options.pressStandard);
+    version = result.version;
+    objectStreams = false;
+    (doc as any).pressReport = result.report;
     options.onWarning?.('PDF/X candidate prepared. Independent ISO preflight and printer approval are required; this export is not GWG certified.');
   }
 
   const filename = `${state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'recto-document'}.pdf`;
-  if (options.download !== false) {
-    if (isDesktop() || finalized) await savePublicationFile(filename, doc.output('arraybuffer'), 'application/pdf');
-    else doc.save(filename);
-  }
+  const payload = pdf ? await (await import('./pdfWriter')).serializePdf(pdf, objectStreams, version) : undefined;
+  if (payload) (await import('./pdfStructure')).bindFinalizedPdf(doc, payload);
+  if (options.download !== false) await savePublicationFile(filename, (payload || serializeJsPdf(doc)).blob(), 'application/pdf');
   return doc;
 }
 

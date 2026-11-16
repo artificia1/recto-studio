@@ -9,26 +9,14 @@ pub fn adjust_packet(packet: &[u8]) -> Option<Vec<u8>> {
         1 => true,
         _ => return None,
     };
-    let table = packet.get(1..HEADER_BYTES)?;
+    let table: &[u8; TABLE_BYTES] = packet.get(1..HEADER_BYTES)?.try_into().ok()?;
     let rgba = packet.get(HEADER_BYTES..)?;
     if rgba.is_empty() || rgba.len() > MAX_PIXEL_BYTES || rgba.len() % 4 != 0 {
         return None;
     }
 
     let mut output = rgba.to_vec();
-    for pixel in output.chunks_exact_mut(4) {
-        if grayscale {
-            let luminance = (0.2126 * f64::from(pixel[0])
-                + 0.7152 * f64::from(pixel[1])
-                + 0.0722 * f64::from(pixel[2]))
-                .round() as usize;
-            pixel[..3].fill(table[luminance]);
-        } else {
-            for channel in &mut pixel[..3] {
-                *channel = table[usize::from(*channel)];
-            }
-        }
-    }
+    apply_tone(&mut output, table, grayscale);
     Some(output)
 }
 
@@ -65,3 +53,4 @@ mod tests {
         assert!(adjust_packet(&[0, 1, 2]).is_none());
     }
 }
+use crate::raster_kernel::apply_tone;

@@ -12,9 +12,20 @@ export function embeddedAsset(source: string): PublicationAsset {
   const match = /^data:([^;,]+)([^,]*),([\s\S]*)$/.exec(source);
   if (!match) throw new Error('Embed or relink this image before exporting.');
   let content = match[3];
-  if (!/(?:^|;)base64(?:;|$)/i.test(match[2])) { try { content = decodeURIComponent(content); } catch { /* Legacy SVG data URLs may contain literal percent signs. */ } }
-  const bytes = /(?:^|;)base64(?:;|$)/i.test(match[2]) ? base64ToUint8Array(content) : new TextEncoder().encode(content);
-  if (!bytes.length || bytes.length > LIMIT) throw new Error('Each export image must contain data and be smaller than 64 MB.');
+  const encoded = /(?:^|;)base64(?:;|$)/i.test(match[2]);
+  const sizeMessage = 'Each export image must contain data and be smaller than 64 MB.';
+  if (encoded) {
+    const limit = Math.ceil(LIMIT / 3) * 4;
+    if (content.length > limit) {
+      content = content.replace(/\s+/g, '');
+      if (content.length > limit) throw new Error(sizeMessage);
+    }
+  } else {
+    try { content = decodeURIComponent(content); } catch { /* Legacy SVG data URLs may contain literal percent signs. */ }
+    if (content.length > LIMIT) throw new Error(sizeMessage);
+  }
+  const bytes = encoded ? base64ToUint8Array(content) : new TextEncoder().encode(content);
+  if (!bytes.length || bytes.length > LIMIT) throw new Error(sizeMessage);
   const prefix = new TextDecoder().decode(bytes.subarray(0, 500)).trim();
   let mediaType: string, extension: string;
   if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) { mediaType = 'image/png'; extension = 'png'; }
@@ -63,7 +74,7 @@ export async function prepareExportAssets(source: ProjectState, fetchExternal = 
   const images = [...state.spreads.flatMap(spread => spread.elements), ...state.masterSpreads.filter(master => masters.has(master.id)).flatMap(master => master.elements)]
     .filter((item): item is ImageElement => item.type === 'image' && (includeHidden ||
       (!item.pasteboard && !item.editorialOnly && !item.nonprinting && !hiddenEditions.has(item.conditionId || '') && !excludedLayers.has(item.layerId || 'layer-1'))));
-  const cache = new Map<string, PublicationAsset>();
+  const cache = new Map<string, Map<string, string>>();
   let total = 0;
   for (const image of images) {
     let src = fullImageSource(image);
@@ -74,9 +85,11 @@ export async function prepareExportAssets(source: ProjectState, fetchExternal = 
       continue;
     }
     const adjustments = renderAdjustments ? image.adjustments : undefined;
-    const key = adjustments ? JSON.stringify([src, adjustments]) : src;
-    let asset = cache.get(key);
-    if (!asset) {
+    const variant = adjustments ? JSON.stringify(adjustments) : '';
+    let variants = cache.get(src);
+    if (!variants) { variants = new Map(); cache.set(src, variants); }
+    let normalized = variants.get(variant);
+    if (!normalized) {
       if (!src.startsWith('data:')) {
         if (!fetchExternal && !src.startsWith('blob:')) throw new Error(`Image “${image.name || image.id}” is linked externally. Embed or relink it before export.`);
         const url = new URL(src);
@@ -97,11 +110,13 @@ export async function prepareExportAssets(source: ProjectState, fetchExternal = 
         const { adjustedRasterSource } = await import('../engine/imageAdjustments');
         src = await adjustedRasterSource(src, adjustments);
       }
-      asset = embeddedAsset(src); total += asset.bytes.length;
+      const asset = embeddedAsset(src);
+      total += asset.bytes.length;
       if (total > 256 * 1024 * 1024) throw new Error('Embedded export images exceed 256 MB. Export a smaller document or reduce image sizes.');
-      cache.set(key, asset);
+      normalized = asset.dataUrl;
+      variants.set(variant, normalized);
     }
-    image.src = asset.dataUrl; delete image.proxySrc; delete image.assetId;
+    image.src = normalized; delete image.proxySrc; delete image.assetId;
     if (adjustments) delete image.adjustments;
   }
   return state;

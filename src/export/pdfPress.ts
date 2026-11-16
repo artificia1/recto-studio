@@ -69,12 +69,18 @@ function requireProcessOperators(stream: PDFRawStream) {
 
 /** Conservative checks for Recto-generated process/spot print PDFs; not an ISO validator. */
 export async function preparePressPdf(bytes: Uint8Array, state: ProjectState, standard: PressStandard) {
+  const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
+  const { version, report } = configurePressPdf(pdf, state, standard);
+  const { serializePdf } = await import('./pdfWriter');
+  return { bytes: (await serializePdf(pdf, false, version)).bytes(), report };
+}
+
+export function configurePressPdf(pdf: PDFDocument, state: ProjectState, standard: PressStandard) {
   const settings = state.settings.colorManagement;
   if (!settings?.convertPdf) throw new Error('PDF/X preparation requires a CMYK output ICC profile and enabled PDF conversion.');
   const expectedProfile = profileBytes(settings.outputProfile);
   const header = inspectIccHeader(expectedProfile);
   if (standard === 'pdfx1a-2003' && header.version !== 2) throw new Error('PDF/X-1a:2003 requires an ICC v2 output profile. Use PDF/X-4 for a v4 profile.');
-  const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
   requirePdfFonts(pdf);
   if (!state.settings.title.trim()) throw new Error('Set a document title before preparing PDF/X.');
   const intents = pdf.catalog.lookupMaybe(PDFName.of('OutputIntents'), PDFArray);
@@ -124,8 +130,6 @@ export async function preparePressPdf(bytes: Uint8Array, state: ProjectState, st
   pdf.catalog.delete(PDFName.of('Version'));
   if (!pdf.context.trailerInfo.ID) pdf.context.trailerInfo.ID = pdf.context.obj([PDFHexString.of(crypto.randomUUID().replace(/-/g, '')), PDFHexString.of(crypto.randomUUID().replace(/-/g, ''))]);
   // Classic xref tables and no object streams keep the flattened edition within PDF 1.4.
-  const result = await pdf.save({ useObjectStreams: false, updateFieldAppearances: false });
-  result.set(new TextEncoder().encode(standard === 'pdfx1a-2003' ? '%PDF-1.4' : '%PDF-1.6'));
-  return { bytes: result, report: { target: version, independentValidationRequired: true, certified: false,
+  return { version: standard === 'pdfx1a-2003' ? '%PDF-1.4' : '%PDF-1.6', report: { target: version, independentValidationRequired: true, certified: false,
     checks: ['Embedded fonts', 'CMYK output ICC profile', 'Nested page boxes', 'No interactive annotations', 'Process-colour artwork', ...(standard === 'pdfx1a-2003' ? ['Transparency flattened', 'PDF 1.4 serialization'] : ['CMYK transparency blending space', 'PDF 1.6 serialization'])] } };
 }

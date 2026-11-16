@@ -58,7 +58,7 @@ function collectColors(state: ProjectState): string[] {
 }
 
 async function deflate(bytes: Uint8Array): Promise<Uint8Array> {
-  const stream = new Blob([new Uint8Array(bytes)]).stream().pipeThrough(new CompressionStream('deflate'));
+  const stream = new Blob([bytes as BlobPart]).stream().pipeThrough(new CompressionStream('deflate'));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
@@ -68,7 +68,7 @@ export async function prepareManagedPdf(doc: jsPDF, state: ProjectState) {
   if (!settings?.convertPdf) return undefined;
   const profile = profileBytes(settings.outputProfile);
   const transform = (pixels: Uint8Array) => convertIcc({ profile, pixels, direction: 'rgb-to-cmyk', intent: settings.intent,
-    blackPointCompensation: settings.blackPointCompensation, preservePureBlack: settings.preservePureBlack });
+    blackPointCompensation: settings.blackPointCompensation, preservePureBlack: settings.preservePureBlack }, true);
   const names = collectColors(state), pixels = new Uint8Array(names.length * 3);
   names.forEach((name, index) => {
     const color = rgbColor(name);
