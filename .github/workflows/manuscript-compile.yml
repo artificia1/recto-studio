@@ -49,6 +49,7 @@ jobs:
           chmod 0777 "$fixture"
           cp examples/manuscript/{recipe.json,manuscript.md} "$fixture/"
           docker run --rm --network none -v "$fixture:/workspace" recto-manuscript-test compile recipe.json
+          sudo chown -R "$(id -u):$(id -g)" "$fixture/edition"
           python3 scripts/check-manuscript-edition.py "$fixture/edition"
       - uses: actions/upload-artifact@v4
         with:
