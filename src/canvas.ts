@@ -1353,6 +1353,10 @@ export class SpreadCanvas {
     if (e.ctrlKey || e.metaKey) {
       const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
       stateManager.setZoom(state.zoom * zoomFactor);
+    } else if (e.shiftKey && !e.deltaX) {
+      // Shift turns a mouse wheel sideways, as in InDesign. Browsers that already report it as
+      // horizontal scrolling send deltaX, handled below.
+      stateManager.setPan(state.panX - e.deltaY, state.panY);
     } else {
       stateManager.setPan(state.panX - e.deltaX, state.panY - e.deltaY);
     }

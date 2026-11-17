@@ -282,3 +282,29 @@ test('types a tab character instead of leaving the frame', async ({ page }) => {
   expect(text.slice(at, at + 1)).toBe('\t');
   expect(text.replace('\t', '')).toBe(`${HEADING}\n${BODY}\n${QUOTE}`);
 });
+
+test('scrolls the page sideways with Shift and the mouse wheel, also while editing', async ({ page }) => {
+  await openStyledProject(page);
+  const pan = () => page.evaluate(() => {
+    const { panX, panY } = (window as any).recto.stateManager.getState();
+    return { panX: Math.round(panX), panY: Math.round(panY) };
+  });
+  const point = await bodyLine(page);
+  await page.mouse.move(point.x, point.y);
+  const start = await pan();
+  await page.keyboard.down('Shift');
+  await page.mouse.wheel(0, 120);
+  await page.keyboard.up('Shift');
+  await expect.poll(pan).toEqual({ panX: start.panX - 120, panY: start.panY });
+
+  // While typing in a frame the editor stays open and its caret moves with the page.
+  const moved = await bodyLine(page);
+  await page.mouse.dblclick(moved.x, moved.y);
+  await expect(page.locator('.canvas-inline-editor')).toBeFocused();
+  const before = (await caret(page))!;
+  await page.keyboard.down('Shift');
+  await page.mouse.wheel(0, 80);
+  await page.keyboard.up('Shift');
+  await expect.poll(async () => Math.round(before.x - (await caret(page))!.x)).toBe(80);
+  await expect(page.locator('.canvas-inline-editor')).toBeFocused();
+});
