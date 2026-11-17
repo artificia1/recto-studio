@@ -52,7 +52,15 @@ Build the standalone Rust executable with
 Run `recto-native inspect publication.recto` for source-file inventory.
 Use `recto-native mcp --workspace <folder>` for read-only inspection over
 stdio. It exposes `recto_inspect_publication` for saved spreads, pages, and
-element counts. The Node entry point above serves proofs, edits, and exports.
+element counts, and `recto_plan_imposition` for printer-order sheet maps.
+The Node entry point above serves proofs, edits, and exports.
+
+Both servers accept a page count, trim dimensions, binding mode, and optional
+signature size or creep in `recto_plan_imposition`. Walk `nextOffset` for
+long jobs. With write access, `recto_export_imposition_proof` takes a saved
+project and its revision and writes a fresh PDF. Mini-zine mode places eight
+panels on one printed side. The sheet is four panel widths by two panel
+heights, plus an optional margin for marks.
 
 ## Try it on a publication
 
@@ -128,6 +136,13 @@ every region passed and can return an overlay for the first failure. It counts
 pixels where any RGB channel differs by more than 16 out of 255. It reports
 physical size changes separately and uses zero changed pixels as the default
 allowance.
+
+Save a review for future editions with `recto_save_proof_contract`. The
+`.rectoproof` file pins the approved PDF and its named regions. Use
+`recto_run_proof_contract` with the next edition, optionally supplying a new
+page or region for checks that moved. Failed comparisons include the changed
+pixel bounds within the rendered crop, measured from its top left with
+exclusive right and bottom edges.
 
 **Visual feedback.** Call `recto_render_preview_image` with a project and
 revision, or with a `planId`. Choose a one-based `page` or `spread`, or omit

@@ -87,6 +87,18 @@ describe('Recto publishing MCP over stdio', () => {
     });
   }, timeout);
 
+  it('plans and exports a mini-zine proof without replacing its source or an existing PDF', async () => {
+    const settings = { bindingMode: 'mini-zine-8page' };
+    expect(await result('recto_plan_imposition', { ...settings, pageCount: 8, pageWidthMm: 55, pageHeightMm: 75 }, readClient))
+      .toMatchObject({ totalSides: 1, sheetWidthMm: 220, sheetHeightMm: 150, sheetSides: [{ panels: [5, 4, 3, 2, 6, 7, 8, 1] }] });
+    expect((await readClient.listTools()).tools.map(tool => tool.name)).not.toContain('recto_export_imposition_proof');
+    const args = { ...settings, project: 'original.recto', revision, output: 'mini-zine-proof.pdf', includeCutMarks: false };
+    expect(await result('recto_export_imposition_proof', args)).toMatchObject({ totalSides: 1, sourceRevision: revision, blankPagesAdded: 7 });
+    expect((await PDFDocument.load(await readFile(files(args.output)))).getPageCount()).toBe(1);
+    expect((await call('recto_export_imposition_proof', args)).isError).toBe(true);
+    expect(await readFile(files('original.recto'), 'utf8')).toBe(untouched);
+  }, timeout);
+
   it('compiles a declarative manuscript and a repeatable visual proof without overwrites', async () => {
     await writeFile(files('manuscript.md'), '# A printer proof\n\nManuscript with *emphasis* and a note.[^a]\n\n[^a]: In the harbor.');
     const args = { manuscript: 'manuscript.md', output: 'compiled-manuscript', pagesPerSignature: 4, targetSignatures: 1, sheetProof: true,
@@ -169,11 +181,22 @@ describe('Recto publishing MCP over stdio', () => {
     const review = await call('recto_verify_pdf_proof_regions', checks, readClient);
     expect(review.isError, JSON.stringify(review.content)).not.toBe(true);
     expect(review.structuredContent).toMatchObject({ passed: false, approvedRevision: sha256,
-      rows: [{ status: 'passed', changedFraction: 0 }, { status: 'changed' }, { status: 'geometry-changed', changedFraction: null }],
+      rows: [{ status: 'passed', changedFraction: 0, changedBounds: null },
+        { status: 'changed', changedBounds: { left: expect.any(Number), top: expect.any(Number), right: expect.any(Number), bottom: expect.any(Number) } },
+        { status: 'geometry-changed', changedFraction: null }],
       preview: { name: 'Missing legal notice', kind: 'diff' },
     });
     expect(review.content.some(block => block.type === 'image')).toBe(true);
     expect((await call('recto_verify_pdf_proof_regions', { ...checks, approvedRevision: '0'.repeat(64) }, readClient)).isError).toBe(true);
+    const contract = 'approved.regions.rectoproof';
+    const saved = await result('recto_save_proof_contract', { output: contract, approvedPdf: pdfPath, approvedRevision: sha256,
+      checks: [{ name: 'Notice', approved: { page: 2, bounds }, current: { page: 2, bounds } }], maxEdge: 300 });
+    const replay = { contract, contractRevision: saved.sha256, currentPdf: 'region-revised.pdf' };
+    expect(await result('recto_run_proof_contract', replay, readClient)).toMatchObject({ passed: false });
+    expect(await result('recto_run_proof_contract', { ...replay, moves: [{ name: 'Notice', current: { page: 1, bounds } }] }, readClient))
+      .toMatchObject({ passed: true, contractRevision: saved.sha256, rows: [{ changedPixels: 0 }] });
+    expect((await call('recto_run_proof_contract', { ...replay, contractRevision: '0'.repeat(64) }, readClient)).isError).toBe(true);
+    expect((await call('recto_run_proof_contract', { ...replay, moves: [{ name: 'other', current: { page: 1, bounds } }] }, readClient)).isError).toBe(true);
   }, timeout);
 
   it('previews rich text, refuses stale and overwriting drafts, then compiles the saved copy', async () => {

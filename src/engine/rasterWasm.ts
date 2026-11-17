@@ -6,6 +6,7 @@ interface RasterExports {
   raster_table(): number;
   raster_run(mode: number, length: number, grayscale: number): number;
   raster_mark_diff?(length: number): number;
+  raster_proof_bounds?(length: number, width: number, first: number): number;
   layout_optimal_breaks?(count: number, widths: number, tolerance: number, hyphenCost: number): number;
   layout_place_line?(length: number): number;
   layout_table_rows?(count: number, frame: number, used: number, footer: number, padding: number, leading: number,
@@ -17,28 +18,37 @@ interface RasterExports {
   pdf_classic_footer?(offset: bigint): number;
   pdf_stream_xref?(count: number): number;
   pdf_object_stream?(count: number, length: number): number;
+  imposition_plan?(pages: number, mode: number, signature: number): number;
 }
 
-/** Mark corresponding RGBA tiles in place. Older packaged modules use the JS path. */
-export async function markProofPixels(before: Uint8ClampedArray, after: Uint8ClampedArray) {
-  if (before.length !== after.length || before.length % 4) throw new Error('Proof pixels must have matching RGBA dimensions.');
+export async function scanProofChanges(before: Uint8ClampedArray, after: Uint8ClampedArray, width: number) {
+  if (before.length !== after.length || !Number.isSafeInteger(width) || width <= 0 || before.length % (width * 4)) {
+    throw new Error('Proof pixels must have matching RGBA dimensions.');
+  }
   const engine = before.length >= 64 * 1024 ? await loadRasterWasm() : undefined;
   let changed = 0;
   let offset = 0;
-  if (engine?.raster_mark_diff) {
+  let left = Infinity, top = Infinity, right = 0, bottom = 0;
+  const extend = (x0: number, y0: number, x1: number, y1: number) => {
+    left = Math.min(left, x0); top = Math.min(top, y0);
+    right = Math.max(right, x1); bottom = Math.max(bottom, y1);
+  };
+  if (engine?.raster_proof_bounds) {
     const capacity = engine.raster_capacity();
     const memory = engine.memory.buffer;
     const input = new Uint8Array(memory, engine.raster_input(), capacity);
     const output = new Uint8Array(memory, engine.raster_output(), capacity);
+    const bounds = new DataView(memory, engine.raster_table(), 16);
     for (; offset < after.length;) {
       const end = Math.min(after.length, offset + capacity);
       input.set(before.subarray(offset, end));
       output.set(after.subarray(offset, end));
       let result;
-      try { result = engine.raster_mark_diff(end - offset); } catch { break; }
+      try { result = engine.raster_proof_bounds(end - offset, width, offset / 4); } catch { break; }
       if (result < 0 || result > (end - offset) / 4) break;
       after.set(output.subarray(0, end - offset), offset);
       changed += result;
+      if (result) extend(bounds.getUint32(0, true), bounds.getUint32(4, true), bounds.getUint32(8, true), bounds.getUint32(12, true));
       offset = end;
     }
   }
@@ -50,8 +60,14 @@ export async function markProofPixels(before: Uint8ClampedArray, after: Uint8Cla
     after[offset + 1] = 40;
     after[offset + 2] = 80;
     changed++;
+    const pixel = offset / 4, x = pixel % width, y = Math.floor(pixel / width);
+    extend(x, y, x + 1, y + 1);
   }
-  return changed;
+  return { changedPixels: changed, changedBounds: changed ? { left, top, right, bottom } : null };
+}
+
+export async function markProofPixels(before: Uint8ClampedArray, after: Uint8ClampedArray) {
+  return (await scanProofChanges(before, after, Math.max(1, before.length / 4))).changedPixels;
 }
 
 let initialized: Promise<RasterExports | undefined> | undefined;

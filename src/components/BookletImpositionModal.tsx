@@ -5,6 +5,7 @@
  */
 
 import { useState } from 'preact/hooks';
+import { savePublicationFile } from '../desktop';
 import { ProjectState } from '../types/index';
 import {
   calculateImpositionPlan,
@@ -27,6 +28,7 @@ export function BookletImpositionModal({ state, onClose }: BookletImpositionModa
   const [includeCutMarks, setIncludeCutMarks] = useState<boolean>(true);
   const [currentSideIndex, setCurrentSideIndex] = useState<number>(0);
   const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [exportError, setExportError] = useState('');
 
   const plan: ImpositionPlan = calculateImpositionPlan(state, {
     bindingMode,
@@ -36,11 +38,25 @@ export function BookletImpositionModal({ state, onClose }: BookletImpositionModa
   });
 
   const currentSide: ImpositionSheetSide = plan.sheetSides[currentSideIndex] || plan.sheetSides[0];
+  const isZine = !!currentSide.panels;
+  const canSetCreep = bindingMode === 'saddle-stitch' || bindingMode === 'perfect-bound';
+  const safeTitle = (state.settings.title || 'publication').toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+
+  async function saveSheetPlan() {
+    setExportError('');
+    try {
+      const contents = JSON.stringify({ format: 'recto-sheet-plan-v1', ...plan, includeCutMarks }, null, 2) + '\n';
+      await savePublicationFile(`${safeTitle}-sheet-plan.json`, new Blob([contents], { type: 'application/json' }), 'application/json');
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : 'Could not save the sheet plan.');
+    }
+  }
 
   const handleExport = async () => {
     try {
       setIsExporting(true);
-      const doc = await exportImposedBookletPdf(state, {
+      setExportError('');
+      const pdf = await exportImposedBookletPdf(state, {
         bindingMode,
         signatureSize,
         paperStockWeightGsm: paperWeightGsm,
@@ -48,11 +64,10 @@ export function BookletImpositionModal({ state, onClose }: BookletImpositionModa
         includeCutMarks,
       });
 
-      const safeTitle = (state.settings.title || 'publication').toLowerCase().replace(/[^a-z0-9_-]/g, '-');
-      doc.save(`${safeTitle}-imposed-booklet-${bindingMode}.pdf`);
+      await savePublicationFile(`${safeTitle}-imposed-booklet-${bindingMode}.pdf`, pdf.blob(), 'application/pdf');
     } catch (err) {
       console.error('Failed to export imposed booklet', err);
-      alert('Imposition export encountered an issue. Check console for details.');
+      setExportError(err instanceof Error ? err.message : 'Imposition export failed.');
     } finally {
       setIsExporting(false);
     }
@@ -60,12 +75,13 @@ export function BookletImpositionModal({ state, onClose }: BookletImpositionModa
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-dialog imposition-modal-dialog" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-dialog imposition-modal-dialog" role="dialog" aria-modal="true"
+        aria-labelledby="imposition-title" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div>
-            <h2 className="modal-title">Booklet Signature & Imposition Engine</h2>
+            <h2 className="modal-title" id="imposition-title">Booklet Imposition</h2>
             <div className="modal-subtitle">
-              Duplex printer spreads for saddle-stitch zines, chapbooks, and perfect-bound signatures
+              Set printer order, sheet size, and fold guides
             </div>
           </div>
           <button className="modal-close-btn" onClick={onClose} title="Close">
@@ -79,8 +95,9 @@ export function BookletImpositionModal({ state, onClose }: BookletImpositionModa
             <div className="imposition-section-title">Binding Configuration</div>
 
             <div className="imposition-field">
-              <label>Binding Mode</label>
+              <label htmlFor="imposition-binding">Binding Mode</label>
               <select
+                id="imposition-binding"
                 className="imposition-select"
                 value={bindingMode}
                 onChange={(e) => {
@@ -113,7 +130,7 @@ export function BookletImpositionModal({ state, onClose }: BookletImpositionModa
               </div>
             )}
 
-            <div className="imposition-field">
+            {canSetCreep && <><div className="imposition-field">
               <label>Paper Stock Weight</label>
               <select
                 className="imposition-select"
@@ -141,12 +158,12 @@ export function BookletImpositionModal({ state, onClose }: BookletImpositionModa
                 max="0.5"
                 className="imposition-input"
                 value={creepMm}
-                onInput={(e) => setCreepMm(parseFloat((e.target as HTMLInputElement).value) || 0)}
+                onInput={(e) => setCreepMm(Math.max(0, Math.min(0.5, parseFloat((e.target as HTMLInputElement).value) || 0)))}
               />
               <div className="imposition-field-hint">
                 Max calculated creep: {Math.round(plan.maxCreepMm * 100) / 100} mm at innermost sheet
               </div>
-            </div>
+            </div></>}
 
             <div className="imposition-checkbox-field">
               <label>
@@ -172,7 +189,7 @@ export function BookletImpositionModal({ state, onClose }: BookletImpositionModa
               </div>
               <div className="imposition-summary-row">
                 <span>Physical Sheets:</span>
-                <strong>{plan.sheetsCount} sheets ({plan.sheetsCount * 2} duplex passes)</strong>
+                <strong>{plan.sheetsCount} {plan.sheetsCount === 1 ? 'sheet' : 'sheets'} ({plan.sheetSides.length} printed {plan.sheetSides.length === 1 ? 'side' : 'sides'})</strong>
               </div>
               {plan.signaturesCount > 1 && (
                 <div className="imposition-summary-row">
@@ -218,7 +235,15 @@ export function BookletImpositionModal({ state, onClose }: BookletImpositionModa
             </div>
 
             {/* Imposition Sheet Canvas Graphic */}
-            <div className="imposition-sheet-canvas-container">
+            {isZine ? (
+              <div className="imposition-zine-grid" role="group" aria-label="Eight-panel mini-zine fold map">
+                {currentSide.panels!.map((page, index) => (
+                  <div className="imposition-zine-panel" key={index}>
+                    <span style={index < 4 ? { transform: 'rotate(180deg)' } : undefined}>{page ? `Page ${page}` : 'Blank'}</span>
+                  </div>
+                ))}
+              </div>
+            ) : <div className="imposition-sheet-canvas-container">
               <div className="imposition-sheet-frame">
                 {/* Left Imposed Page */}
                 <div className="imposition-page-card left-page">
@@ -294,24 +319,22 @@ export function BookletImpositionModal({ state, onClose }: BookletImpositionModa
                   </div>
                 </div>
               </div>
-            </div>
+            </div>}
 
             {/* Imposition Sheet Description Footer */}
             <div className="imposition-sheet-instruction">
-              <strong>Printing Instruction:</strong> Feed sheet {currentSide.sheetIndex + 1} duplex. Side 1 prints Pages [
-              {currentSide.side === 'front' ? currentSide.leftPageNumber : '...'} |{' '}
-              {currentSide.side === 'front' ? currentSide.rightPageNumber : '...'}]. Flip on short edge for Side 2.
+              {isZine ? 'Print single-sided at actual size. Fold on the dashed guides and slit the solid center segment.'
+                : 'Print a duplex test sheet at actual size and verify orientation and creep with your printer.'}
             </div>
           </div>
         </div>
 
         <div className="modal-footer">
           <div className="modal-footer-left">
-            <span className="footer-status-text">
-              Architecture verified: Zero-rounding drift duplex compilation.
-            </span>
+            {exportError && <span className="footer-status-text" role="alert">{exportError}</span>}
           </div>
           <div className="modal-footer-right">
+            <button className="action-btn" onClick={saveSheetPlan}>Save Sheet Plan</button>
             <button className="action-btn" onClick={onClose}>
               Cancel
             </button>

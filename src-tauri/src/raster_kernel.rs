@@ -16,17 +16,28 @@ pub fn apply_tone(rgba: &mut [u8], table: &[u8; 256], grayscale: bool) {
 
 #[cfg(any(target_arch = "wasm32", test))]
 pub fn mark_proof_difference(before: &[u8], after: &mut [u8]) -> usize {
+    mark_proof_region(before, after, 1, 0).0
+}
+
+pub fn mark_proof_region(before: &[u8], after: &mut [u8], width: usize, first: usize) -> (usize, [usize; 4]) {
     let mut changed = 0;
-    for (old, current) in before.chunks_exact(4).zip(after.chunks_exact_mut(4)) {
+    let mut bounds = [usize::MAX, usize::MAX, 0, 0];
+    for (index, (old, current)) in before.chunks_exact(4).zip(after.chunks_exact_mut(4)).enumerate() {
         if old[0].abs_diff(current[0]) > 16
             || old[1].abs_diff(current[1]) > 16
             || old[2].abs_diff(current[2]) > 16
         {
             current[..3].copy_from_slice(&[225, 40, 80]);
             changed += 1;
+            let pixel = first + index;
+            let (x, y) = (pixel % width, pixel / width);
+            bounds[0] = bounds[0].min(x);
+            bounds[1] = bounds[1].min(y);
+            bounds[2] = bounds[2].max(x + 1);
+            bounds[3] = bounds[3].max(y + 1);
         }
     }
-    changed
+    (changed, bounds)
 }
 
 /// Return whether the source has any non-opaque pixels while writing RGB.

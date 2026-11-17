@@ -15,6 +15,7 @@ export default defineConfig({
   },
   worker: { format: 'es' },
   build: {
+    sourcemap: false,
     manifest: true,
     rollupOptions: {
       external: [/^core-js/, /^node:/, '@resvg/resvg-js', 'canvg', 'html2canvas', 'dompurify'],

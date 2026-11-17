@@ -22,3 +22,6 @@ sha2 = "0.10"
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+strip = "debuginfo"

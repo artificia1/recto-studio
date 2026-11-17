@@ -28,6 +28,29 @@ test('loads and opens the editor without uncaught errors', async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test('shows the complete mini-zine fold map and downloads its imposed proof', async ({ page }) => {
+  const project = projectFixture();
+  project.settings.widthMm = 55;
+  project.settings.heightMm = 75;
+  await importProject(page, project);
+  await menuCommand(page, 'Plan printer sheets for booklets, signatures, and mini-zines');
+  const dialog = page.getByRole('dialog', { name: 'Booklet Imposition' });
+  await dialog.getByLabel('Binding Mode').selectOption('mini-zine-8page');
+  const map = dialog.getByRole('group', { name: 'Eight-panel mini-zine fold map' });
+  await expect(map.locator('.imposition-zine-panel')).toHaveCount(8);
+  await expect(dialog.getByText('220 × 150 mm', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('1 sheet (1 printed side)', { exact: true })).toBeVisible();
+  const sheetPlan = page.waitForEvent('download');
+  await dialog.getByRole('button', { name: 'Save Sheet Plan' }).click();
+  const planFile = await (await sheetPlan).path();
+  expect(JSON.parse(await readFile(planFile!, 'utf8'))).toMatchObject({
+    format: 'recto-sheet-plan-v1', sheetsCount: 1, sheetSides: [{ panels: [null, null, null, null, null, null, null, 1] }],
+  });
+  const downloaded = page.waitForEvent('download');
+  await dialog.getByRole('button', { name: 'Export Imposed Booklet PDF' }).click();
+  expect((await downloaded).suggestedFilename()).toMatch(/mini-zine-8page\.pdf$/);
+});
+
 test('renders code previews as images and handles a QR payload beyond capacity', async ({ page }) => {
   await importProject(page);
   const file = page.getByTitle('File Management, Project IO, and Document Imports');

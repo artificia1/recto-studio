@@ -14,23 +14,36 @@ interface ProofCheck {
   maxChangedFraction: number;
 }
 
+function uniqueChecks(checks: ProofCheck[]) {
+  if (new Set(checks.map(check => check.name)).size !== checks.length) throw new Error('Use a unique name for each protected region.');
+}
+
+async function openEdition(workspace: PublishingWorkspace, file: string, expected: string | undefined, edition: string) {
+  const bytes = await workspace.read(file, ['.pdf'], limits.pdf);
+  const revision = sha256(bytes);
+  if (expected && expected !== revision) throw new Error(`The ${edition} PDF has changed. Confirm its revision again.`);
+  return { revision, proof: await openProof(bytes) };
+}
+
+export async function validateProofContract(workspace: PublishingWorkspace, args: {
+  approvedPdf: string; approvedRevision: string; checks: ProofCheck[];
+}) {
+  uniqueChecks(args.checks);
+  const approved = await openEdition(workspace, args.approvedPdf, args.approvedRevision, 'approved');
+  try {
+    if (args.checks.some(check => check.approved.page > approved.proof.length)) throw new Error('A check references a missing page in the approved PDF.');
+  } finally { await approved.proof.destroy(); }
+}
+
 export async function verifyProofRegions(workspace: PublishingWorkspace, args: {
   approvedPdf: string; approvedRevision: string; currentPdf: string; currentRevision?: string;
   checks: ProofCheck[]; maxEdge: number;
 }) {
-  if (new Set(args.checks.map(check => check.name)).size !== args.checks.length) {
-    throw new Error('Use a unique name for each protected region.');
-  }
-  async function openEdition(file: string, expected: string | undefined, edition: string) {
-    const bytes = await workspace.read(file, ['.pdf'], limits.pdf);
-    const revision = sha256(bytes);
-    if (expected && expected !== revision) throw new Error(`The ${edition} PDF has changed. Confirm its revision again.`);
-    return { revision, proof: await openProof(bytes) };
-  }
-  const approved = await openEdition(args.approvedPdf, args.approvedRevision, 'approved');
+  uniqueChecks(args.checks);
+  const approved = await openEdition(workspace, args.approvedPdf, args.approvedRevision, 'approved');
   let current: Awaited<ReturnType<typeof openEdition>> | undefined;
   try {
-    current = await openEdition(args.currentPdf, args.currentRevision, 'current');
+    current = await openEdition(workspace, args.currentPdf, args.currentRevision, 'current');
     const rows = [];
     let preview: { name: string; kind: 'diff' | 'current'; bytes: Buffer } | undefined;
     for (const check of args.checks) {
@@ -42,6 +55,8 @@ export async function verifyProofRegions(workspace: PublishingWorkspace, args: {
       const status = changedFraction === null ? 'geometry-changed' :
         changedFraction > check.maxChangedFraction ? 'changed' : 'passed';
       rows.push({ ...check, status, changedFraction, changedPixels: diff?.comparable ? diff.changedPixels : null,
+        changedBounds: diff?.comparable ? diff.changedBounds : null,
+        renderedPixels: { width: after.width, height: after.height },
         approvedSizePt: { width: before.widthPt, height: before.heightPt },
         currentSizePt: { width: after.widthPt, height: after.heightPt } });
       if (status !== 'passed' && !preview) {

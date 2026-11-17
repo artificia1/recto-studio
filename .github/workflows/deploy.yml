@@ -64,6 +64,8 @@ jobs:
         run: npm run build
       - name: Check startup bundle budget
         run: npm run analyze:bundle
+      - name: Check production bundle excludes standalone source maps
+        run: node scripts/check-release-assets.mjs
       - name: Install browser test runtime
         run: npx playwright install --with-deps chromium
       - name: Run browser workflows
@@ -91,6 +93,8 @@ jobs:
             test-results/
             playwright-report/
           retention-days: 7
+      - name: Record source attribution for every tracked file
+        run: node scripts/source-provenance.mjs > dist/source-provenance.json
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         if: github.event_name != 'pull_request'

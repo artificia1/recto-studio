@@ -72,14 +72,21 @@ pub fn serve(root: &Dir, mut input: impl BufRead, mut output: impl Write) -> io:
                         "server/discover" => Err((-32601, "Method not found")),
                         "ping" => Ok(json!({})),
                         _ if !negotiated => Err((-32002, "Server has not initialized")),
-                        "tools/list" => Ok(json!({ "tools": [descriptor()] })),
-                        "tools/call" if params["name"].as_str() == Some(TOOL) => {
-                            Ok(match inspect(root, &params["arguments"]) {
+                        "tools/list" => Ok(json!({ "tools": [descriptor(), crate::imposition::descriptor()] })),
+                        "tools/call" => {
+                            let result = match params["name"].as_str() {
+                                Some(TOOL) => Some(inspect(root, &params["arguments"])),
+                                Some(crate::imposition::TOOL) => Some(crate::imposition::run(&params["arguments"])),
+                                _ => None,
+                            };
+                            match result {
+                                None => Err((-32602, "Unknown tool")),
+                                Some(result) => Ok(match result {
                                 Ok(value) => json!({ "structuredContent": value, "content": [{ "type": "text", "text": value.to_string() }] }),
                                 Err(message) => json!({ "isError": true, "content": [{ "type": "text", "text": message }] }),
-                            })
+                                }),
+                            }
                         }
-                        "tools/call" => Err((-32602, "Unknown tool")),
                         _ => Err((-32601, "Method not found")),
                     };
                     match result {

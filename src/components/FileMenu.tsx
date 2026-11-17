@@ -274,7 +274,7 @@ export default function FileMenu({
           onClose();
           handleOpenImposition();
         }}
-        title="Duplex booklet imposition for saddle-stitch and multi-signature print"
+        title="Plan printer sheets for booklets, signatures, and mini-zines"
       >
         <span>Booklet Imposition Studio...</span>
       </button>

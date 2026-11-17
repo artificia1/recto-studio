@@ -25,6 +25,20 @@ const proofBounds = z.strictObject({
   right: z.number().min(0).max(1), bottom: z.number().min(0).max(1),
 }).refine(box => box.left < box.right && box.top < box.bottom, 'The region must have positive width and height.');
 const proofSelection = z.strictObject({ page: proofPage, bounds: proofBounds });
+const proofCheck = z.strictObject({
+  name: z.string().trim().min(1).max(96), approved: proofSelection, current: proofSelection,
+  maxChangedFraction: z.number().min(0).max(1).default(0),
+});
+const proofRecipe = {
+  approvedPdf: file, approvedRevision: revision, checks: z.array(proofCheck).min(1).max(12),
+  maxEdge: z.int().min(256).max(1200).default(800),
+};
+const proofContract = z.strictObject({ format: z.literal('recto-proof-contract-v1'), ...proofRecipe });
+const impositionSettings = {
+  bindingMode: z.enum(['saddle-stitch', 'perfect-bound', 'consecutive-2up', 'mini-zine-8page']).default('saddle-stitch'),
+  signatureSize: z.union([z.literal(4), z.literal(8), z.literal(16), z.literal(32)]).optional(),
+  creepMmPerSheet: z.number().min(0).max(0.5).default(0.08),
+};
 
 function createPublishingServer(workspace: PublishingWorkspace) {
   const server = new McpServer({ name: 'recto-publishing', version: pkg.version }, {
@@ -59,6 +73,23 @@ function createPublishingServer(workspace: PublishingWorkspace) {
     });
   }
 
+  tool('recto_plan_imposition', 'Generate a paginated printer-order sheet map for a booklet, a 2-up proof, or an eight-panel mini-zine.', z.strictObject({
+    pageCount: z.int().min(1).max(4096),
+    pageWidthMm: z.number().min(1).max(2000).default(210), pageHeightMm: z.number().min(1).max(2000).default(297),
+    ...impositionSettings, ...pagination,
+  }), async args => {
+    const [{ planImposition }] = await Promise.all([
+      import('../../src/export/impositionEngine'),
+      import('../../src/engine/rasterWasm').then(({ loadRasterWasm }) => loadRasterWasm()),
+    ]);
+    const { sheetSides, ...summary } = planImposition(args.pageCount, args.pageWidthMm, args.pageHeightMm, {
+      bindingMode: args.bindingMode, signatureSize: args.signatureSize,
+      creepMmPerSheet: args.creepMmPerSheet,
+    });
+    return { ...summary, totalSides: sheetSides.length, sheetSides: sheetSides.slice(args.offset, args.offset + args.limit),
+      nextOffset: args.offset + args.limit < sheetSides.length ? args.offset + args.limit : null };
+  });
+
   tool('recto_plan_publication', 'Compose a Markdown or DOCX manuscript to estimate pagination, signatures, and spine before exporting. This does not write files.', publicationPlan, async args => {
     const { planPublication } = await import('../compilePublication');
     return planPublication(workspace, args);
@@ -90,6 +121,7 @@ function createPublishingServer(workspace: PublishingWorkspace) {
     return { before: { sha256: sha256(before), page: args.beforePage, width: oldProof.width, height: oldProof.height },
       after: { sha256: sha256(after), page: args.afterPage, width: newProof.width, height: newProof.height },
       comparable: diff.comparable, changedPixels: diff.comparable ? diff.changedPixels : null,
+      changedBounds: diff.comparable ? diff.changedBounds : null,
       changedFraction: diff.comparable ? diff.changedPixels / (newProof.width * newProof.height) : null,
       preview: diff.comparable ? 'difference' : 'current', previewIncluded: included };
   });
@@ -147,17 +179,31 @@ function createPublishingServer(workspace: PublishingWorkspace) {
   });
 
   tool('recto_verify_pdf_proof_regions', 'Check approval-critical regions against a pinned PDF revision. Compare the same marks or copy across independently selected physical pages and return the first visual failure.', z.strictObject({
-    approvedPdf: file, approvedRevision: revision, currentPdf: file, currentRevision: revision.optional(),
-    checks: z.array(z.strictObject({
-      name: z.string().trim().min(1).max(96), approved: proofSelection, current: proofSelection,
-      maxChangedFraction: z.number().min(0).max(1).default(0),
-    })).min(1).max(12),
-    maxEdge: z.int().min(256).max(1200).default(800),
+    ...proofRecipe, currentPdf: file, currentRevision: revision.optional(),
   }), async (args, images) => {
     const { verifyProofRegions } = await import('./proofChecks');
     const result = await verifyProofRegions(workspace, args);
     if (result.image) images.push({ type: 'image', mimeType: 'image/png', data: result.image.toString('base64') });
     return result.report;
+  });
+
+  tool('recto_run_proof_contract', 'Replay approved visual checks against a new PDF. Supply verified page or region moves by check name.', z.strictObject({
+    contract: file, contractRevision: revision.optional(), currentPdf: file, currentRevision: revision.optional(),
+    moves: z.array(z.strictObject({ name: z.string().trim().min(1).max(96), current: proofSelection })).max(12).default([]),
+  }), async (args, images) => {
+    const bytes = await workspace.read(args.contract, ['.rectoproof'], 64 * 1024);
+    const contractRevision = sha256(bytes);
+    if (args.contractRevision && args.contractRevision !== contractRevision) throw new Error('The proof contract changed. Read the approved contract again.');
+    const contract = proofContract.parse(JSON.parse(bytes.toString('utf8')));
+    const moves = new Map(args.moves.map(move => [move.name, move.current]));
+    if (moves.size !== args.moves.length || [...moves.keys()].some(name => !contract.checks.some(check => check.name === name))) {
+      throw new Error('Each move must name a different check in the saved proof contract.');
+    }
+    const checks = contract.checks.map(check => ({ ...check, current: moves.get(check.name) ?? check.current }));
+    const { verifyProofRegions } = await import('./proofChecks');
+    const result = await verifyProofRegions(workspace, { ...contract, checks, currentPdf: args.currentPdf, currentRevision: args.currentRevision });
+    if (result.image) images.push({ type: 'image', mimeType: 'image/png', data: result.image.toString('base64') });
+    return { ...result.report, contractRevision };
   });
 
   tool('recto_compile_publication', 'Compile a Markdown or DOCX manuscript into an editable book, reader-order PDF, and PNG proof. Optionally budget offset signatures and compare a prior PDF.', publicationRecipe, async (args, images) => {
@@ -382,12 +428,36 @@ function createPublishingServer(workspace: PublishingWorkspace) {
       'book archive inspection, approved proof comparison, interior PDF and delivery ZIP', 'visual proof images', 'shared desktop canvas snapshots',
       'desktop edit proposals', 'frame geometry and style application', 'image levels and curves', 'vector decorations',
       'table merging, row splitting and continuation pages', 'manuscript layout planning and compilation',
-      'delivery PDF inspection', 'PDF proof comparison and text location', 'PDF region previews and approval checks', 'PDF edition page matching', 'staged draft visual review'],
+      'delivery PDF inspection', 'PDF proof comparison and text location', 'PDF region previews and approval checks', 'PDF edition page matching', 'staged draft visual review',
+      'printer sheet planning and imposed PDF proofs', 'reusable visual proof contracts'],
     editorOnly: ['live canvas gestures', 'continuous screen sharing', 'live collaboration', 'native dialogs and updater',
       'freehand drawing', 'advanced style authoring'],
   }));
 
   if (workspace.writable) {
+    tool('recto_save_proof_contract', 'Save validated visual checks and a pinned approved PDF revision as a reusable workspace .rectoproof file.', z.strictObject({
+      output: file, ...proofRecipe,
+    }), async ({ output, ...recipe }) => {
+      await workspace.checkOutput(output, '.rectoproof');
+      const { validateProofContract } = await import('./proofChecks');
+      await validateProofContract(workspace, recipe);
+      return workspace.write(output, '.rectoproof', Buffer.from(JSON.stringify({ format: 'recto-proof-contract-v1', ...recipe }, null, 2) + '\n'));
+    }, true);
+
+    tool('recto_export_imposition_proof', 'Write a printer-order proof from a pinned saved publication, including mini-zine panels when selected.', z.strictObject({
+      project: file, revision, output: file, includeCutMarks: z.boolean().default(true), ...impositionSettings,
+    }), async args => {
+      await workspace.checkOutput(args.output, '.pdf');
+      const project = await loadProject(workspace, args.project, args.revision);
+      const { calculateImpositionPlan, exportImposedBookletPdf } = await import('../../src/export/impositionEngine');
+      const proof = await withPublication(project, source => exportImposedBookletPdf(source, args));
+      if (proof.size > limits.pdf) throw new Error('The sheet proof exceeds the PDF size limit.');
+      const { sheetSides, ...summary } = calculateImpositionPlan(project.source, args);
+      await confirmProjectRevision(workspace, args.project, args.revision);
+      return { ...await workspace.write(args.output, '.pdf', proof.parts()), sourceRevision: project.revision,
+        ...summary, totalSides: sheetSides.length };
+    }, true);
+
     tool('recto_export_book_package', 'Export an approved book delivery recipe to a ZIP with interior PDF, cover PDF, EPUB, and report. Requires the current book revision and a cover approved in Recto.', z.strictObject({
       book: file, revision, output: file,
     }), async args => {

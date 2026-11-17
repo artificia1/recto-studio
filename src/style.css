@@ -1884,6 +1884,24 @@ kbd {
   overflow: hidden;
 }
 
+.imposition-zine-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  min-height: 170px;
+  margin: 16px 0;
+  border: 1px solid var(--border-color);
+  background: var(--bg-input);
+}
+
+.imposition-zine-panel {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  padding: 12px 4px;
+  border: 1px dashed var(--border-light);
+}
+
 .imposition-page-card {
   flex: 1;
   display: flex;

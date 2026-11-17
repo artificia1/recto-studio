@@ -30,7 +30,12 @@ try {
   const timeout = 30_000;
   await client.connect(new StdioClientTransport({ command: binary, args: ['mcp', '--workspace', root] }), { timeout });
   const list = await client.listTools();
-  assert.deepEqual(list.tools.map(tool => tool.name), ['recto_inspect_publication']);
+  assert.deepEqual(list.tools.map(tool => tool.name), ['recto_inspect_publication', 'recto_plan_imposition']);
+  const sheets = await client.callTool({ name: 'recto_plan_imposition',
+    arguments: { pageCount: 8, pageWidthMm: 55, pageHeightMm: 75, bindingMode: 'mini-zine-8page' } }, { timeout });
+  assert.equal(sheets.structuredContent?.totalSides, 1);
+  assert.equal(sheets.structuredContent?.sheetWidthMm, 220);
+  assert.deepEqual(sheets.structuredContent?.sheetSides[0].panels, [5, 4, 3, 2, 6, 7, 8, 1]);
   async function inspect(args) {
     return client.callTool({ name: 'recto_inspect_publication', arguments: args }, { timeout });
   }

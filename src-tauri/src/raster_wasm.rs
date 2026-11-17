@@ -3,6 +3,7 @@ mod layout_kernel;
 mod pdf_kernel;
 mod story_geometry;
 mod pagination_kernel;
+mod imposition_kernel;
 
 use std::ptr::addr_of_mut;
 use std::slice;
@@ -71,6 +72,24 @@ pub extern "C" fn layout_note_columns(count: usize, columns: u32, capacity: u32)
     let header = [((cursor - 16) / 24) as u32, carry.len() as u32, max_rows, unplaced];
     for (bytes, value) in output[..16].chunks_exact_mut(4).zip(header) { bytes.copy_from_slice(&value.to_le_bytes()); }
     end as i32
+}
+
+#[no_mangle]
+pub extern "C" fn imposition_plan(pages: u32, mode: u32, signature: u32) -> usize {
+    let Some(plan) = imposition_kernel::plan(pages, mode, signature) else { return 0; };
+    let count = plan.side_count() as usize;
+    let output = unsafe { slice::from_raw_parts_mut(raster_output(), 20 + count * 48) };
+    for (field, value) in output[..20].chunks_exact_mut(4).zip([plan.pages, plan.padded, plan.sheets, plan.signature_size, plan.signatures]) {
+        field.copy_from_slice(&value.to_le_bytes());
+    }
+    for (index, record) in output[20..].chunks_exact_mut(48).enumerate() {
+        let Some(side) = plan.side(index as u32) else { return 0; };
+        let fields = [side.sheet, u32::from(side.back), side.signature, side.creep_steps];
+        for (field, value) in record.chunks_exact_mut(4).zip(fields.into_iter().chain(side.panels)) {
+            field.copy_from_slice(&value.to_le_bytes());
+        }
+    }
+    count
 }
 
 #[no_mangle]
@@ -201,6 +220,19 @@ pub extern "C" fn raster_mark_diff(length: usize) -> usize {
     let before = unsafe { slice::from_raw_parts(raster_input(), length) };
     let after = unsafe { slice::from_raw_parts_mut(raster_output(), length) };
     raster_kernel::mark_proof_difference(before, after)
+}
+
+#[no_mangle]
+pub extern "C" fn raster_proof_bounds(length: usize, width: usize, first: usize) -> usize {
+    if length > TILE_BYTES || length % 4 != 0 || width == 0 || first.checked_add(length / 4).is_none() { return usize::MAX; }
+    let before = unsafe { slice::from_raw_parts(raster_input(), length) };
+    let after = unsafe { slice::from_raw_parts_mut(raster_output(), length) };
+    let metadata = unsafe { slice::from_raw_parts_mut(raster_table(), 16) };
+    let (changed, bounds) = raster_kernel::mark_proof_region(before, after, width, first);
+    for (field, value) in metadata.chunks_exact_mut(4).zip(bounds) {
+        field.copy_from_slice(&(value as u32).to_le_bytes());
+    }
+    changed
 }
 
 #[no_mangle]

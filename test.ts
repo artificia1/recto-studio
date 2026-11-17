@@ -18,7 +18,7 @@ import { packageDocument } from './src/packageExport';
 import { fontManager } from './src/fontManager';
 import { hyphenateWord } from './src/engine/hyphenation';
 import { KnuthPlassComposer } from './src/engine/knuthPlass';
-import { harfbuzzEngine } from './src/engine/shaper';
+import { layoutKernels } from './src/engine/layoutRuntime';
 import { psdEngine } from './src/engine/psdParser';
 import { writePsdBuffer } from 'ag-psd';
 import { colorToCmyk } from './src/export/pdfExport';
@@ -2567,23 +2567,22 @@ const brokenLines = composer.breakLines(items, 150);
 assert(brokenLines.length > 1, 'DAG shortest-path composer must produce balanced lines');
 console.log('✓ Knuth-Plass Global Paragraph Composer & Liang Hyphenation verified.');
 
-// --- Suite 39: HarfBuzz WASM Complex Script & OpenType Shaper ---
-console.log('\n--- Suite 39: HarfBuzz WASM Complex Script & OpenType Shaper ---');
+// --- Suite 39: Rust OpenType shaping ---
+console.log('\n--- Suite 39: Rust OpenType shaping ---');
+const latinFamily = await fontManager.registerFontBuffer('OpenSans-Regular.ttf',
+  fs.readFileSync(new URL('./tests/fixtures/fonts/OpenSans-Regular.ttf', import.meta.url)));
+const latinResult = layoutKernels?.shapeFont(fontManager.getFont(latinFamily)!, 'Recto Studio');
+assert(latinResult && latinResult.glyphs.length > 0, 'Rust must shape Latin text into positioned glyphs');
+assert(latinResult.glyphs[0].id > 0, 'Shaped glyph must contain a valid glyph ID');
+assert(latinResult.glyphs[0].path.commands.length > 0, 'Shaped glyph must have a vector outline');
 const fontPath = 'C:/Windows/Fonts/arial.ttf';
 if (fs.existsSync(fontPath)) {
-  const fontBuffer = fs.readFileSync(fontPath);
-  const latinResult = await harfbuzzEngine.shape(fontBuffer, 'Recto Studio');
-  assert(latinResult.glyphs.length > 0, 'HarfBuzz must shape Latin text into positioned glyphs');
-  assert(latinResult.glyphs[0].glyphId > 0, 'Shaped glyph must contain valid glyph ID');
-  assert(latinResult.glyphs[0].svgPath.length > 0, 'Shaped glyph must have extracted vector SVG outline');
-
-  const arabicResult = await harfbuzzEngine.shape(fontBuffer, 'مرحبا');
-  assert(arabicResult.glyphs.length > 0, 'HarfBuzz must shape Arabic text');
-  assert.strictEqual(arabicResult.direction, 'rtl', 'HarfBuzz must recognize RTL direction for Arabic script');
-  console.log('✓ HarfBuzz WASM Complex Script & OpenType Shaper verified.');
-} else {
-  console.log('✓ HarfBuzz WASM Complex Script & OpenType Shaper verified (mocked font environment).');
+  const arabicFamily = await fontManager.registerFontBuffer('arial.ttf', fs.readFileSync(fontPath));
+  const arabicResult = layoutKernels?.shapeFont(fontManager.getFont(arabicFamily)!, 'مرحبا');
+  assert(arabicResult && arabicResult.glyphs.every(glyph => glyph.id > 0), 'Rust must shape Arabic text');
+  assert.match(arabicResult.logical?.join('') ?? '', /^ا.*م$/u, 'Arabic glyphs must follow right-to-left visual order');
 }
+console.log('✓ Rust OpenType shaping verified.');
 
 // --- Suite 40: Native Multi-Layer Adobe Photoshop (.psd) Ingestion ---
 console.log('\n--- Suite 40: Native Multi-Layer Adobe Photoshop (.psd) Ingestion ---');
@@ -3506,7 +3505,8 @@ const testState = stateManager.getState();
 const miniZinePlan = calculateImpositionPlan(testState, { bindingMode: 'mini-zine-8page' });
 assert.strictEqual(miniZinePlan.bindingMode, 'mini-zine-8page');
 assert.strictEqual(miniZinePlan.signatureSizePages, 8);
-assert(miniZinePlan.sheetSides.length >= 2, 'Mini-Zine plan must have front and back sheet sides');
+assert.strictEqual(miniZinePlan.sheetSides.length, miniZinePlan.sheetsCount, 'Mini-zines print on one side per sheet');
+assert(miniZinePlan.sheetSides.every(side => side.panels?.length === 8), 'Each mini-zine sheet includes eight panels');
 
 // 3. Specialty Finish Layers (Dieline, Crease, Spot UV, Foil)
 const dielineLayer = stateManager.addFinishingLayer('dieline');

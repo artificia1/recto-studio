@@ -1,5 +1,6 @@
 mod mcp;
 mod project;
+mod imposition;
 
 use cap_std::{ambient_authority, fs::Dir};
 use std::{env, fs::File, io, path::Path, process::ExitCode};

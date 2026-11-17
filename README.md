@@ -106,6 +106,7 @@ over, which checks run automatically, and what needs review before production.
 - [Collaboration](COLLABORATION.md) · [Scripting](SCRIPTING.md)
 - [Desktop installation](DESKTOP.md) · [Performance](PERFORMANCE.md)
 - [Local publishing automation](PUBLISHING_AUTOMATION.md)
+- [Source provenance](SOURCE_PROVENANCE.md)
 
 ## Upcoming work
 

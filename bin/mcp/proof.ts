@@ -1,4 +1,4 @@
-import { markProofPixels } from '../../src/engine/rasterWasm';
+import { scanProofChanges } from '../../src/engine/rasterWasm';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import type { ProjectState } from '../../src/types';
@@ -57,9 +57,9 @@ export async function visualDiff(before: Awaited<ReturnType<typeof buildProof>>,
   const old = context.getImageData(0, 0, after.width, after.height);
   context.drawImage(await loadImage(after.bytes), 0, 0);
   const current = context.getImageData(0, 0, after.width, after.height);
-  const changed = await markProofPixels(old.data, current.data);
+  const diff = await scanProofChanges(old.data, current.data, after.width);
   context.putImageData(current, 0, 0);
-  return { comparable: true as const, changedPixels: changed, bytes: canvas.toBuffer('image/png') };
+  return { comparable: true as const, ...diff, bytes: canvas.toBuffer('image/png') };
 }
 
 export async function locatePdfProofText(source: Uint8Array, query: string, matchCase: boolean, startPage: number, pageLimit: number) {
