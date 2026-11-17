@@ -23,6 +23,9 @@ const styles = `<Styles>
     <ParagraphStyle Self="ParagraphStyle/Subtitle" Name="Подзаголовок" FontStyle="Bold Italic" PointSize="13">
       <Properties><BasedOn type="string">ParagraphStyle/Story</BasedOn></Properties>
     </ParagraphStyle>
+    <ParagraphStyle Self="ParagraphStyle/Hebrew" Name="Text Hebrew" Justification="RightJustified">
+      <Properties><BasedOn type="string">$ID/[No paragraph style]</BasedOn></Properties>
+    </ParagraphStyle>
     <ParagraphStyle Self="ParagraphStyle/Gridded" Name="На сетке" GridAlignment="AlignBaseline" Leading="14">
       <Properties><BasedOn type="string">ParagraphStyle/Text</BasedOn></Properties>
     </ParagraphStyle>

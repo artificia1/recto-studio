@@ -78,6 +78,19 @@ function styleProperty(xml: string, header: string, name: string): string | unde
   return value === undefined ? undefined : decodeStoryXml(value.trim());
 }
 
+/**
+ * InDesign's paragraph alignment. Its justified variants name where the last line goes
+ * (LeftJustified, CenterJustified, RightJustified, FullyJustified): they are all justified text, so
+ * "Justified" is checked before the side it mentions.
+ */
+function inDesignAlignment(value: string): 'left' | 'center' | 'right' | 'justify' | undefined {
+  if (value.includes('Justified')) return 'justify';
+  if (value.includes('Center')) return 'center';
+  if (value.includes('Right')) return 'right';
+  if (value.includes('Left')) return 'left';
+  return undefined;
+}
+
 const OBJECT_APPEARANCE = ['FillColor', 'FillTint', 'StrokeColor', 'StrokeWeight', 'StrokeTint'] as const;
 
 /** Stroke and fill of each object style, with what it inherits from the style it is based on. */
@@ -730,10 +743,7 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
       const fillTint = parseFloat(properties.FillTint ?? '');
       const just = properties.Justification || 'LeftAlign';
 
-      let alignment: 'left' | 'center' | 'right' | 'justify' = 'left';
-      if (just.includes('Center')) alignment = 'center';
-      else if (just.includes('Right')) alignment = 'right';
-      else if (just.includes('Just')) alignment = 'justify';
+      const alignment = inDesignAlignment(just) ?? 'left';
 
       const baseId = `idml-style-${name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
       let styleId = baseId;
@@ -805,11 +815,8 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
         const paragraphStyle = applied ? styleRefs.get(applied) || parsedStyles.find(style => style.name.toLowerCase() === applied.replace('ParagraphStyle/', '').toLowerCase()) : undefined;
         if (paragraphStyle && !detectedStyleId) detectedStyleId = paragraphStyle.id;
 
-        const just = extractXmlAttr(pr, 'Justification') || '';
-        if (just.includes('Center')) detectedAlignment = 'center';
-        else if (just.includes('Right')) detectedAlignment = 'right';
-        else if (just.includes('Just')) detectedAlignment = 'justify';
-        else if (just.includes('Left')) detectedAlignment = 'left';
+        const alignment = inDesignAlignment(extractXmlAttr(pr, 'Justification') || '');
+        if (alignment) detectedAlignment = alignment;
 
         // Extract content and breaks within paragraph
         const cRanges = extractXmlTags(pr, 'CharacterStyleRange');
