@@ -63,7 +63,7 @@ export function StatusBar({ state }: StatusBarProps) {
           title={issues.length ? 'Click to view and resolve print preflight issues' : 'Print Preflight: All print criteria passed. Click to view audit.'}
         >
           <span aria-hidden="true" className="status-preflight-dot" />
-          {issues.length ? `Preflight: ${issues.length} ${issues.length === 1 ? 'finding' : 'findings'}` : 'Preflight: No errors'}
+          {issues.length ? `Preflight: ${issues.length} to review` : 'Preflight: No errors'}
         </button>
 
         <span className="status-item status-mode" title={state.settings.facingPages ? 'Facing Pages' : 'Single-page layout'}>{pagesDesc}</span>
