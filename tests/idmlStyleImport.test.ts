@@ -13,6 +13,15 @@ describe('InDesign styles on import', () => {
     expect(text.alignment).toBe('justify');
   });
 
+  it('keeps every justified variant justified, whichever side its last line goes to', async () => {
+    const project = await parseIdmlPackage(inDesignBook(), 'book.idml');
+    const named = (name: string) => project.paragraphStyles.find(style => style.name === name)!;
+    // "RightJustified" is justified text with its last line set right, not right-aligned text.
+    expect(named('Text Hebrew').alignment).toBe('justify');
+    expect(named('Text').alignment).toBe('justify');
+    expect(named('Рассказ').alignment).toBe('center');
+  });
+
   it('reads Auto leading as the percentage InDesign uses, 120 unless the style sets another', async () => {
     const project = await parseIdmlPackage(inDesignBook(), 'book.idml');
     const named = (name: string) => project.paragraphStyles.find(style => style.name === name)!;
@@ -24,7 +33,7 @@ describe('InDesign styles on import', () => {
   it('snaps to the baseline grid only the styles set to align to it', async () => {
     const project = await parseIdmlPackage(inDesignBook(), 'book.idml');
     const snapping = project.paragraphStyles.filter(style => style.id.startsWith('idml-')).map(style => [style.name, style.snapToBaseline]);
-    expect(Object.fromEntries(snapping)).toEqual({ '[Basic Paragraph]': false, Text: false, 'Рассказ': false, 'Подзаголовок': false, 'На сетке': true });
+    expect(Object.fromEntries(snapping)).toEqual({ '[Basic Paragraph]': false, Text: false, 'Рассказ': false, 'Подзаголовок': false, 'Text Hebrew': false, 'На сетке': true });
   });
 
   it('carries the font style and tracking of a paragraph style', async () => {
