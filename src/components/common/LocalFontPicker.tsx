@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { listLocalFonts, loadLocalFont, localFontsSupported, type LocalFontFace, type LocalFontFamily } from '../../engine/localFonts';
+import { fontEmbeddingRestriction } from '../../export/fontAssets';
+import { fontManager } from '../../fontManager';
 
 const SHOWN = 200;
 
 /**
- * Choose a font installed on this computer and load it like an imported font file. Families are
- * previewed in their own typeface, which the browser can draw because they are installed.
+ * Choose a font installed on this computer and load it like an imported font file: its bytes are
+ * copied into the project. Families are previewed in their own typeface, which the browser can draw
+ * because they are installed.
  */
 export function LocalFontPicker({ onLoaded, label = 'Fonts on this computer…' }: {
   onLoaded: (family: string) => void;
@@ -17,6 +20,7 @@ export function LocalFontPicker({ onLoaded, label = 'Fonts on this computer…' 
   const [expanded, setExpanded] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const request = useRef(0);
   const search = useRef<HTMLInputElement>(null);
   useEffect(() => () => { request.current++; }, []);
@@ -30,7 +34,7 @@ export function LocalFontPicker({ onLoaded, label = 'Fonts on this computer…' 
 
   const show = async () => {
     const ticket = ++request.current;
-    setOpen(true); setError('');
+    setOpen(true); setError(''); setNotice('');
     try {
       const list = await listLocalFonts();
       if (ticket === request.current) setFamilies(list);
@@ -46,6 +50,9 @@ export function LocalFontPicker({ onLoaded, label = 'Fonts on this computer…' 
       const family = await loadLocalFont(face);
       if (ticket !== request.current) return;
       setOpen(false); setQuery(''); setExpanded('');
+      const asset = fontManager.getFontAsset(family);
+      const restriction = asset && fontEmbeddingRestriction(asset);
+      setNotice(restriction ? `${restriction} You can lay out with it; PDF export draws it as outlines, and EPUB and flipbook exports leave it out.` : '');
       onLoaded(family);
     } catch (reason) {
       if (ticket === request.current) setError(reason instanceof Error ? reason.message : String(reason));
@@ -59,8 +66,11 @@ export function LocalFontPicker({ onLoaded, label = 'Fonts on this computer…' 
     item.faces.some(face => face.fullName.toLocaleLowerCase().includes(wanted)));
 
   if (!open) {
-    return <button type="button" className="sm-btn" style={{ width: '100%', marginTop: '4px' }} onClick={() => void show()}
-      title="Load a font installed on this computer. The browser asks once for permission to see your fonts.">{label}</button>;
+    return <>
+      <button type="button" className="sm-btn" style={{ width: '100%', marginTop: '4px' }} onClick={() => void show()}
+        title="Copy a font installed on this computer into this project. The browser asks once for permission to see your fonts.">{label}</button>
+      {notice && <p role="status" className="local-font-notice" style={{ fontSize: '10px', color: '#e0b050', margin: '4px 0 0' }}>{notice}</p>}
+    </>;
   }
 
   return <div className="local-font-picker" role="dialog" aria-label="Fonts on this computer"
@@ -73,11 +83,16 @@ export function LocalFontPicker({ onLoaded, label = 'Fonts on this computer…' 
       <button type="button" className="sm-btn" style={{ flex: '0 0 auto', width: 'auto' }} onClick={() => { request.current++; setOpen(false); setBusy(false); }}>Close</button>
     </div>
     {error && <p role="alert" style={{ color: '#ff7878', fontSize: '11px', margin: '4px 0' }}>{error}</p>}
+    {error && !families && <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '0 0 4px' }}>
+      Importing a font file (TTF, OTF, WOFF, WOFF2) works in every browser.</p>}
     {!families && !error && <p style={{ fontSize: '11px', margin: '4px 0' }}>Reading the fonts on this computer…</p>}
     {families && <>
       <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '0 0 4px' }}>
         {matches.length} of {families.length} families{matches.length > SHOWN ? `; showing the first ${SHOWN}, type to narrow` : ''}.
-        Choose a style to load it into this project.
+      </p>
+      <p className="local-font-copy-note" style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '0 0 4px' }}>
+        Choosing a style copies its font file into this project, so the project looks the same on other computers.
+        Exports embed it where the font's licence allows. Use only fonts you are licensed to use this way.
       </p>
       <ul style={{ listStyle: 'none', margin: 0, padding: 0, maxHeight: '240px', overflowY: 'auto' }}>
         {matches.slice(0, SHOWN).map(item => <li key={item.family}>

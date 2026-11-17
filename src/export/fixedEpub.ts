@@ -2,7 +2,7 @@ import type { CanvasElement, Page, ProjectState, Spread, TableElement, TextEleme
 import { escapeXml } from '../epubExport';
 import { createZipArchive } from '../zip';
 import { embeddedAsset, prepareExportAssets } from './publicationAssets';
-import { fontFamilyCss } from './fontAssets';
+import { embeddableFonts, fontFamilyCss } from './fontAssets';
 import { variationCss } from '../engine/fontVariations';
 import { displayGradientColor } from '../engine/fillGradients';
 import { explicitCmyk, rgbColor } from '../engine/inkColors';
@@ -104,7 +104,7 @@ function positionedTable(element: TableElement, layout: TableFrameLayout, positi
   return `<table${hidden}${description} style="${escapeXml(style)}"><tbody>${rows}</tbody></table>`;
 }
 
-export function generateFixedEpubPackage(source: ProjectState) {
+export function generateFixedEpubPackage(source: ProjectState, onWarning?: (message: string) => void) {
   const state = publicationSnapshot(source);
   const resolveText = createPublicationTextResolver(state);
   const layoutNotes = createFrameNoteLayoutLookup(state);
@@ -132,10 +132,10 @@ export function generateFixedEpubPackage(source: ProjectState) {
   const spine: string[] = [], navigation: string[] = [];
   const assets = new Map<string, string>();
   files['META-INF/container.xml'] = `${xml}<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles><rootfile full-path="OEBPS/package.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`;
-  files['OEBPS/styles.css'] = (state.embeddedFonts || []).map((font, index) => {
+  files['OEBPS/styles.css'] = embeddableFonts(state.embeddedFonts, onWarning).map(({ asset: font, bytes }, index) => {
     const extension = font.fileName.match(/\.(ttf|otf|woff2?)$/i)?.[1].toLowerCase() || 'ttf';
     const path = `font-${index + 1}.${extension}`;
-    files[`OEBPS/${path}`] = Uint8Array.from(atob(font.data), char => char.charCodeAt(0));
+    files[`OEBPS/${path}`] = bytes;
     manifest.push(`<item id="font-${index + 1}" href="${path}" media-type="font/${extension}"/>`);
     return `@font-face{font-family:${fontFamilyCss(font.family)};src:url("${path}");font-variation-settings:${variationCss(font.variations)};}`;
   }).join('\n');

@@ -4,6 +4,7 @@ import { printReadiness } from './printReadiness';
 import { createTableThreadLookup } from './tableCells';
 import { layoutContentTables } from './tableLayout';
 import { publicationCaptions } from './publicationCaptions';
+import { fontEmbeddingRestriction } from '../export/fontAssets';
 
 export function publicationPreflight(state: ProjectState, target: 'editor' | 'epub' | 'print' = 'editor'): PreflightIssue[] {
   const scan = scanPublicationPreflight(state, target);
@@ -126,6 +127,11 @@ export function* scanPublicationPreflight(
     const layout = layoutContentTables(thread);
     if (layout.pendingRows.length) issue('TABLE_LAYOUT', `${layout.pendingRows.length} table row(s) do not fit. Add a continuation page, enlarge the frame, or shorten the first overflowing row (${layout.pendingRows[0] + 1}).`, head.id);
     for (const frame of layout.frames) if (frame.horizontalOverflow) issue('TABLE_LAYOUT', 'Table text or repeated headers/footers exceed this frame. Widen the columns, reduce padding, or enlarge the frame.', frame.frameId);
+  }
+  // Exports report these themselves when they leave a font out; the editor warns ahead of time.
+  if (target === 'editor') for (const font of state.embeddedFonts || []) {
+    const restriction = fontEmbeddingRestriction(font);
+    if (restriction) issue('FONT_EXPORT', `${restriction} PDF export draws it as outlines; EPUB and flipbook exports leave it out and show a fallback font.`, undefined, 'warning');
   }
   const pending = (state.storyRevisions || []).filter(revision => revision.status === 'pending');
   if (pending.length) issue('PUBLICATION_FLOW', `${pending.length} manuscript revision(s) await review. Exports use the current manuscript; proposed edits are excluded.`, pending[0].storyId, 'warning');

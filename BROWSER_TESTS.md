@@ -45,7 +45,8 @@ Vitest explicitly excludes e2e files; `npm test` remains the engine/unit suite.
 - Startup resource sizes and absence of deferred tools, with diagnostic timing logs.
 - Responsive inspector opening/closing at a 390px viewport.
 - Fonts installed on the computer: choosing one for a frame, and finding a missing document
-  font among them (Chromium's Local Font Access, granted for the test).
+  font among them (Chromium's Local Font Access, granted for the test); the licence notice for
+  a font that forbids embedding, and the file-import fallback when access is refused.
 
 Remote Google font requests are blocked for deterministic offline checks. Real
 font files are uploaded through the same input used by the user. Assertions use

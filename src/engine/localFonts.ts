@@ -82,7 +82,7 @@ export function listLocalFonts(): Promise<LocalFontFamily[]> {
   if (!queryFonts) {
     return Promise.reject(new Error('This browser cannot list the fonts on your computer. Use Chrome or Edge, or import a font file.'));
   }
-  const refused = 'Access to the fonts on this computer was not allowed. Click the icon left of the address, allow "Fonts" for this site, and try again.';
+  const refused = 'Access to the fonts on this computer was not allowed. Click the icon left of the address, allow "Fonts" for this site, and try again, or import the font file instead.';
   listing ??= queryFonts.call(window).then(faces => {
     const families = groupLocalFonts(faces);
     // Chrome answers a refused or dismissed permission with an empty list rather than an error.
@@ -90,7 +90,7 @@ export function listLocalFonts(): Promise<LocalFontFamily[]> {
     return families;
   }, (reason: unknown) => {
     const name = reason instanceof DOMException ? reason.name : '';
-    throw new Error(name === 'NotAllowedError' || name === 'SecurityError' ? refused : 'The fonts on this computer could not be listed.');
+    throw new Error(name === 'NotAllowedError' || name === 'SecurityError' ? refused : 'The fonts on this computer could not be listed. Import the font file instead.');
   }).catch((reason: unknown) => {
     // Not kept: once the user allows access, the next attempt should ask again.
     listing = undefined;
