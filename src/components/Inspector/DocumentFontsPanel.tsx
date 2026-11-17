@@ -9,6 +9,8 @@ import { fontManager } from '../../fontManager';
 import { stateManager } from '../../state';
 import type { ProjectState } from '../../types';
 import { FONT_FILES, useFontFileImport } from '../common/useFontFileImport';
+import { LocalFontPicker } from '../common/LocalFontPicker';
+import { findLocalFont, listLocalFonts, loadLocalFont, localFontsSupported } from '../../engine/localFonts';
 
 export default function DocumentFontsPanel({ state }: { state: ProjectState }) {
   const usage = documentFontUsage(state);
@@ -18,15 +20,48 @@ export default function DocumentFontsPanel({ state }: { state: ProjectState }) {
   const { importFile, choice, error, busy } = useFontFileImport(family => {
     stateManager.saveImportedFonts(); setTarget(family); setPreview(undefined); setMessage('Font loaded. Review the replacement selection.');
   });
+  const [finding, setFinding] = useState('');
+  // A document font that is not loaded, looked up among the fonts installed on this computer.
+  const findOnComputer = async (family: string) => {
+    setFinding(family); setMessage('');
+    try {
+      const face = findLocalFont(await listLocalFonts(), family);
+      if (!face) {
+        setMessage(`"${family.split(",")[0].trim()}" is not installed on this computer. Choose another installed font or import its file.`);
+        return;
+      }
+      const loaded = await loadLocalFont(face);
+      stateManager.saveImportedFonts();
+      setPreview(undefined);
+      if (primaryFont(loaded) === primaryFont(family)) {
+        // Registered under the very name the document uses: every reference now finds it.
+        setSource(''); setTarget('');
+        setMessage(`Found ${face.fullName} on this computer and loaded it. The document already refers to it by this name, so nothing needs replacing.`);
+      } else {
+        setSource(family); setTarget(loaded);
+        setMessage(`Found ${face.fullName} on this computer and loaded it as "${loaded}". Preview, then replace it throughout the document.`);
+      }
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setFinding('');
+    }
+  };
   return <details className="publication-panel"><summary>Document fonts &amp; replacement</summary>
     <p>Font references are not proof that a font is installed or available for PDF. Import a font file you are licensed to use. Replacement changes line breaks; review overset afterward. No Adobe Fonts activation or font-file extraction is performed.</p>
-    <ul className="editorial-list">{usage.map(item => <li key={item.family}><p>{item.family} · {item.count} references · {fontManager.getFont(item.family) ? 'font file loaded' : 'font file unavailable; substitution risk'}</p></li>)}</ul>
+    <ul className="editorial-list">{usage.map(item => <li key={item.family}><p>{item.family} · {item.count} references · {fontManager.getFont(item.family) ? 'font file loaded' : 'font file unavailable; substitution risk'}</p>
+      {!fontManager.getFont(item.family) && localFontsSupported() && <button type="button" className="sm-btn" disabled={!!finding}
+        aria-label={`Find ${item.family} on this computer`} onClick={() => void findOnComputer(item.family)}>
+        {finding === item.family ? 'Looking…' : 'Find on this computer'}</button>}</li>)}</ul>
     <label>Replace document font<select aria-label="Replace document font" value={source} onChange={event => { setSource(event.currentTarget.value); setPreview(undefined); }}><option value="">Choose source</option>{usage.map(item => <option key={item.family}>{item.family}</option>)}</select></label>
     <label>Replacement font file<input type="file" accept={FONT_FILES} disabled={busy} onChange={event => {
       const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; if (!file) return;
       setMessage(''); void importFile(file);
     }}/></label>
     {choice}
+    <LocalFontPicker label="Choose a font on this computer…" onLoaded={family => {
+      stateManager.saveImportedFonts(); setTarget(family); setPreview(undefined); setMessage('Font loaded. Review the replacement selection.');
+    }}/>
     {error && <p role="alert">{error}</p>}
     <label>Use loaded font<select aria-label="Use loaded font" value={target} onChange={event => { setTarget(event.currentTarget.value); setPreview(undefined); }}><option value="">Choose replacement</option>{fontManager.getCustomFonts().map(font => <option key={font.family}>{font.family}</option>)}</select></label>
     <div className="publication-actions">
