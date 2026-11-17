@@ -1,79 +1,85 @@
 /**
- * Paragraph layout cases from two Russian-language books set in InDesign 21.4, for the features
- * the shared composer does not have yet: indents, space before and after, tab stops, auto leading
- * per line, and caps as a style property.
+ * Paragraph layout cases for the features the shared composer does not have yet: indents, space
+ * before and after, tab stops, auto leading per line, and caps as a style property.
  *
- * Each case is one page with one text frame (no inset, as in the books). Style attributes are copied
- * from the books' IDML; the text is neutral placeholder copy. Where `measured` is given, it is what
- * InDesign's own PDF of the book shows, read with `pdftotext -bbox`; otherwise the value follows
- * from the style alone.
+ * The reference is a real InDesign 21.4 document, `tests/fixtures/idml/layout-cases.idml`, with the
+ * PDF InDesign exported from it, `layout-cases.pdf`: one page per case, styles from two
+ * Russian-language books. `LAYOUT_CASES` gives each case's page in that document and what the PDF
+ * shows there; `tests/idmlLayoutCases.test.ts` reads those numbers back from the PDF.
+ *
+ * `inDesignLayoutCases()` builds the same cases as a minimal package in code, with neutral text, so
+ * each attribute involved can be read at a glance.
  */
 import { createZipArchive } from '../../src/zip';
 
+/** Where the files are, relative to the repository root. */
+export const REFERENCE = {
+  idml: 'tests/fixtures/idml/layout-cases.idml',
+  pdf: 'tests/fixtures/idml/layout-cases.pdf',
+};
+
 const PT = 25.4 / 72;
 const mm = (pt: number) => Math.round(pt * PT * 100) / 100;
+/** Left edge of the text frames in the reference document: 20 mm from the page edge, no inset. */
+export const FRAME_LEFT_PT = 56.69;
 
 export interface LayoutCase {
-  /** Text frame id after import (`idml-` + the IDML Self). */
+  /** Page of the reference document that shows the case. */
+  page: number;
+  /** Text frame id after importing the code-built package (`idml-` + its IDML Self). */
   frameId: string;
   title: string;
-  /** What InDesign does, in millimetres or points as named. */
+  /** What InDesign does. Values in pt are what the reference PDF shows; mm values are the same, for reading. */
   expect: Record<string, number | string>;
-  measured?: boolean;
 }
 
 export const LAYOUT_CASES = {
   firstLineIndent: {
-    frameId: 'idml-first-line',
+    page: 1, frameId: 'idml-first-line',
     title: '"Text": first-line indent 11.34 pt, justified, Auto leading 130 % of 12 pt',
-    expect: { firstLineIndentMm: mm(11.338582677165356), otherLinesIndentMm: 0, lineAdvancePt: 15.6 },
-    measured: true,
+    expect: { firstLineIndentPt: 11.34, firstLineIndentMm: mm(11.34), otherLinesIndentPt: 0, lineAdvancePt: 15.6 },
   },
   hangingIndent: {
-    frameId: 'idml-hanging',
+    page: 2, frameId: 'idml-hanging',
     title: '"Footnote": left indent 11.34 pt with a first-line indent of -5.67 pt',
-    expect: { firstLineIndentMm: mm(11.338582677165356 - 5.669291338582678), otherLinesIndentMm: mm(11.338582677165356) },
+    expect: { firstLineIndentPt: 5.67, firstLineIndentMm: mm(5.67), otherLinesIndentPt: 11.34 },
   },
   leftIndent: {
-    frameId: 'idml-left-indent',
-    title: '"Эпиграф": left indent 226.77 pt; "Text of stih": left indent 85.04 pt',
-    expect: { epigraphIndentMm: mm(226.7716535433071), verseIndentMm: mm(85.03937007874016) },
-    measured: true,
+    page: 3, frameId: 'idml-left-indent',
+    title: '"Эпиграф" with a local left indent of 198.43 pt over the style\'s 226.77; "Text of stih": left indent 85.04 pt',
+    expect: { epigraphIndentPt: 198.43, epigraphIndentMm: mm(198.43), verseIndentPt: 85.04, verseIndentMm: mm(85.04), verseLineAdvancePt: 15.6 },
   },
   leftAndRightIndent: {
-    frameId: 'idml-right-indent',
+    page: 4, frameId: 'idml-right-indent',
     title: '"Автор": centred between a left and a right indent of 11.34 pt each',
-    expect: { leftIndentMm: mm(11.338582677165356), rightIndentMm: mm(11.338582677165356), alignment: 'center' },
+    // With equal indents the lines stay centred on the frame; the page-4 frame is 150 pt wide.
+    expect: { leftIndentPt: 11.34, rightIndentPt: 11.34, lineCentreFromFrameCentrePt: 0 },
   },
   spaceBeforeAndAfter: {
-    frameId: 'idml-spacing',
+    page: 5, frameId: 'idml-spacing',
     title: '"***" (18 pt, Auto 120 %) between "Text" paragraphs: space before 8.5 pt, after 5.67 pt',
-    // Baseline of the last line before the separator to the first line after it:
-    // 8.5 (before) + 21.6 (separator leading) + 5.67 (after) + 15.6 (body leading).
-    expect: { spaceBeforePt: 8.503937007874017, spaceAfterPt: 5.669291338582678, baselineToBaselinePt: 51.37 },
-    measured: true,
+    // 8.5 before + 21.6 separator leading + 5.67 after + 15.6 body leading.
+    expect: { spaceBeforePt: 8.5, spaceAfterPt: 5.67, baselineToBaselinePt: 51.37 },
   },
   tabStops: {
-    frameId: 'idml-tabs',
-    title: 'Imprint: [Basic Paragraph] with local left tab stops at 100 and 110 pt, 9 pt type',
-    expect: { columnAfterTabMm: mm(100), lineAdvancePt: 10.8 },
-    measured: true,
+    page: 6, frameId: 'idml-tabs',
+    title: 'Imprint: [Basic Paragraph] in 9 pt, local left tab stop at 100 pt (first block) and at 110 pt (second block)',
+    expect: { firstColumnPt: 100, firstColumnMm: mm(100), secondColumnPt: 110, secondColumnMm: mm(110), lineAdvancePt: 10.8 },
   },
   rightTabWithLeader: {
-    frameId: 'idml-contents',
+    page: 7, frameId: 'idml-contents',
     title: 'Contents line: right tab stop at 300 pt with a dot leader',
-    expect: { pageNumberRightEdgeMm: mm(300), leader: '.' },
+    expect: { pageNumberRightEdgePt: 300, pageNumberRightEdgeMm: mm(300), leader: '.' },
   },
   autoLeadingPerLine: {
-    frameId: 'idml-tabs',
+    page: 6, frameId: 'idml-tabs',
     title: 'Auto leading follows the largest type on the line: 9 pt runs in a 12 pt style advance 10.8 pt',
     expect: { lineAdvancePt: 10.8, styleSizePt: 12, runSizePt: 9 },
-    measured: true,
   },
   allCaps: {
-    frameId: 'idml-caps',
-    title: 'All Caps from the paragraph style ("Рассказ") and on a character range (running head)',
-    expect: { paragraphStyleShows: 'НАЗВАНИЕ РАССКАЗА', characterRangeShows: 'НАЗВАНИЕ КНИГИ', storyTextUnchanged: 'Название рассказа' },
+    page: 8, frameId: 'idml-caps',
+    title: 'All Caps from the paragraph style ("Рассказ"), and on a character range of the odd-page running head',
+    expect: { paragraphStyleShows: 'МАЛЕНЬКАЯ ЛОШАДКА', runningHeadShows: 'НАЗВАНИЕ КНИГИ', storyKeeps: 'Маленькая лошадка' },
   },
 } satisfies Record<string, LayoutCase>;
 
@@ -139,13 +145,14 @@ const second = 'Второй абзац продолжает текст, его 
 const stories: Record<string, string> = {
   'first-line': paragraph('Text', run(body)) + paragraph('Text', run(second)),
   hanging: paragraph('Footnote', run('1. Примечание длиной в несколько строк: номер выступает влево, а текст выровнен по левому отступу, как в сносках книги.')),
-  'left-indent': paragraph('Эпиграф', run('Строка эпиграфа')) + paragraph('Text of stih', run('Строка стиха\nвторая строка стиха'.replace('\n', '&#x2028;'))),
+  'left-indent': paragraph('Эпиграф', run('Строка эпиграфа'), ' LeftIndent="198.42519685039372"') +
+    paragraph('Text of stih', run('Строка стиха&#x2028;вторая строка стиха')),
   'right-indent': paragraph('Автор', run('Имя Фамилия автора, достаточно длинное, чтобы занять две строки')),
   spacing: paragraph('Text', run(body)) + paragraph('***', run('***')) + paragraph('Text', run(second)),
   // The imprint: a tab before each name, each line a separate paragraph line in 9 pt.
-  tabs: paragraph('$ID/NormalParagraphStyle', `<CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]" PointSize="9">${
+  tabs: [100, 110].map(position => paragraph('$ID/NormalParagraphStyle', `<CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]" PointSize="9">${
     lines('Редакторская группа:\tИмя Фамилия\n\tИмя Фамилия\n\tИмя Фамилия')}</CharacterStyleRange>`, '',
-    `<TabList type="list">${tabStop(100)}${tabStop(110)}</TabList>`),
+    `<TabList type="list">${tabStop(position)}</TabList>`)).join(''),
   // InDesign writes ":" in a style's Self, and in references to it, as %3a.
   contents: paragraph('Содержание%3aНазвание стиха в оглавлении', run('Название рассказа\t5')) +
     paragraph('Содержание%3aНазвание стиха в оглавлении', run('Другой рассказ с длинным названием\t127')),
