@@ -6,7 +6,7 @@ import { formatOpenTypeText, segmentTextWithGrep } from './engine/legacyTypograp
 export { formatOpenTypeText, segmentTextWithGrep, type TextRunSegment } from './engine/legacyTypography';
 import { publicationWrapObjects, wrappedPlainContent } from './engine/publicationWrap';
 export { calculateImageFitting, type ImageFitTransform } from './engine/imageFitting';
-import { createFrameNoteLayoutLookup, createPublicationTextResolver } from './engine/publicationReferences';
+import { createFrameNoteLayoutLookup, createPublicationTextResolver, layoutFrameNotes } from './engine/publicationReferences';
 import { reviewPinPosition } from './engine/reviewPins';
 import { calculateSpreadGeometry, getSpreadScreenOrigin, MM_TO_PX, screenToSpreadMm } from './engine/viewport';
 import { bindCanvasInput, type CanvasMouseDown, type CanvasMouseMove, type CanvasMouseUp } from './engine/interaction/canvasInput';
@@ -28,6 +28,7 @@ import {
   TextOnPathSettings,
   DisplayQuality,
   GrepStyleRule,
+  StoryContent,
 } from './types';
 import { stateManager, numberToSuperscript } from './state';
 import { collabSession } from './collab';
@@ -42,6 +43,10 @@ import { createContentTableLayoutLookup } from './engine/tableLayout';
 import { canvasRunFont, layoutStory } from './engine/storyLayout';
 import { fontManager } from './fontManager';
 import { layoutKernels } from './engine/layoutRuntime';
+import { indexLines, liveStoryContent, spliceStory, supportsLiveEditing } from './engine/liveTextEditing';
+import { storyText } from './engine/storyContent';
+import { LiveTextEditor, liveTextEditingEnabled, setLiveTextEditingEnabled,
+  type LiveTextBox, type LiveTextComposition, type LiveTextOpenOptions } from './engine/interaction/liveTextEditor';
 
 export { MM_TO_PX } from './engine/viewport';
 
@@ -63,9 +68,9 @@ type FormattedStoryLayout = ReturnType<typeof layoutStory>;
 const DRAG_TEXT_PIXEL_BUDGET = 2_000_000;
 
 function drawFormattedStory(ctx: CanvasRenderingContext2D, layout: FormattedStoryLayout,
-  x: number, y: number, pxPerMm: number, zoom: number) {
+  x: number, y: number, pxPerMm: number, zoom: number, hangFromTop = false) {
   ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
+  ctx.textBaseline = hangFromTop ? 'top' : 'alphabetic';
   let previousStyle: typeof layout.lines[number]['segments'][number]['style'] | undefined;
   for (const line of layout.lines) for (const segment of line.segments) {
     const { style } = segment;
@@ -76,7 +81,7 @@ function drawFormattedStory(ctx: CanvasRenderingContext2D, layout: FormattedStor
       previousStyle = style;
     }
     const left = x + segment.x * pxPerMm;
-    const baseline = y + (line.y + style.fontSizePt * 25.4 / 72) * pxPerMm;
+    const baseline = y + (line.y + (hangFromTop ? 0 : style.fontSizePt * 25.4 / 72)) * pxPerMm;
     if (segment.text.trim()) ctx.fillText(segment.text, left, baseline);
     if (style.underline) {
       ctx.fillRect(left, baseline + zoom, segment.width * pxPerMm, Math.max(0.6, zoom));
@@ -332,7 +337,10 @@ export class SpreadCanvas {
   private tableLayouts = createContentTableLayoutLookup();
 
   // Active in-place canvas overlay editor (WordPad/Figma style)
-  private activeInlineEditor: { elementId: string; el: HTMLElement; finish?: (commit: boolean) => void } | null = null;
+  // `live` is set when the frame is edited in place on the canvas; without it `el` is the visible
+  // textarea editor (closed through `finish`), which stays as the fallback.
+  private activeInlineEditor: { elementId: string; el: HTMLElement; finish?: (commit: boolean) => void;
+    live?: LiveTextEditor; selectionAtOpen?: string } | null = null;
   /**
    * Selection in the inline editor at the moment it lost focus to the UI (inspector button, Quick Apply,
    * a dropdown). Clicking such a control blurs the textarea and closes the editor before the click fires,
@@ -401,6 +409,7 @@ export class SpreadCanvas {
         this.dragDocument.spread !== stateManager.getActiveSpread() ||
         this.dragDocument.revision !== stateManager.getDocumentRevision() ||
         this.dragDocument.tool !== stateManager.getState().activeTool)) this.cancelDrag();
+      this.syncLiveTextEditor();
       this.scheduleRender();
     });
 
@@ -583,13 +592,26 @@ export class SpreadCanvas {
 
   private handleMouseDown(e: CanvasMouseDown) {
     this.rememberedTextSelection = null;
-    if (this.activeInlineEditor) {
-      this.closeInlineTextEditor(true);
-    }
     const state = stateManager.getState();
     const rect = this.canvas.getBoundingClientRect();
     const screenX = e.clientX - rect.left;
     const screenY = e.clientY - rect.top;
+    const live = this.activeInlineEditor?.live;
+    if (live) {
+      const press = e as Partial<MouseEvent>;
+      const panning = e.button === 1 || state.activeTool === 'hand' || this.isSpacePanning;
+      const editing = e.button === 0 && (state.activeTool === 'select' || state.activeTool === 'text');
+      // A press inside the frame being edited places the caret; panning leaves the editor open.
+      // Keeping the default action away stops the press from taking focus off the hidden textarea.
+      if (!panning && editing && live.pointerDown(screenX, screenY, { shiftKey: e.shiftKey, detail: press.detail })) {
+        press.preventDefault?.();
+        return;
+      }
+      if (panning) press.preventDefault?.();
+      else this.closeInlineTextEditor(true);
+    } else if (this.activeInlineEditor) {
+      this.closeInlineTextEditor(true);
+    }
 
     if (e.button === 1 || state.activeTool === 'hand' || this.isSpacePanning) {
       this.isPanning = true;
@@ -643,7 +665,9 @@ export class SpreadCanvas {
         const hit = this.hitTestElements(mmX, mmY, state);
         if (hit && hit.type === 'text' && !hit.locked) {
           stateManager.selectElement(hit.id);
-          this.openInlineTextEditor(hit.id);
+          this.openInlineTextEditor(hit.id, { point: e });
+          // The editor took focus during this press; keep the press from handing it back to the page.
+          if (this.activeInlineEditor?.live) (e as Partial<MouseEvent>).preventDefault?.();
           return;
         }
         if (!hit && state.selectedElementIds.length > 0 && !e.shiftKey) {
@@ -869,6 +893,15 @@ export class SpreadCanvas {
 
     collabSession.broadcastPresence(mmX, mmY, state.selectedElementId);
 
+    const live = this.activeInlineEditor?.live;
+    if (live && !this.isPanning) {
+      const over = live.pointerMove(screenX, screenY);
+      if (over) {
+        this.canvas.style.cursor = 'text';
+        return;
+      }
+    }
+
     if (this.isPencilDrawing) {
       this.handlePencilMouseMove(e);
       return;
@@ -1039,6 +1072,7 @@ export class SpreadCanvas {
   }
 
   private handleMouseUp(e: CanvasMouseUp) {
+    if (this.activeInlineEditor?.live?.pointerUp()) return;
     const state = stateManager.getState();
     const rect = this.canvas.getBoundingClientRect();
     const screenX = e.clientX - rect.left;
@@ -1279,7 +1313,8 @@ export class SpreadCanvas {
 
   private handleWheel(e: WheelEvent) {
     e.preventDefault();
-    if (this.activeInlineEditor) {
+    // The textarea editor is pinned to the screen, so scrolling must close it; in-place editing follows the page.
+    if (this.activeInlineEditor && !this.activeInlineEditor.live) {
       this.closeInlineTextEditor(true);
     }
     const state = stateManager.getState();
@@ -1291,7 +1326,12 @@ export class SpreadCanvas {
     }
   }
 
-  public openInlineTextEditor(elementId: string): void {
+  /**
+   * Edit a text frame. By default the frame is edited in place on the canvas, each paragraph in its
+   * own style; frames that rely on the legacy renderer, or everything when in-place editing is
+   * switched off, get the textarea editor below.
+   */
+  public openInlineTextEditor(elementId: string, options: LiveTextOpenOptions = {}): void {
     const spread = stateManager.getActiveSpread();
     const el = spread.elements.find((item) => item.id === elementId);
     if (!el || el.type !== 'text') return;
@@ -1311,6 +1351,10 @@ export class SpreadCanvas {
     }
 
     const state = stateManager.getState();
+    if (liveTextEditingEnabled() && supportsLiveEditing(textEl, state.paragraphStyles)) {
+      this.openLiveTextEditor(textEl, options);
+      return;
+    }
     const origin = this.getSpreadScreenOrigin(state);
     const pxPerMm = MM_TO_PX * state.zoom;
     const pageWidthMm = state.settings.widthMm;
@@ -1436,19 +1480,144 @@ export class SpreadCanvas {
 
   public closeInlineTextEditor(commit: boolean = true): void {
     if (!this.activeInlineEditor) return;
-    const { elementId, el, finish } = this.activeInlineEditor;
+    const { elementId, el, finish, live } = this.activeInlineEditor;
+    // The textarea editor closes itself; the code below is for in-place editing.
     if (finish) { finish(commit); return; }
     this.activeInlineEditor = null;
     const text = (el as HTMLTextAreaElement | HTMLInputElement).value;
+    const spread = stateManager.getActiveSpread();
+    const currentEl = spread.elements.find((item) => item.id === elementId);
+    const changed = currentEl && currentEl.type === 'text' && (currentEl as TextElement).text !== text;
+    // Take the formatted draft before the editor goes away; it is what the canvas has been showing.
+    const draft = commit && changed && live ? live.content(currentEl as TextElement) : null;
+    live?.destroy();
     el.remove();
-    if (commit) {
-      const spread = stateManager.getActiveSpread();
-      const currentEl = spread.elements.find((item) => item.id === elementId);
-      if (currentEl && currentEl.type === 'text' && (currentEl as TextElement).text !== text) {
+    if (commit && changed) {
+      if (!draft || !this.commitLiveStory(currentEl as TextElement, draft, text)) {
         stateManager.updateElement(elementId, { text });
       }
     }
     this.scheduleRender();
+  }
+
+  private openLiveTextEditor(textEl: TextElement, options: LiveTextOpenOptions): void {
+    const id = textEl.id;
+    const parent = this.canvas.parentElement || this.container;
+    const frame = () => {
+      const current = stateManager.getActiveSpread().elements.find(item => item.id === id);
+      return current?.type === 'text' ? current : null;
+    };
+    const live = new LiveTextEditor({
+      parent,
+      frame,
+      compose: (current, value, content) => this.composeLiveText(current, value, content),
+      box: current => this.liveTextBox(current),
+      requestRender: () => this.scheduleRender(),
+      close: (commit, toUi) => {
+        const active = this.activeInlineEditor;
+        if (active?.live !== live) return;
+        if (toUi) {
+          this.rememberedTextSelection = { elementId: id, text: live.value, ...live.selection };
+        }
+        this.closeInlineTextEditor(commit);
+      },
+    }, textEl, this.canvas, options);
+    this.activeInlineEditor = { elementId: id, el: live.textarea, live, selectionAtOpen: this.selectionKey() };
+    this.render();
+  }
+
+  /**
+   * Commit a formatted story edited in place. The draft was built one edit at a time, so it is stored
+   * as content: sending only the text would make the document re-derive the formatting from a single
+   * before/after comparison and restyle everything between two separate edits.
+   */
+  private commitLiveStory(frame: TextElement, draft: StoryContent, text: string): boolean {
+    try {
+      const story = stateManager.getStoryContent(frame.id);
+      const start = frame.storyStart ?? 0;
+      const end = frame.storyEnd ?? storyText(story).length;
+      stateManager.setStoryContent(frame.id, spliceStory(story, start, end, draft));
+    } catch {
+      // A locked frame elsewhere in the thread, for one: fall back to the frame-level text edit.
+      return false;
+    }
+    stateManager.onMutation?.({ type: 'update', elementId: frame.id, updates: { text } as Partial<CanvasElement> });
+    return true;
+  }
+
+  /** Lay out the frame as it will look once the editor's text is committed. */
+  private composeLiveText(text: TextElement, value: string, draft?: StoryContent | null): LiveTextComposition {
+    const state = stateManager.getState();
+    const spread = stateManager.getActiveSpread();
+    const obstacles = publicationWrapObjects(state, spread).filter(other => other.id !== text.id && other.pageId === text.pageId);
+    const content = draft || liveStoryContent(text, value, obstacles.length > 0);
+    const layout = layoutStory(content, text, state.paragraphStyles, state.characterStyles,
+      undefined, layoutFrameNotes(state, text).height, { obstacles, baselineGrid: state.settings.baselineGrid });
+    return {
+      content, lines: layout.lines, consumed: layout.consumed, overset: layout.overset,
+      live: indexLines(layout.lines, value, content, text, state.paragraphStyles, state.characterStyles),
+      topBaseline: !text.textContent && !obstacles.length,
+    };
+  }
+
+  private liveTextBox(text: TextElement): LiveTextBox {
+    const state = stateManager.getState();
+    const origin = this.getSpreadScreenOrigin(state);
+    const pxPerMm = MM_TO_PX * state.zoom;
+    const pageIdx = Math.max(0, stateManager.getActiveSpread().pages.findIndex(page => page.id === text.pageId));
+    return { x: origin.x + (pageIdx * state.settings.widthMm + text.x) * pxPerMm, y: origin.y + text.y * pxPerMm, pxPerMm };
+  }
+
+  private selectionKey(): string {
+    const state = stateManager.getState();
+    return `${state.activeSpreadIndex}:${state.selectedElementId || ''}:${(state.selectedElementIds || []).join(',')}`;
+  }
+
+  /** Keep in-place editing consistent with the document: close it when its frame can no longer be edited. */
+  private syncLiveTextEditor(): void {
+    const active = this.activeInlineEditor;
+    if (!active?.live) return;
+    const state = stateManager.getState();
+    const current = stateManager.getActiveSpread().elements.find(item => item.id === active.elementId);
+    // Selecting something else ends the edit; a frame opened without being selected stays open.
+    const selected = state.selectedElementIds?.length ? state.selectedElementIds.includes(active.elementId) : state.selectedElementId === active.elementId;
+    const deselected = !selected && this.selectionKey() !== active.selectionAtOpen;
+    if (!current || current.type !== 'text' || current.locked) {
+      this.closeInlineTextEditor(false);
+    } else if (deselected || state.previewMode || !supportsLiveEditing(current, state.paragraphStyles)) {
+      this.closeInlineTextEditor(true);
+    } else {
+      active.live.syncWithState(current);
+    }
+  }
+
+  /**
+   * Continue in-place editing after a panel control took focus to act on the text selection
+   * (applying a paragraph style), with the caret or selection where it was.
+   */
+  public resumeInlineTextEditor(elementId: string): void {
+    const remembered = this.rememberedTextSelection;
+    if (this.activeInlineEditor || !remembered || remembered.elementId !== elementId || !liveTextEditingEnabled()) return;
+    const state = stateManager.getState();
+    const current = stateManager.getActiveSpread().elements.find(item => item.id === elementId);
+    if (current?.type !== 'text' || current.locked || state.previewMode || !supportsLiveEditing(current, state.paragraphStyles)) return;
+    this.openInlineTextEditor(elementId, { selection: { start: remembered.start, end: remembered.end } });
+  }
+
+  /** Whether text frames are edited in place (default) or always in the textarea editor. */
+  public get liveTextEditing(): boolean { return liveTextEditingEnabled(); }
+  public set liveTextEditing(enabled: boolean) {
+    this.closeInlineTextEditor(true);
+    setLiveTextEditingEnabled(enabled);
+  }
+
+  /** Caret of the in-place editor in canvas CSS pixels, or null. For tests and tooling. */
+  public getLiveTextCaret(): { x: number; y: number; height: number } | null {
+    const live = this.activeInlineEditor?.live;
+    if (!live) return null;
+    // Paints are batched per animation frame; draw now so the answer reflects the latest input.
+    this.render();
+    return live.caretBox();
   }
 
   public openInlineTableCellEditor(tableId: string, e?: MouseEvent): void {
@@ -1646,6 +1815,8 @@ export class SpreadCanvas {
       const rect = this.canvas.getBoundingClientRect();
       const screenX = e.clientX - rect.left;
       const screenY = e.clientY - rect.top;
+      // Inside the frame being edited in place a double click selects a word; the press handled it.
+      if (this.activeInlineEditor?.live?.pointerMove(screenX, screenY)) return;
       this.screenToSpreadMm(screenX, screenY, state);
       const hit = this.hitTestElements(this._pointMm.x, this._pointMm.y, state);
       if (hit && !hit.locked) {
@@ -1661,7 +1832,8 @@ export class SpreadCanvas {
     if (!el) return;
 
     if (el.type === 'text') {
-      this.openInlineTextEditor(el.id);
+      // A double click starts typing where it landed; opening from the keyboard selects everything.
+      this.openInlineTextEditor(el.id, e ? { point: e } : {});
     } else if (el.type === 'image') {
       const input = document.createElement('input');
       input.type = 'file';
@@ -2932,7 +3104,8 @@ export class SpreadCanvas {
         tableEngine.renderCanvasTable(ctx, table, elScreenX, elScreenY, elScreenW, elScreenH, pxPerMm, state.zoom, thread, layout);
       } else if (el.type === 'text') {
         const text = el as TextElement;
-        if (!proof && this.activeInlineEditor && this.activeInlineEditor.elementId === el.id) {
+        const liveEditor = !proof && this.activeInlineEditor?.elementId === el.id ? this.activeInlineEditor.live : undefined;
+        if (!proof && this.activeInlineEditor && this.activeInlineEditor.elementId === el.id && !liveEditor) {
           ctx.restore();
           continue;
         }
@@ -3051,21 +3224,27 @@ export class SpreadCanvas {
         }
         const processedText = formatOpenTypeText(rawCleanedText, text.openTypeFeatures);
 
-        const cached = this.formattedLayouts.get(layoutFrame);
-        const flowContent = text.textContent || (obstacles?.length
+        // While a frame is edited in place it is composed from the editor's text, not yet committed.
+        const liveComposition = liveEditor?.compose(text);
+        const cached = liveComposition ? undefined : this.formattedLayouts.get(layoutFrame);
+        const flowContent = liveComposition?.content || text.textContent || (obstacles?.length
           ? cached?.source === processedText ? cached.content : wrappedPlainContent(text, processedText) : undefined);
         if (flowContent) {
-          const layout = cached?.content === flowContent && cached.reserve === noteLayout.height ? cached.layout :
+          const layout = liveComposition || (cached?.content === flowContent && cached.reserve === noteLayout.height ? cached.layout :
             layoutStory(flowContent, layoutFrame, state.paragraphStyles, state.characterStyles,
-              undefined, noteLayout.height, { obstacles, baselineGrid: state.settings.baselineGrid });
-          if (cached?.layout !== layout && (cached || this.formattedLayouts.size < 64)) {
+              undefined, noteLayout.height, { obstacles, baselineGrid: state.settings.baselineGrid }));
+          if (!liveComposition && cached?.layout !== layout && (cached || this.formattedLayouts.size < 64)) {
             this.formattedLayouts.set(layoutFrame, { content: flowContent, source: text.textContent ? undefined : processedText, reserve: noteLayout.height, layout });
           }
-          const canReuseText = !proof && !state.previewMode && this.isDragging && layout.lines.length >= 8 &&
+          if (liveEditor && liveComposition) {
+            liveEditor.paint(ctx, text, liveComposition, { x: elScreenX, y: elScreenY, pxPerMm });
+          }
+          const canReuseText = !liveComposition && !proof && !state.previewMode && this.isDragging && layout.lines.length >= 8 &&
             !text.shadow && ctx.globalAlpha === 1 && ctx.globalCompositeOperation === 'source-over';
           if (!canReuseText || !this.drawDragText(ctx, layout, elScreenX, elScreenY,
             elScreenW, elScreenH, clipBleed, pxPerMm, state.zoom)) {
-            drawFormattedStory(ctx, layout, elScreenX, elScreenY, pxPerMm, state.zoom);
+            // A plain frame keeps the legacy renderer's vertical placement while it is being edited.
+            drawFormattedStory(ctx, layout, elScreenX, elScreenY, pxPerMm, state.zoom, !!liveComposition?.topBaseline);
           }
           isOverflowing = layout.overset;
         } else {

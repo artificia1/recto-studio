@@ -16,8 +16,11 @@ export function applyParagraphStyleToSelection(frameId: string, styleId: string)
     const target = planParagraphStyleTarget(selection.text, selection.start, selection.end, frame?.storyStart ?? 0);
     if (target.kind === 'range') {
       stateManager.styleStoryRange(frameId, target.start, target.end, styleId);
+      canvas?.resumeInlineTextEditor?.(frameId);
       return;
     }
   }
   stateManager.applyParagraphStyle(frameId, styleId);
+  // Clicking the control closed the in-place editor; reopen it so typing continues in the new style.
+  if (selection) canvas?.resumeInlineTextEditor?.(frameId);
 }
