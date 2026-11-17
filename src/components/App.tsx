@@ -230,6 +230,14 @@ export function App() {
     const files = e.dataTransfer?.files;
     if (!files || files.length === 0) return;
 
+    const dropped = Array.from(files);
+    const markdown = dropped.find(file => /\.(md|markdown)$/i.test(file.name));
+    if (markdown) {
+      const warnings = await stateManager.openMarkdownBook(markdown, dropped);
+      if (warnings.length) alert(warnings.join('\n'));
+      return;
+    }
+
     const file = files[0];
     const name = file.name.toLowerCase();
     const spread = stateManager.getActiveSpread();
@@ -258,7 +266,7 @@ export function App() {
       return;
     }
 
-    if (name.endsWith('.md') || name.endsWith('.markdown') || name.endsWith('.txt') || name.endsWith('.docx')) {
+    if (name.endsWith('.txt') || name.endsWith('.docx')) {
       const buffer = await file.arrayBuffer();
       const { ingestManuscript } = await import('../contentImport');
       const ingested = await ingestManuscript(file.name, buffer);

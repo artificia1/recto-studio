@@ -1,6 +1,7 @@
 import type { PagePreset, ProjectState } from '../types';
 import { isDesktop } from '../desktop';
 import { stateManager } from '../state';
+import { useRef } from 'preact/hooks';
 
 interface FileMenuProps {
   state: ProjectState;
@@ -34,6 +35,7 @@ export default function FileMenu({
   onOpenQr, onOpenEquation, onOpenBarcode, onOpenStoryEditor, onOpenScripts, onOpenShortcuts,
   handleOpenCoverSpine, handleOpenImposition, onInstallGuide,
 }: FileMenuProps) {
+  const markdownInput = useRef<HTMLInputElement>(null);
   return (
     <div className="top-dropdown-menu file-dropdown-menu">
       <button
@@ -58,6 +60,25 @@ export default function FileMenu({
         <span>Open Project...</span>
         <span className="dropdown-item-shortcut">Ctrl+O</span>
       </button>
+      <button className="top-dropdown-item" onClick={() => markdownInput.current?.click()}>
+        <span>Open Markdown as Book...</span>
+        <small className="dropdown-item-shortcut">.md</small>
+      </button>
+      <input ref={markdownInput} type="file" hidden multiple aria-label="Markdown book files"
+        accept=".md,.markdown,.jpg,.jpeg,.png,.webp" onChange={async event => {
+          const files = Array.from(event.currentTarget.files ?? []);
+          event.currentTarget.value = '';
+          if (!files.length) return;
+          onClose();
+          const manuscripts = files.filter(file => /\.(?:md|markdown)$/i.test(file.name));
+          if (manuscripts.length !== 1) { alert('Choose one Markdown manuscript and its optional cover image.'); return; }
+          try {
+            const warnings = await stateManager.openMarkdownBook(manuscripts[0], files);
+            if (warnings.length) alert(`Markdown import notes:\n${warnings.join('\n')}`);
+          } catch (error) {
+            alert(`Could not open the Markdown book. ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }} />
       <button
         className="top-dropdown-item"
         onClick={() => {

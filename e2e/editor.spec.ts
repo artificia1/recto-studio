@@ -3,7 +3,30 @@ import { readFile } from 'node:fs/promises';
 import { importProject, menuCommand, savedProject, projectFileInput, projectFixture } from './fixtures';
 import { createZipArchive, readZip } from '../src/zip';
 import { fontCollectionFixture } from '../tests/fixtures/fontCollection';
+import type { ProjectState, TextElement } from '../src/types';
 const runtimeErrors = new WeakMap<Page, string[]>();
+
+test('opens Markdown as a complete book and retains its text and hierarchy after reopening', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTitle('File Management, Project IO, and Document Imports').click();
+  await expect(page.getByRole('button', { name: 'Open Markdown as Book...' })).toBeVisible();
+  const paragraph = 'The compositor threads every line through the next available page. The body remains editable.';
+  const markdown = ['# Field Notes', '## Introduction', '### The shore', ...Array(125).fill(paragraph), 'The final line is here.'].join('\n\n');
+  await page.getByLabel('Markdown book files').setInputFiles({ name: 'field.md', mimeType: 'text/markdown', buffer: Buffer.from(markdown) });
+  await expect(page.getByTitle('Click to rename document')).toHaveValue('Field Notes');
+  const project: ProjectState = await savedProject(page);
+  const frames = project.spreads.flatMap(spread => spread.elements.filter((element): element is TextElement => element.type === 'text' && element.id.startsWith('compiled-body-')));
+  expect(frames.length).toBeGreaterThan(2);
+  expect(frames[0].storyContent?.paragraphs.slice(0, 3).map(item => item.styleId)).toEqual(['style-title', 'style-h2', 'style-h3']);
+  expect(frames.map(frame => frame.text).join('')).toEqual(markdown.replace(/^#{1,3} /gm, '').replaceAll('\n\n', '\n'));
+  for (const [index, frame] of frames.slice(0, -1).entries()) {
+    expect(frame.nextFrameId).toBe(frames[index + 1].id);
+    expect(frame.storyEnd).toBe(frames[index + 1].storyStart);
+  }
+  await expect(page.getByText('Preflight: No errors')).toBeVisible();
+  await projectFileInput(page).setInputFiles({ name: 'field.recto', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)) });
+  await expect(page.getByText('Preflight: No errors')).toBeVisible();
+});
 
 test.beforeEach(async ({ page }) => {
   const errors: string[] = [];

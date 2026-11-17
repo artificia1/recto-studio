@@ -3071,6 +3071,16 @@ export class StateManager {
     return this.openProject(() => RectoDB.importProjectFile(file, INITIAL_STATE), true);
   }
 
+  public async openMarkdownBook(file: File, artwork: readonly File[] = []) {
+    let warnings: string[] = [];
+    await this.openProject(async () => {
+      const book = await (await import('../engine/markdownBookImport')).importMarkdownBook(file, artwork);
+      warnings = book.warnings;
+      return book.state;
+    });
+    return warnings;
+  }
+
   public saveImportedFonts() {
     this.state.embeddedFonts = fontManager.getFontAssets();
     this.pushHistory();

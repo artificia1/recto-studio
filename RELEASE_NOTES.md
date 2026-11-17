@@ -4,6 +4,10 @@ Stable desktop release for Windows and Debian-based Linux.
 
 ## Layout and print
 
+- Open a Markdown file as an editable book from the File menu or by dropping
+  it onto the workspace. Recto creates linked pages, styles headings by level,
+  and adds running heads and folios. Supply a referenced opening cover image
+  beside the Markdown file to embed it in the project.
 - Save a printer-order sheet map as JSON from the imposition dialog. Mini-zine
   exports place all eight vector panels on one side of a sheet.
 - Imposed proofs use the normal PDF renderer to preserve publication artwork

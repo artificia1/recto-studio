@@ -1,6 +1,6 @@
 import type { IngestedStory } from '../contentImport';
 import { DEFAULT_PARAGRAPH_STYLES, INITIAL_STATE } from '../state/defaults';
-import { PAGE_PRESETS, type ProjectState, type Spread, type TextElement } from '../types';
+import { PAGE_PRESETS, type ImageElement, type ParagraphStyle, type ProjectState, type Spread, type TextElement } from '../types';
 import { layoutFrameNotes, publicationHeadings, reflowStoryState } from './publicationReferences';
 import { layoutStory, type StoryMeasure } from './storyLayout';
 import { storyText } from './storyContent';
@@ -33,6 +33,9 @@ interface Edition {
   sourceRevision: string;
   pagesPerSignature?: typeof signatureSizes[number];
   exactSignatures?: number;
+  padForDelivery?: boolean;
+  paragraphStyles?: ParagraphStyle[];
+  cover?: Pick<ImageElement, 'src' | 'proxySrc' | 'name' | 'altText' | 'fileSize' | 'format' | 'originalWidth' | 'originalHeight'>;
   resources?: Pick<ProjectState, 'embeddedFonts'> & { colorManagement?: ProjectState['settings']['colorManagement'] };
 }
 
@@ -53,13 +56,14 @@ export function composeManuscript(input: IngestedStory, edition: Edition, measur
   const margins = { topMm: 19, bottomMm: 19, insideMm: 21, outsideMm: 17 };
   const width = size.widthMm - margins.insideMm - margins.outsideMm;
   const height = size.heightMm - margins.topMm - margins.bottomMm;
-  const styles = DEFAULT_PARAGRAPH_STYLES.map(style => ({
+  const firstBodyPage = edition.cover ? 3 : 1;
+  const styles = [...DEFAULT_PARAGRAPH_STYLES.map(style => ({
     ...style, fontFamily: edition.fontFamily, snapToBaseline: false, dropCapLines: 0,
     letterSpacingPt: 0, grepStyles: undefined, openTypeFeatures: undefined,
     fontSizePt: ({ 'style-title': 22, 'style-h1': 17, 'style-h2': 13, 'style-pullquote': 11, 'style-caption': 9 } as Record<string, number>)[style.id] ?? 11,
     lineHeight: 1.4, keepWithNext: ['style-title', 'style-h1', 'style-h2'].includes(style.id),
     orphanLines: 2, widowLines: 2,
-  }));
+  })), ...(edition.paragraphStyles ?? [])];
   const state: ProjectState = {
     ...structuredClone(INITIAL_STATE), spreads: [], masterSpreads: [], paragraphStyles: styles,
     embeddedFonts: edition.resources?.embeddedFonts, selectedElementId: null, selectedElementIds: [], activeSpreadIndex: 0,
@@ -69,7 +73,7 @@ export function composeManuscript(input: IngestedStory, edition: Edition, measur
       baselineGrid: { enabled: false, incrementPt: 12, startMm: margins.topMm },
       colorManagement: edition.resources?.colorManagement,
       footnotes: input.notes?.map((note, index) => ({ ...note, number: index + 1, anchorVersion: 1,
-        elementId: 'compiled-body-1', pageId: 'compiled-page-1' })) ?? [],
+        elementId: `compiled-body-${firstBodyPage}`, pageId: `compiled-page-${firstBodyPage}` })) ?? [],
     },
   };
   const frame = (number: number, id: string): TextElement => ({
@@ -79,7 +83,14 @@ export function composeManuscript(input: IngestedStory, edition: Edition, measur
     lineHeight: 1.4, letterSpacingPt: 0, color: '#000000', alignment: 'left', columns: 1, columnGutterMm: 0,
     paddingMm: 0, backgroundColor: 'transparent', borderColor: 'transparent', borderWidthMm: 0,
   });
-  const head = frame(1, 'compiled-body-1');
+  if (edition.cover) {
+    const cover = newPage(1);
+    cover.elements.push({ ...edition.cover, id: 'compiled-cover', type: 'image', pageId: cover.pages[0].id,
+      x: 0, y: 0, width: size.widthMm, height: size.heightMm, fitMode: 'fit',
+      rotation: 0, opacity: 1, zIndex: 1, locked: false, borderColor: 'transparent', borderWidthMm: 0 });
+    state.spreads.push(cover, newPage(2));
+  }
+  const head = frame(firstBodyPage, `compiled-body-${firstBodyPage}`);
   head.paragraphStyleId = 'style-body';
   head.storyContent = structuredClone(input.content);
   const textLength = storyText(head.storyContent).length;
@@ -87,14 +98,14 @@ export function composeManuscript(input: IngestedStory, edition: Edition, measur
   function fillThrough(wanted: number) {
     for (let number = state.spreads.length + 1; number <= wanted; number++) {
       const spread = newPage(number);
-      const body = number === 1 ? head : { ...frame(number, `compiled-body-${number}`), paragraphStyleId: 'style-body', prevFrameId: tail.id };
-      if (number > 1) tail.nextFrameId = body.id;
+      const body = number === firstBodyPage ? head : { ...frame(number, `compiled-body-${number}`), paragraphStyleId: 'style-body', prevFrameId: tail.id };
+      if (number > firstBodyPage) tail.nextFrameId = body.id;
       spread.elements.push(body);
       state.spreads.push(spread);
       tail = body;
     }
   }
-  fillThrough(Math.min(compiledPageLimit, Math.max(2, Math.ceil(input.wordCount / 300))));
+  fillThrough(Math.min(compiledPageLimit, firstBodyPage - 1 + Math.max(2, Math.ceil(input.wordCount / 300))));
   for (;;) {
     reflowStoryState(state, head.id, undefined, measure);
     const notes = layoutFrameNotes(state, tail);
@@ -104,12 +115,16 @@ export function composeManuscript(input: IngestedStory, edition: Edition, measur
     fillThrough(Math.min(compiledPageLimit, state.spreads.length * 2));
   }
   const lastWithContent = state.spreads.findLastIndex(spread => {
+    if (spread.pages[0].pageNumber < firstBodyPage) return false;
     const body = spread.elements[0] as TextElement;
     return (body.storyStart ?? 0) < textLength || layoutFrameNotes(state, body).lines.length > 0;
   });
   state.spreads.splice(lastWithContent + 1);
   delete (state.spreads.at(-1)!.elements[0] as TextElement).nextFrameId;
-  const budget = signatureBudget(state.spreads.length, edition.pagesPerSignature, edition.exactSignatures);
+  const pageCount = state.spreads.length;
+  const budget = edition.padForDelivery === false
+    ? { manuscriptPages: pageCount, deliveredPages: pageCount, blankPages: 0, signatureSize: null, signatures: null }
+    : signatureBudget(pageCount, edition.pagesPerSignature, edition.exactSignatures);
   const headings = publicationHeadings(state);
   let runningHead = edition.title;
   const chapterHeadings = new Map(headings.filter(heading => heading.level === 1).map(heading => [heading.pageNumber, heading.title]));
@@ -120,13 +135,13 @@ export function composeManuscript(input: IngestedStory, edition: Edition, measur
     while (count > 0 && measure(glyphs.slice(0, count).join('') + '…', style) > style.width) count--;
     return glyphs.slice(0, count).join('') + '…';
   }
-  for (let number = 1; number <= budget.manuscriptPages; number++) {
+  for (let number = firstBodyPage; number <= budget.manuscriptPages; number++) {
     const heading = chapterHeadings.get(number);
     if (heading) runningHead = heading;
     const folio = { ...frame(number, `compiled-folio-${number}`), y: size.heightMm - 12, height: 6,
       fontSizePt: 9, alignment: 'center' as const, text: String(number), decorative: true };
     state.spreads[number - 1].elements.push(folio);
-    if (number > 1 && !heading) {
+    if (number > firstBodyPage && !heading) {
       const header = { ...folio, id: `compiled-header-${number}`, y: 8 };
       header.text = runningText(number % 2 ? runningHead : edition.title, header);
       state.spreads[number - 1].elements.push(header);

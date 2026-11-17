@@ -96,7 +96,16 @@ export function parseMarkdownContent(markdown: string): IngestedStory {
   let block: string[] = [], fenced = false;
   const add = (text: string, sourceStyle = 'Body') => paragraphs.push({ sourceStyle,
     styleId: suggestedStyle(sourceStyle), runs: inlineMarkdown(text, {}, 0, noteRun) });
-  const flush = () => { if (block.length) { add(block.join(' ')); block = []; } };
+  const flush = () => {
+    if (!block.length) return;
+    add(block.map((line, index) => {
+      if (index === block.length - 1) return line.trimEnd();
+      if (line.endsWith('  ')) return `${line.trimEnd()}\n`;
+      if (line.endsWith('\\') && !line.endsWith('\\\\')) return `${line.slice(0, -1)}\n`;
+      return `${line} `;
+    }).join(''));
+    block = [];
+  };
   for (const raw of bodyLines) {
     const line = raw.trim();
     if (/^(```|~~~)/.test(line)) { flush(); fenced = !fenced; warnings.push('Code blocks are imported as plain paragraphs.'); continue; }
@@ -111,7 +120,7 @@ export function parseMarkdownContent(markdown: string): IngestedStory {
     }
     if (block.length && /^(?:=+|-+)\s*$/.test(line)) { add(block.join(' '), line[0] === '=' ? 'Heading 1' : 'Heading 2'); block = []; continue; }
     if (/^([-*_])(?:\s*\1){2,}$/.test(line)) { flush(); add('⁂', 'Scene break'); continue; }
-    block.push(line);
+    block.push(/ {2,}$/.test(raw) ? `${line}  ` : line);
   }
   flush();
   if (/!\[/.test(markdown)) warnings.push('Image labels are retained; place image files separately.');
