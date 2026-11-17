@@ -72,6 +72,7 @@ For batch work, use a saved template with `{{field}}` placeholders:
 | Find a physical page, frame, style, or story | `recto_inspect_publication`, `recto_read_spread`, `recto_read_story` |
 | Preview and save edits | `recto_preview_story_edit`, `recto_preview_layout_edit`, `recto_save_draft` |
 | Inspect the layout visually | `recto_render_preview_image`, `recto_view_shared_canvas` |
+| Review visual changes across pages | `recto_review_publication_change`, `recto_review_pdf_editions` |
 | Review a proposal in the desktop editor | `recto_offer_desktop_proposal` |
 | Start a document or convert a file | `recto_create_publication`, `recto_import_publication` (IDML and Scribus) |
 | Translate a publication | `recto_export_publication` with `xliff`, `recto_preview_translation`, `recto_save_draft` |
@@ -98,6 +99,13 @@ Alignment, image relinking, table cells, notes, publication lists, parents,
 layers, editions, and saved view settings are also available. Frame geometry
 and gaps use millimetres. Table rows and columns are one-based. Use table
 operations to merge cells, enable row splitting, or append a continuation page.
+
+**Revision review.** Pass a pending `planId` to `recto_review_publication_change`
+to compare the draft with its saved source. It matches stable page IDs across
+moves, classifies the visual difference, and can return an overlay PNG. Walk
+`nextOffset` to review the rest of the publication. For PDFs without project
+IDs, `recto_review_pdf_editions` finds exact, unique matches across page moves
+and reports ambiguous matches as uncertain.
 
 **Visual feedback.** Call `recto_render_preview_image` with a project and
 revision, or with a `planId`. Choose a one-based `page` or `spread`, or omit

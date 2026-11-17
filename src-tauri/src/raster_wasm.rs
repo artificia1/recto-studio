@@ -1,6 +1,7 @@
 mod raster_kernel;
 mod layout_kernel;
 mod pdf_kernel;
+mod story_geometry;
 
 use std::ptr::addr_of_mut;
 use std::slice;
@@ -12,6 +13,29 @@ static mut TABLE: [u8; 256] = [0; 256];
 
 fn number(bytes: &[u8]) -> f64 {
     f64::from_le_bytes(bytes.try_into().expect("eight-byte number"))
+}
+
+#[no_mangle]
+pub extern "C" fn layout_place_line(length: usize) -> i32 {
+    use story_geometry::{free_band, place_line, Frame, Grid, LineCursor};
+    const HEADER: usize = 96;
+    if !(HEADER..=TILE_BYTES).contains(&length) { return -1; }
+    let input = unsafe { slice::from_raw_parts(raster_input(), length) };
+    let field = |index: usize| number(&input[index * 8..(index + 1) * 8]);
+    let mut cursor = LineCursor { column: field(0), y: field(1) };
+    let frame = Frame { x: field(2), y: field(3), padding: field(4), bottom: field(5),
+        width: field(6), gutter: field(7), columns: field(8) };
+    let grid = Grid { start: field(10), pitch: field(11) };
+    let mut intervals = Vec::new();
+    let position = place_line(&mut cursor, frame, field(9), grid, |left, width, top, height| {
+        free_band(&input[HEADER..], left, width, top, height, &mut intervals)
+    });
+    let (inset, width) = position.unwrap_or((0.0, 0.0));
+    let output = unsafe { slice::from_raw_parts_mut(raster_output(), 32) };
+    for (bytes, value) in output.chunks_exact_mut(8).zip([cursor.column, cursor.y, inset, width]) {
+        bytes.copy_from_slice(&value.to_le_bytes());
+    }
+    i32::from(position.is_some())
 }
 
 #[no_mangle]
@@ -73,6 +97,14 @@ pub extern "C" fn pdf_classic_xref(count: usize) -> usize {
 pub extern "C" fn pdf_classic_footer(offset: u64) -> usize {
     let output = unsafe { slice::from_raw_parts_mut(raster_output(), 64) };
     pdf_kernel::classic_footer(offset, output).unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "C" fn pdf_stream_xref(count: usize) -> usize {
+    if count == 0 || count > TILE_BYTES / 24 { return 0; }
+    let input = unsafe { slice::from_raw_parts(raster_input(), count * 24) };
+    let output = unsafe { slice::from_raw_parts_mut(raster_output(), TILE_BYTES) };
+    pdf_kernel::stream_xref(input, output).unwrap_or(0)
 }
 
 #[no_mangle]

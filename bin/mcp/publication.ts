@@ -4,6 +4,7 @@ import { fontManager } from '../../src/fontManager';
 import { contentOf, layoutFrameNotes, publicationSnapshot, reflowStoryState, textFrames } from '../../src/engine/publicationReferences';
 import { publicationWrapObjects } from '../../src/engine/publicationWrap';
 import { layoutStory } from '../../src/engine/storyLayout';
+import { warmLayout } from '../../src/engine/layoutRuntime';
 import { plainStory, storyText } from '../../src/engine/storyContent';
 import { revisedStory } from '../../src/engine/storyRevisions';
 import { protectedHeadingIds } from '../../src/engine/manuscriptUpdates';
@@ -39,7 +40,8 @@ export async function confirmProjectRevision(workspace: PublishingWorkspace, fil
   if (sha256(bytes) !== expected) throw new Error('The publication changed. Read it again and repeat the preview.');
 }
 
-export function withPublication<T>(project: LoadedProject, run: (source: ProjectState) => Promise<T>) {
+export async function withPublication<T>(project: LoadedProject, run: (source: ProjectState) => Promise<T>) {
+  await warmLayout();
   return fontManager.withProjectFonts(project.source.embeddedFonts, () => run(project.source));
 }
 

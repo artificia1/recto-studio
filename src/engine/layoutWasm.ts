@@ -1,10 +1,59 @@
 import type { KnuthItem } from './knuthPlass';
+import type { WrapObstacle } from './wrapGeometry';
 import { getRasterWasm, loadRasterWasm } from './rasterWasm';
 
 export async function loadLayoutKernels() {
   const engine = await loadRasterWasm();
   if (!engine?.layout_optimal_breaks || !engine.layout_uniform_lines) return undefined;
-  return { optimalBreaks: nativeOptimalBreaks, uniformLines: nativeUniformLines };
+  return { optimalBreaks: nativeOptimalBreaks, uniformLines: nativeUniformLines, place: nativePlacement };
+}
+
+function nativePlacement(obstacles: WrapObstacle[], x: number, frameY: number, padding: number, bottom: number,
+  width: number, gutter: number, columns: number) {
+  const engine = getRasterWasm();
+  const place = engine?.layout_place_line;
+  const frame = [x, frameY, padding, bottom, width, gutter, columns];
+  if (!engine || !place || !frame.every(Number.isFinite)) return undefined;
+  const header = 96;
+  let length = header;
+  for (const { polygons } of obstacles) for (const { points } of polygons) {
+    length += 32 + points.length * 16;
+    // Prevent a pathological image silhouette from dominating each layout probe.
+    if (length > 128 * 1024) return undefined;
+  }
+  const bytes = new Uint8Array(length);
+  const data = new DataView(bytes.buffer);
+  frame.forEach((value, index) => data.setFloat64(16 + index * 8, value, true));
+  let offset = header;
+  for (const { polygons, gap } of obstacles) for (const { points, closed, minY, maxY } of polygons) {
+    if (![gap, minY, maxY].every(Number.isFinite)) return undefined;
+    data.setUint32(offset, points.length, true);
+    data.setUint8(offset + 4, Number(closed));
+    data.setFloat64(offset + 8, gap, true);
+    data.setFloat64(offset + 16, minY, true);
+    data.setFloat64(offset + 24, maxY, true);
+    offset += 32;
+    for (const point of points) {
+      if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return undefined;
+      data.setFloat64(offset, point.x, true);
+      data.setFloat64(offset + 8, point.y, true);
+      offset += 16;
+    }
+  }
+  return (column: number, y: number, height: number, start: number, pitch: number) => {
+    if (!Number.isFinite(y + height + start + pitch)) return undefined;
+    data.setFloat64(0, column, true);
+    data.setFloat64(8, y, true);
+    data.setFloat64(72, height, true);
+    data.setFloat64(80, start, true);
+    data.setFloat64(88, pitch, true);
+    new Uint8Array(engine.memory.buffer, engine.raster_input(), length).set(bytes);
+    const status = place(length);
+    if (status < 0) return undefined;
+    const output = new DataView(engine.memory.buffer, engine.raster_output(), 32);
+    return { column: output.getFloat64(0, true), y: output.getFloat64(8, true),
+      inset: output.getFloat64(16, true), width: output.getFloat64(24, true), fits: status === 1 };
+  };
 }
 
 export function nativeOptimalBreaks(items: KnuthItem[], lineWidths: number | number[], tolerance: number, hyphenCost: number) {

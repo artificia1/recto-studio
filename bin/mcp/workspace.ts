@@ -9,6 +9,7 @@ export const limits = {
   dataset: 4 * 1024 * 1024,
   exchange: 16 * 1024 * 1024,
   image: 16 * 1024 * 1024,
+  proofImage: 3 * 1024 * 1024,
   pdf: 64 * 1024 * 1024,
   batch: 128 * 1024 * 1024,
   records: 100,

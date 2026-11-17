@@ -7,9 +7,11 @@ interface RasterExports {
   raster_run(mode: number, length: number, grayscale: number): number;
   raster_mark_diff?(length: number): number;
   layout_optimal_breaks?(count: number, widths: number, tolerance: number, hyphenCost: number): number;
+  layout_place_line?(length: number): number;
   layout_uniform_lines?(count: number, columns: number, y: number, padding: number, bottom: number, height: number): number;
   pdf_classic_xref?(count: number): number;
   pdf_classic_footer?(offset: bigint): number;
+  pdf_stream_xref?(count: number): number;
 }
 
 /** Mark corresponding RGBA tiles in place. Older packaged modules use the JS path. */

@@ -141,8 +141,16 @@ describe('Recto publishing MCP over stdio', () => {
     const change = { kind: 'replace', start: 0, end: 5, expectedText: 'Print', text: 'Proof' };
     const preview = await result('recto_preview_story_edit', { ...input, change });
     expect(preview.pageCount).toEqual({ before: 1, after: 1 });
+    const visual = await call('recto_review_publication_change', { planId: preview.planId });
+    expect(visual.isError, JSON.stringify(visual.content)).not.toBe(true);
+    expect(visual.structuredContent).toMatchObject({
+      revision, pages: [{ id: pageId, change: 'text', before: { physical: 1 }, after: { physical: 1 }, moved: false }],
+      preview: { kind: 'diff', pageId },
+    });
+    expect(visual.content.some(block => block.type === 'image')).toBe(true);
     expect((await call('recto_save_draft', { planId: preview.planId, output: 'original.recto' })).isError).toBe(true);
     await writeFile(files('original.recto'), untouched + '\n');
+    expect((await call('recto_review_publication_change', { planId: preview.planId })).isError).toBe(true);
     expect((await call('recto_save_draft', { planId: preview.planId, output: 'stale.recto' })).isError).toBe(true);
     await expect(readFile(files('stale.recto'))).rejects.toMatchObject({ code: 'ENOENT' });
     await writeFile(files('original.recto'), untouched);
@@ -155,6 +163,25 @@ describe('Recto publishing MCP over stdio', () => {
     });
     expect(await result('recto_compile_pdf', { project: 'proof.recto', revision: draft.sha256, preset: 'print', output: 'proof.pdf' })).toMatchObject({ pages: 1 });
     expect((await PDFDocument.load(await readFile(files('proof.pdf')))).getPageCount()).toBe(1);
+  }, timeout);
+
+  it('identifies moved PDF pages and leaves unmatched revised pages unpaired', async () => {
+    async function edition(name: string, labels: string[]) {
+      const pdf = await PDFDocument.create();
+      labels.forEach(label => pdf.addPage([360, 540]).drawText(label, { x: 36, y: 470 }));
+      await writeFile(files(name), await pdf.save());
+      return name;
+    }
+    const before = await edition('edition-before.pdf', ['First', 'Second', 'Previous']);
+    const after = await edition('edition-after.pdf', ['Second', 'First', 'Revised']);
+    const review = await result('recto_review_pdf_editions', { before, after, limit: 2 }, readClient);
+    expect(review).toMatchObject({ nextOffset: 2, total: 4, pages: [
+      { before: 2, after: 1, moved: true, change: 'unchanged' },
+      { before: 1, after: 2, moved: true, change: 'unchanged' },
+    ] });
+    expect(await result('recto_review_pdf_editions', { before, after, offset: 2 }, readClient)).toMatchObject({
+      nextOffset: null, pages: [{ before: null, after: 3, change: 'uncertain' }, { before: 3, after: null, change: 'uncertain' }],
+    });
   }, timeout);
 
   it('uses the editor XLIFF format and preserves a portable appearance profile', async () => {

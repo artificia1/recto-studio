@@ -1,5 +1,5 @@
 import { jsPDF } from 'jspdf';
-import { PDFDocument, PDFRef, PDFWriter } from 'pdf-lib';
+import { PDFDocument, PDFRef, PDFStreamWriter, PDFWriter } from 'pdf-lib';
 import { expect, it, vi } from 'vitest';
 import { loadRasterWasm } from '../src/engine/rasterWasm';
 import { serializeJsPdf } from '../src/export/pdfPayload';
@@ -52,6 +52,22 @@ it('writes the native classic xref and footer for sparse object numbers and nonz
   } finally {
     fallback.mockRestore();
   }
+});
+
+it('writes native compressed cross references for multiple object streams and sparse IDs', async () => {
+  const pdf = await PDFDocument.create();
+  pdf.addPage().drawText('Embedded in the edition');
+  for (let i = 0; i < 115; i++) pdf.context.register(pdf.context.obj({ Record: i }));
+  pdf.context.assign(PDFRef.of(400, 7), pdf.context.obj({ Sparse: true }));
+  const expected = await pdf.save({ useObjectStreams: true, updateFieldAppearances: false });
+  expect((await loadRasterWasm())?.pdf_stream_xref).toBeTypeOf('function');
+  const fallback = vi.spyOn(PDFStreamWriter, 'forContext');
+  try {
+    const payload = await serializePdf(pdf, true);
+    expect(fallback).not.toHaveBeenCalled();
+    expect(Buffer.from(payload.bytes()).equals(expected)).toBe(true);
+    expect((await loadPdfChunks(payload)).getPageCount()).toBe(1);
+  } finally { fallback.mockRestore(); }
 });
 
 it('reads and renders a large generated PDF from ranges and archives its original chunks', async () => {

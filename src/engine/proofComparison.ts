@@ -14,7 +14,7 @@ export interface ProofMatch {
   moved: boolean;
 }
 
-function classify(a: ProofPage, b: ProofPage): ProofChange {
+export function classifyProofPage(a: ProofPage, b: ProofPage): ProofChange {
   if (a.width !== b.width || a.height !== b.height) return 'size';
   if (a.textSignature !== b.textSignature) return 'text';
   return a.signature === b.signature ? 'unchanged' : 'artwork';
@@ -25,7 +25,7 @@ export function compareProofPages(before: ProofPage[], after: ProofPage[]): Proo
     const a = before[index], b = after[index];
     if (!a) return 'added';
     if (!b) return 'removed';
-    return classify(a, b);
+    return classifyProofPage(a, b);
   });
 }
 
@@ -44,7 +44,7 @@ export function matchProofPages(before: ProofPage[], after: ProofPage[], ids?: {
     const previous = ids ? originals.get(ids.after[index]) : revised?.get(page.signature) == null ? undefined : originals.get(page.signature);
     if (previous == null) return { before: null, after: index, change: 'added', moved: false };
     used.add(previous);
-    return { before: previous, after: index, change: classify(before[previous], page), moved: previous !== index };
+    return { before: previous, after: index, change: classifyProofPage(before[previous], page), moved: previous !== index };
   });
   const removed = before.flatMap((page, index): ProofMatch[] =>
     used.has(index) ? [] : [{ before: index, after: null, change: 'removed', moved: false }]);

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { availableTextInterval, prepareWrapObstacles } from '../src/engine/wrapGeometry';
 import { assetStore } from '../src/engine/assetStore';
 import { layoutStory } from '../src/engine/storyLayout';
+import { layoutKernels, warmLayout } from '../src/engine/layoutRuntime';
 import { plainStory } from '../src/engine/storyContent';
 import type { CanvasElement, ImageElement, TextElement, VectorPathElement } from '../src/types';
 
@@ -13,6 +14,17 @@ const shape = (changes: Partial<CanvasElement> = {}): CanvasElement => ({ ...fra
 const space = (objects: CanvasElement[], top: number, height = 4, text = frame) => availableTextInterval(prepareWrapObstacles(objects, text), text.x, text.width, top, height);
 
 describe('shared runaround geometry', () => {
+  it('keeps Rust and TypeScript in sync across a baseline grid, rotated contours and column breaks', async () => {
+    const text = { ...frame, x: 4.2, y: 8.4, rotation: 11, columns: 2, height: 32, snapToBaseline: true };
+    const obstacles = [shape({ x: 11, y: 15, width: 38, height: 13, rotation: 17, shapeKind: 'ellipse' })];
+    const options = { obstacles, baselineGrid: { enabled: true, startMm: 3, incrementPt: 12 } };
+    const content = plainStory('Alpha beta gamma delta epsilon zeta. '.repeat(32));
+    const expected = layoutStory(content, text, [], [], value => value.length, 0, options);
+    expect(expected.lines.some(line => line.column === 1)).toBe(true);
+    await warmLayout();
+    expect(layoutKernels?.place(prepareWrapObstacles(obstacles, text), text.x, text.y, 0, 32, 48, 4, 2)).toBeTypeOf('function');
+    expect(layoutStory(content, text, [], [], value => value.length, 0, options)).toEqual(expected);
+  });
   it('unions simultaneous obstacles independently of their layer order', () => {
     const a = shape({ x: 20 }), b = shape({ id: 'b', x: 60 });
     expect(space([a, b], 20)).toEqual({ left: 0, width: 20 });

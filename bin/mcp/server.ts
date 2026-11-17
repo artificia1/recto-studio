@@ -79,11 +79,31 @@ function createPublishingServer(workspace: PublishingWorkspace) {
     const newProof = await buildProof(after, args.afterPage);
     const diff = await visualDiff(oldProof, newProof);
     const preview = diff.comparable ? diff.bytes : newProof.bytes;
-    if (preview.length <= 3 * 1024 * 1024) images.push({ type: 'image', mimeType: 'image/png', data: preview.toString('base64') });
+    const included = preview.length <= limits.proofImage;
+    if (included) images.push({ type: 'image', mimeType: 'image/png', data: preview.toString('base64') });
     return { before: { sha256: sha256(before), page: args.beforePage, width: oldProof.width, height: oldProof.height },
       after: { sha256: sha256(after), page: args.afterPage, width: newProof.width, height: newProof.height },
       comparable: diff.comparable, changedPixels: diff.comparable ? diff.changedPixels : null,
-      preview: diff.comparable ? 'difference' : 'current' };
+      changedFraction: diff.comparable ? diff.changedPixels / (newProof.width * newProof.height) : null,
+      preview: diff.comparable ? 'difference' : 'current', previewIncluded: included };
+  });
+
+  tool('recto_review_pdf_editions', 'Find exact unique page matches across two local PDFs, including moves. Unmatched pages are reported as uncertain when correspondence cannot be established.', z.strictObject({
+    before: file, after: file, ...pagination,
+  }), async args => {
+    const { reviewPdfEditions } = await import('./editionReview');
+    return reviewPdfEditions(workspace, args.before, args.after, args.offset, args.limit);
+  });
+
+  tool('recto_review_publication_change', 'Compare a pending draft with its saved source by stable page ID. Returns changed, moved, added and removed pages and an optional PNG for the first difference.', z.strictObject({
+    planId: z.uuid(), offset: pagination.offset, limit: z.int().min(1).max(16).default(8), preview: z.boolean().default(true),
+  }), async (args, images) => {
+    const plan = await plans.preview(workspace, args.planId);
+    const original = await loadProject(workspace, plan.file, plan.revision);
+    const { reviewPublicationChange } = await import('./editionReview');
+    const result = await reviewPublicationChange(original, plan, args.offset, args.limit, args.preview);
+    if (result.image) images.push({ type: 'image', mimeType: 'image/png', data: result.image.toString('base64') });
+    return { planId: args.planId, ...result.report };
   });
 
   tool('recto_locate_pdf_text', 'Locate selectable text in a saved PDF. Return physical page numbers, text fragment bounds, and a highlighted PNG. Scanned pages need a text layer.', z.strictObject({
@@ -319,7 +339,7 @@ function createPublishingServer(workspace: PublishingWorkspace) {
       'book archive inspection, approved proof comparison, interior PDF and delivery ZIP', 'visual proof images', 'shared desktop canvas snapshots',
       'desktop edit proposals', 'frame geometry and style application', 'image levels and curves', 'vector decorations',
       'table merging, row splitting and continuation pages', 'manuscript layout planning and compilation',
-      'delivery PDF inspection', 'PDF proof comparison and text location'],
+      'delivery PDF inspection', 'PDF proof comparison and text location', 'PDF edition page matching', 'staged draft visual review'],
     editorOnly: ['live canvas gestures', 'continuous screen sharing', 'live collaboration', 'native dialogs and updater',
       'freehand drawing', 'advanced style authoring'],
   }));

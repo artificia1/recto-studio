@@ -105,12 +105,12 @@ over, which checks run automatically, and what needs review before production.
 
 ## Upcoming work
 
-- **Rust migration in progress.** Desktop raster processing now probes image
-  dimensions before allocating pixel surfaces. Small desktop exports can also
-  apply grayscale, levels, and curves in Rust. Export paths on desktop, web,
-  and CLI use a shared Rust WebAssembly module for larger raster tiles.
-  The module uses bounded scratch memory. Live previews and runtimes without
-  a native path retain their TypeScript implementations.
+- **Rust migration in progress.** Recto uses bounded Rust WebAssembly kernels
+  for raster processing, paragraph break selection, line placement around
+  artwork and baseline grids, and classic and compressed PDF cross-references.
+  Desktop raster commands also probe image dimensions before allocating pixel
+  surfaces. The editor, font shaping, and PDF object construction continue to
+  use the existing TypeScript stack.
 
 - **Editorial interchange.** Expand IDML and Scribus coverage for compound
   paths, complex groups, linked images, and advanced typography. Run a broader

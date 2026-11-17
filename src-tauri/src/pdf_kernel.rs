@@ -36,3 +36,50 @@ pub fn classic_footer(xref_offset: u64, output: &mut [u8]) -> Option<usize> {
     write!(writer, "startxref\n{xref_offset}\n%%EOF").ok()?;
     Some(writer.position() as usize)
 }
+
+/// Encode PDF /W fields as big-endian integers and generate its sparse /Index.
+/// Input records carry object number, type, byte offset or stream ID, and generation or stream index.
+pub fn stream_xref(entries: &[u8], output: &mut [u8]) -> Option<usize> {
+    const RECORD: usize = 24;
+    fn fields(raw: &[u8]) -> [u64; 3] {
+        [
+            u64::from(raw[4]),
+            u64::from_le_bytes(raw[8..16].try_into().unwrap()),
+            u64::from(u32::from_le_bytes(raw[16..20].try_into().unwrap())),
+        ]
+    }
+    let number = |record: &[u8]| u32::from_le_bytes(record[..4].try_into().unwrap());
+    let mut maxima = [0_u64; 3];
+    let mut previous: Option<u32> = None;
+    let mut ranges = 0_usize;
+    let mut index = 8;
+    for (row, record) in entries.chunks_exact(RECORD).enumerate() {
+        let current = number(record);
+        if previous.is_some_and(|last| last >= current) || record[4] > 2 { return None; }
+        if previous.and_then(|last| last.checked_add(1)) != Some(current) {
+            if ranges > 0 {
+                let start = u32::from_le_bytes(output.get(index - 4..index)?.try_into().ok()?);
+                output.get_mut(index - 4..index)?.copy_from_slice(&(row as u32 - start).to_le_bytes());
+            }
+            output.get_mut(index..index + 4)?.copy_from_slice(&current.to_le_bytes());
+            output.get_mut(index + 4..index + 8)?.copy_from_slice(&(row as u32).to_le_bytes());
+            index += 8;
+            ranges += 1;
+        }
+        previous = Some(current);
+        for (max, field) in maxima.iter_mut().zip(fields(record)) { *max = (*max).max(field); }
+    }
+    if ranges == 0 { return None; }
+    let start = u32::from_le_bytes(output.get(index - 4..index)?.try_into().ok()?);
+    output.get_mut(index - 4..index)?.copy_from_slice(&(entries.len() as u32 / RECORD as u32 - start).to_le_bytes());
+    let widths = maxima.map(|field| ((64 - field.leading_zeros()).max(1) as usize).div_ceil(8));
+    output[..4].copy_from_slice(&[widths[0] as u8, widths[1] as u8, widths[2] as u8, 0]);
+    output[4..8].copy_from_slice(&(ranges as u32).to_le_bytes());
+    for record in entries.chunks_exact(RECORD) {
+        for (field, width) in fields(record).into_iter().zip(widths) {
+            output.get_mut(index..index + width)?.copy_from_slice(&field.to_be_bytes()[8 - width..]);
+            index += width;
+        }
+    }
+    Some(index)
+}

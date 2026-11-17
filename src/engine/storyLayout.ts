@@ -79,6 +79,7 @@ function composeStory(paragraphs: StoryParagraphs, frame: TextElement, styles: P
   const bottom = frame.height - padding - reserveBottom;
   const lines: StoryLine[] = [];
   const wrapObstacles = prepareWrapObstacles(options.obstacles || [], frame);
+  const placeLine = layoutKernels?.place(wrapObstacles, frame.x, frame.y, padding, bottom, width, gutter, cols);
   let column = 0, y = padding, offset = 0, consumed = 0;
   const appliedBreaks = new Set<number>();
   if (width <= 0 || bottom <= padding) {
@@ -95,6 +96,8 @@ function composeStory(paragraphs: StoryParagraphs, frame: TextElement, styles: P
     let segments: StorySegment[] = [], lineWidth = 0, height = paragraphHeight;
     let lineStart = offset;
     let availableWidth = width, inset = 0;
+    const grid = options.baselineGrid;
+    const pitch = (style?.snapToBaseline ?? frame.snapToBaseline) && grid?.enabled ? grid.incrementPt * PT : 0;
     const prepare = (): boolean => {
       if (segments.length) return true;
       let probes = 0;
@@ -103,13 +106,15 @@ function composeStory(paragraphs: StoryParagraphs, frame: TextElement, styles: P
         column++;
         y = padding;
       }
+      const position = placeLine?.(column, y, height, grid?.startMm ?? 0, pitch);
+      if (position) {
+        column = position.column; y = position.y;
+        inset = position.inset; availableWidth = position.width;
+        return position.fits;
+      }
       for (;;) {
         if (++probes > 4096) return false;
-        const grid = options.baselineGrid;
-        if ((style?.snapToBaseline ?? frame.snapToBaseline) && grid?.enabled) {
-          const pitch = grid.incrementPt * PT;
-          if (pitch > 0) y = grid.startMm - frame.y + Math.max(0, Math.ceil((frame.y + y - grid.startMm) / pitch - 0.00001)) * pitch;
-        }
+        if (pitch > 0 && grid) y = grid.startMm - frame.y + Math.max(0, Math.ceil((frame.y + y - grid.startMm) / pitch - 0.00001)) * pitch;
         if (y + height > bottom + 0.0001) { column++; y = padding; }
         if (column >= cols || y + height > bottom + 0.0001) return false;
         const left = frame.x + padding + column * (width + gutter);

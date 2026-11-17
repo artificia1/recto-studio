@@ -41,12 +41,14 @@ export async function createNodePdfRaster(source: Uint8Array | PdfPayload, asset
       }
       return { matches, nextPage, pageTruncated: null };
     },
-    async scan() {
+    async scan(pageIndices?: readonly number[]) {
       const { proofFingerprint, proofScanEdge } = await import('../engine/proofFingerprint');
       if (pdf.numPages > 500) throw new Error('Review supports up to 500 pages per PDF.');
       const pages = [];
-      for (let index = 1; index <= pdf.numPages; index++) {
-        const page = await pdf.getPage(index);
+      const selected = pageIndices ?? Array.from({ length: pdf.numPages }, (_, index) => index);
+      for (const index of selected) {
+        if (!Number.isInteger(index) || index < 0 || index >= pdf.numPages) throw new Error('The proof page does not exist.');
+        const page = await pdf.getPage(index + 1);
         try {
           const natural = page.getViewport({ scale: 1 });
           if (!(natural.width > 0 && natural.height > 0 && Number.isFinite(natural.width + natural.height))) throw new Error('The PDF contains an invalid page size.');
