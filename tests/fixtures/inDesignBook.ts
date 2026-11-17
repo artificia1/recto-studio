@@ -23,6 +23,9 @@ const styles = `<Styles>
     <ParagraphStyle Self="ParagraphStyle/Subtitle" Name="Подзаголовок" FontStyle="Bold Italic" PointSize="13">
       <Properties><BasedOn type="string">ParagraphStyle/Story</BasedOn></Properties>
     </ParagraphStyle>
+    <ParagraphStyle Self="ParagraphStyle/Epigraph source " Name="Эпиграф Подпись " FontStyle="Italic" PointSize="10">
+      <Properties><BasedOn type="string">$ID/[No paragraph style]</BasedOn><AppliedFont type="string">Arial</AppliedFont></Properties>
+    </ParagraphStyle>
     <ParagraphStyle Self="ParagraphStyle/Hebrew" Name="Text Hebrew" Justification="RightJustified">
       <Properties><BasedOn type="string">$ID/[No paragraph style]</BasedOn></Properties>
     </ParagraphStyle>
@@ -53,8 +56,8 @@ const frame = (self: string, story: string, x: number) =>
       <PathPointType Anchor="400 560" LeftDirection="400 560" RightDirection="400 560"/><PathPointType Anchor="400 60" LeftDirection="400 60" RightDirection="400 60"/>
     </PathPointArray></GeometryPathType></PathGeometry></Properties></TextFrame>`;
 const story = (self: string, ranges: string) => `<Story Self="${self}">${ranges}</Story>`;
-const range = (style: string, text: string) =>
-  `<ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/${style}"><CharacterStyleRange><Content>${text}</Content><Br/></CharacterStyleRange></ParagraphStyleRange>`;
+const range = (style: string, text: string, local = '') =>
+  `<ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/${style}"${local}><CharacterStyleRange><Content>${text}</Content><Br/></CharacterStyleRange></ParagraphStyleRange>`;
 
 export interface InDesignBookOptions {
   /** Artwork on the left page of the "A" parent, which the spread's left page uses. */
@@ -85,8 +88,11 @@ export function inDesignBook({ leftParentArtwork = false }: InDesignBookOptions 
     'Stories/Story_folio-story.xml': story('folio-story', range('Text', 'Running head <?ACE 18?>')),
     'Spreads/Spread_one.xml': `<Spread Self="one">${page('left', 'empty', -453.54)}${page('right', 'head', 0)}
       ${frame('imprint', 'imprint-story', -453.54)}${frame('chapter', 'chapter-story', 0)}</Spread>`,
-    'Stories/Story_imprint-story.xml': story('imprint-story', range('$ID/NormalParagraphStyle', 'Imprint')),
-    'Stories/Story_chapter-story.xml': story('chapter-story', range('Story', 'Налить кофе') + range('Text', 'Кофе по-израильски')),
+    // The series plate centres its text with a local override of [Basic Paragraph]'s alignment.
+    'Stories/Story_imprint-story.xml': story('imprint-story', range('$ID/NormalParagraphStyle', 'Imprint') +
+      range('$ID/NormalParagraphStyle', 'Series plate', ' SingleWordJustification="LeftAlign" Justification="CenterAlign"')),
+    'Stories/Story_chapter-story.xml': story('chapter-story', range('Story', 'Налить кофе') + range('Epigraph source ', '(Исход, 21:24)') +
+      range('Text', 'Кофе по-израильски')),
   });
 }
 
