@@ -811,12 +811,15 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
       const storyGrepRules: Omit<GrepStyleRule, 'id'>[] = [];
 
       for (const [rangeIndex, pr] of pRanges.entries()) {
-        const applied = decodeStoryXml(extractXmlAttr(pr, 'AppliedParagraphStyle') || '');
-        const paragraphStyle = applied ? styleRefs.get(applied) || parsedStyles.find(style => style.name.toLowerCase() === applied.replace('ParagraphStyle/', '').toLowerCase()) : undefined;
+        // Style names may end in a space. Styles are keyed by their trimmed Self, so the reference is trimmed too.
+        const applied = decodeStoryXml(extractXmlAttr(pr, 'AppliedParagraphStyle') || '').trim();
+        const paragraphStyle = applied ? styleRefs.get(applied) || parsedStyles.find(style => style.name.toLowerCase() === applied.replace('ParagraphStyle/', '').trim().toLowerCase()) : undefined;
         if (paragraphStyle && !detectedStyleId) detectedStyleId = paragraphStyle.id;
 
         const alignment = inDesignAlignment(extractXmlAttr(pr, 'Justification') || '');
         if (alignment) detectedAlignment = alignment;
+        // Alignment set on the paragraph itself overrides its style's, as an InDesign local override does.
+        const local = alignment && alignment !== paragraphStyle?.alignment ? { formatting: { alignment } } : {};
 
         // Extract content and breaks within paragraph
         const cRanges = extractXmlTags(pr, 'CharacterStyleRange');
@@ -905,10 +908,10 @@ export async function parseIdmlPackage(idmlBuffer: ArrayBuffer | Uint8Array, fil
         // Preserve hard breaks as structured paragraph boundaries with the same run formatting.
         let currentRuns: StoryRun[] = [];
         for (const run of richRuns) run.text.split('\n').forEach((text, index) => {
-          if (index) { richParagraphs.push({ styleId: paragraphStyle?.id, runs: currentRuns.length ? currentRuns : [{ text: '' }] }); currentRuns = []; }
+          if (index) { richParagraphs.push({ styleId: paragraphStyle?.id, ...local, runs: currentRuns.length ? currentRuns : [{ text: '' }] }); currentRuns = []; }
           currentRuns.push({ ...run, text });
         });
-        richParagraphs.push({ styleId: paragraphStyle?.id, runs: currentRuns.length ? currentRuns : [{ text: '' }] });
+        richParagraphs.push({ styleId: paragraphStyle?.id, ...local, runs: currentRuns.length ? currentRuns : [{ text: '' }] });
         if (paraStr.length > 0) {
           paragraphs.push(paraStr);
         }

@@ -33,7 +33,8 @@ describe('InDesign styles on import', () => {
   it('snaps to the baseline grid only the styles set to align to it', async () => {
     const project = await parseIdmlPackage(inDesignBook(), 'book.idml');
     const snapping = project.paragraphStyles.filter(style => style.id.startsWith('idml-')).map(style => [style.name, style.snapToBaseline]);
-    expect(Object.fromEntries(snapping)).toEqual({ '[Basic Paragraph]': false, Text: false, 'Рассказ': false, 'Подзаголовок': false, 'Text Hebrew': false, 'На сетке': true });
+    expect(Object.fromEntries(snapping)).toEqual({ '[Basic Paragraph]': false, Text: false, 'Рассказ': false, 'Подзаголовок': false,
+      'Эпиграф Подпись': false, 'Text Hebrew': false, 'На сетке': true });
   });
 
   it('carries the font style and tracking of a paragraph style', async () => {
@@ -51,6 +52,24 @@ describe('InDesign styles on import', () => {
     expect(basic.fontFamily).toBe('Arial');
     const imprint = project.spreads[0].elements.find(element => element.id === 'idml-imprint') as TextElement;
     expect(imprint.storyContent?.paragraphs[0].styleId).toBe(basic.id);
+  });
+
+  it('keeps an alignment set on the paragraph over its style\'s', async () => {
+    const project = await parseIdmlPackage(inDesignBook(), 'book.idml');
+    const imprint = project.spreads[0].elements.find(element => element.id === 'idml-imprint') as TextElement;
+    const [plain, plate] = imprint.storyContent!.paragraphs;
+    expect(plain.formatting?.alignment).toBeUndefined();
+    expect(plate.formatting?.alignment).toBe('center');
+    expect(plate.styleId).toBe(plain.styleId);
+  });
+
+  it('finds a style whose name ends in a space', async () => {
+    const project = await parseIdmlPackage(inDesignBook(), 'book.idml');
+    const source = project.paragraphStyles.find(style => style.name.trim() === 'Эпиграф Подпись')!;
+    expect(source).toMatchObject({ fontFamily: 'Arial', fontSizePt: 10, italic: true });
+    const chapter = project.spreads[0].elements.find(element => element.id === 'idml-chapter') as TextElement;
+    const paragraph = chapter.storyContent!.paragraphs.find(item => item.runs.some(run => run.text.includes('Исход')))!;
+    expect(paragraph.styleId).toBe(source.id);
   });
 
   it('takes the baseline grid from the document', async () => {
