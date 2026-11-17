@@ -28,7 +28,7 @@ export function canvasRunFont(style: RunStyle, scale: number): string {
 /** Measurements and layout are in millimetres, independent of canvas zoom. */
 export const measureStoryText: StoryMeasure = (text, style) => {
   const font = fontManager.getFont(style.fontFamily);
-  if (font) return font.layout(text).advanceWidth / font.unitsPerEm * style.fontSizePt * PT;
+  if (font) return (layoutKernels?.measureFont(font, text) ?? font.layout(text).advanceWidth) / font.unitsPerEm * style.fontSizePt * PT;
   if (context === undefined) {
     context = typeof document !== 'undefined' ? document.createElement('canvas').getContext('2d')
       : typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(1, 1).getContext('2d') : null;

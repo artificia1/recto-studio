@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { layoutContentTables } from '../src/engine/tableLayout';
 import { mergeTableCellDown, tableGrid, unmergeTableCell } from '../src/engine/tableCells';
 import { StateManager } from '../src/state/stateManager';
+import { layoutKernels, warmLayout } from '../src/engine/layoutRuntime';
 import type { TableElement } from '../src/types';
 
 const table = (changes: Partial<TableElement> = {}): TableElement => ({ id: 'table', pageId: 'page', type: 'table', x: 0, y: 0, width: 20, height: 22,
@@ -11,6 +12,21 @@ const table = (changes: Partial<TableElement> = {}): TableElement => ({ id: 'tab
 const measure = (text: string) => [...new Intl.Segmenter().segment(text)].length;
 
 describe('advanced table pagination', () => {
+  it('matches Rust and TypeScript for split and vertically merged rows on different frames', async () => {
+    const cells = mergeTableCellDown([[{ text: 'H' }, { text: 'H2' }], [{ text: 'A' }, { text: 'B' }],
+      [{ text: 'C' }, { text: 'D' }], [{ text: 'Several words across pages. '.repeat(15) }, { text: 'Second cell' }],
+      [{ text: 'F' }, { text: 'F2' }]], 1, 0);
+    const source = table({ height: 42, width: 40, rows: cells.length, cols: 2,
+      headerRowCount: 1, footerRowCount: 1, cells, rowHeightsMm: [0, 10, 12, 37, 0] });
+    const frames = Array.from({ length: 24 }, (_, i) => ({ ...source, id: String(i), width: i % 2 ? 60 : 40 }));
+    const expected = layoutContentTables(frames, measure);
+    expect(expected.pendingRows).toEqual([]);
+    expect(expected.frames.some(frame => frame.rows.some(row => row.continuesOnNext))).toBe(true);
+    await warmLayout();
+    expect(layoutKernels?.tableRows(0, 1, 30, 0, 0, 1, 4, 0, true, () =>
+      ({ height: 12, minimum: 0, lines: 2, groupEnd: 1 }))).toEqual([{ index: 0, lines: 2, height: 10 }]);
+    expect(layoutContentTables(frames, measure)).toEqual(expected);
+  });
   it('continues one long row across changing frame widths without losing or repeating words', () => {
     const text = Array.from({ length: 75 }, (_, i) => `word${i}`).join(' ');
     const source = table({ cells: [[{ text }]] });

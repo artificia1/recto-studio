@@ -1,5 +1,6 @@
 import type { jsPDF } from 'jspdf';
-import type { Font, Glyph, GlyphRun } from 'fontkit';
+import type { Font, Glyph } from 'fontkit';
+import type { PositionedFontRun } from '../engine/fontShapingWasm';
 import type { ProjectState } from '../types';
 import { fontManager } from '../fontManager';
 import { bindFontDrawing } from './pdfFontDrawing';
@@ -89,10 +90,10 @@ function encode(entry: PdfFontSubset, glyph: Glyph, unicode: string): PdfGlyphCo
 }
 
 /** Draw shaped glyphs as PDF text when glyph order also preserves logical Unicode order. */
-function drawEmbeddedText(doc: jsPDF, font: Font, run: GlyphRun, text: string, x: number, y: number, size: number, invisible = false) {
+function drawEmbeddedText(doc: jsPDF, font: Font, run: PositionedFontRun, text: string, x: number, y: number, size: number, invisible = false) {
   const entry = embedded.get(doc)?.get(font);
   if (!entry || !text) return false;
-  const logical = run.glyphs.map(glyph => String.fromCodePoint(...glyph.codePoints));
+  const logical = run.logical ?? run.glyphs.map(glyph => String.fromCodePoint(...glyph.codePoints));
   const glyphs = invisible ? font.glyphsForString(text) : run.glyphs;
   if (!invisible && (logical.some(value => !value) || logical.join('') !== text)) return false;
   const values = invisible ? Array.from(text) : logical;

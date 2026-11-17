@@ -1,6 +1,7 @@
 // Recto Font Manager: Google Fonts Loader & Custom Font Drop Engine
 
 import { normalizeVariations, variationCss, type FontVariations } from './engine/fontVariations';
+import { layoutKernels, warmLayout } from './engine/layoutRuntime';
 import type { FontAsset } from './types';
 
 export interface FontMetadata {
@@ -244,6 +245,8 @@ export class FontManager {
       }
     }
 
+    await warmLayout();
+    await layoutKernels?.registerFont(parsed, bytes, coordinates);
     beforeActivate?.();
     if (face) {
       const previous = this.activeFaces.get(familyName);

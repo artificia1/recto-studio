@@ -1,8 +1,9 @@
 import type { DocumentSettings, Footnote, StoryContent, TextElement } from '../types';
 import { measureStoryText, type StoryLine } from './storyLayout';
+import { layoutKernels } from './layoutRuntime';
 
 export interface NoteContinuation { note: Footnote; rows: string[]; started: boolean }
-interface NoteLine { text: string; noteId: string; column: number; x: number; y: number }
+export interface NoteLine { text: string; noteId: string; column: number; x: number; y: number }
 
 type NoteSettings = { settings: Pick<DocumentSettings, 'footnoteSettings'> };
 
@@ -67,17 +68,20 @@ export function composeFootnotes(state: NoteSettings, frame: TextElement, conten
   }
   const capacity = Math.max(0, Math.floor((frame.height - padding - anchorBottom - 3) / lineHeight));
   let carry = incoming.map(item => ({ ...item, rows: item.rows.flatMap(row => wrapFootnote(row, columnWidth, size, family)) }));
-  const lines: NoteLine[] = [];
-  let maxRows = 0;
-  let unplacedAnchors = 0;
-  for (const [column, anchors] of atColumn.entries()) {
+  const labelFor = (item: NoteContinuation) => wrapFootnote(`${item.note.number}. Continued`, columnWidth, size, family);
+  const native = layoutKernels?.footnotes(atColumn, carry, capacity, columnWidth + gutter, lineHeight, labelFor);
+  const lines: NoteLine[] = native?.lines ?? [];
+  let maxRows = native?.maxRows ?? 0;
+  let unplacedAnchors = native?.unplacedAnchors ?? 0;
+  if (native) carry = native.carry;
+  else for (const [column, anchors] of atColumn.entries()) {
     let row = 0;
     const append = (text: string, noteId: string) => {
       lines.push({ text, noteId, column, x: column * (columnWidth + gutter), y: row++ * lineHeight });
     };
     const next: NoteContinuation[] = [];
     for (const item of carry) {
-      const label = item.started ? wrapFootnote(`${item.note.number}. Continued`, columnWidth, size, family) : [];
+      const label = item.started ? labelFor(item) : [];
       const available = capacity - row - anchors.length - label.length;
       if (available < 1) { next.push(item); continue; }
       for (const line of label) append(line, item.note.id);

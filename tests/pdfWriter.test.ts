@@ -1,5 +1,5 @@
 import { jsPDF } from 'jspdf';
-import { PDFDocument, PDFNumber, PDFRef, PDFStreamWriter, PDFWriter } from 'pdf-lib';
+import { PDFDocument, PDFNumber, PDFObjectStream, PDFRef, PDFStreamWriter, PDFWriter } from 'pdf-lib';
 import { expect, it, vi } from 'vitest';
 import { loadRasterWasm } from '../src/engine/rasterWasm';
 import { serializeJsPdf } from '../src/export/pdfPayload';
@@ -61,13 +61,16 @@ it('writes native compressed cross references for multiple object streams and sp
   pdf.context.assign(PDFRef.of(400, 7), pdf.context.obj({ Sparse: true }));
   const expected = await pdf.save({ useObjectStreams: true, updateFieldAppearances: false });
   expect((await loadRasterWasm())?.pdf_stream_xref).toBeTypeOf('function');
+  expect((await loadRasterWasm())?.pdf_object_stream).toBeTypeOf('function');
   const fallback = vi.spyOn(PDFStreamWriter, 'forContext');
+  const objectFallback = vi.spyOn(PDFObjectStream, 'withContextAndObjects');
   try {
     const payload = await serializePdf(pdf, true);
     expect(fallback).not.toHaveBeenCalled();
+    expect(objectFallback).not.toHaveBeenCalled();
     expect(Buffer.from(payload.bytes()).equals(expected)).toBe(true);
     expect((await loadPdfChunks(payload)).getPageCount()).toBe(1);
-  } finally { fallback.mockRestore(); }
+  } finally { fallback.mockRestore(); objectFallback.mockRestore(); }
 });
 
 it('streams a classic xref larger than the single-batch limit and preserves sparse subsections', async () => {

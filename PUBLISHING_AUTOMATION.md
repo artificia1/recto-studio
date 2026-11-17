@@ -45,6 +45,15 @@ or run plugins, shell commands, or document scripts. Your MCP host receives
 the text and metadata returned by tools. Use a dedicated workspace and a
 trusted host for confidential publications.
 
+### Native inspection
+
+Build the standalone Rust executable with
+`cargo build --locked --release --manifest-path native/Cargo.toml --bin recto-native`.
+Run `recto-native inspect publication.recto` for source-file inventory.
+Use `recto-native mcp --workspace <folder>` for read-only inspection over
+stdio. It exposes `recto_inspect_publication` for saved spreads, pages, and
+element counts. The Node entry point above serves proofs, edits, and exports.
+
 ## Try it on a publication
 
 Start with a `.recto` file in the configured workspace. With the default

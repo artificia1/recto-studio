@@ -8,11 +8,15 @@ interface RasterExports {
   raster_mark_diff?(length: number): number;
   layout_optimal_breaks?(count: number, widths: number, tolerance: number, hyphenCost: number): number;
   layout_place_line?(length: number): number;
+  layout_table_rows?(count: number, frame: number, used: number, footer: number, padding: number, leading: number,
+    consumed: number, allowSplit: boolean): number;
+  layout_note_columns?(count: number, columns: number, capacity: number): number;
   layout_story_lines?(count: number, columns: number, y: number, padding: number, bottom: number, height: number): number;
   pdf_classic_xref?(count: number): number;
   pdf_classic_rows?(count: number, rangeLength: number): number;
   pdf_classic_footer?(offset: bigint): number;
   pdf_stream_xref?(count: number): number;
+  pdf_object_stream?(count: number, length: number): number;
 }
 
 /** Mark corresponding RGBA tiles in place. Older packaged modules use the JS path. */

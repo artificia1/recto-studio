@@ -5,6 +5,7 @@ node_modules/
 dist/
 build/
 src-tauri/target/
+/native/target/
 src-tauri/gen/
 src-tauri/mcp-runtime/
 release-artifacts/

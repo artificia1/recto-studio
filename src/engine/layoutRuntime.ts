@@ -6,6 +6,11 @@ import type { RunStyle, StoryMeasure } from './storyLayout';
 type LinePlan = { tokens: { text: string; width: number; style: RunStyle }[]; starts: number[] };
 
 interface LayoutKernels {
+  shapeFont: typeof import('./fontShapingWasm').shapeRegisteredFont;
+  measureFont: typeof import('./fontShapingWasm').measureRegisteredFont;
+  registerFont: typeof import('./fontShapingWasm').registerShapingFont;
+  tableRows: typeof import('./paginationWasm').nativeTableRows;
+  footnotes: typeof import('./paginationWasm').nativeFootnotes;
   place(obstacles: WrapObstacle[], x: number, y: number, padding: number, bottom: number,
     width: number, gutter: number, columns: number):
     ((column: number, y: number, height: number, gridStart: number, pitch: number) =>

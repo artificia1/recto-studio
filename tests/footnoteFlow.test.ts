@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { layoutFrameNotes, publicationSnapshot } from '../src/engine/publicationReferences';
 import { publicationPreflight } from '../src/engine/publicationPreflight';
 import { StateManager } from '../src/state/stateManager';
+import { layoutKernels, warmLayout } from '../src/engine/layoutRuntime';
 import type { TextElement } from '../src/types';
 
 function manuscript(columns = 1) {
@@ -21,6 +22,23 @@ function manuscript(columns = 1) {
 const citation = 'A detailed source citation with enough text to continue. '.repeat(22) + 'Final citation line.';
 
 describe('footnote continuation', () => {
+  it('matches the host column and overflow output when Rust takes over footnote allocation', async () => {
+    const manager = manuscript(2);
+    const note = manager.insertFootnote('head', citation, 2);
+    manager.insertFootnote('head', 'Second note.');
+    const source = manager.getState();
+    const snapshot = () => {
+      const state = publicationSnapshot(source);
+      return layoutFrameNotes(state, state.spreads[0].elements[0] as TextElement);
+    };
+    const expected = snapshot();
+    expect(expected.remaining).toBeGreaterThan(0);
+    await warmLayout();
+    const notePlan = layoutKernels?.footnotes([[], []], [{ note, rows: ['a', 'b', 'c'], started: true }],
+      2, 10, 3, () => ['Continued']);
+    expect(notePlan?.lines.map(line => [line.column, line.text])).toEqual([[0, 'Continued'], [0, 'a'], [1, 'Continued'], [1, 'b']]);
+    expect(snapshot()).toEqual(expected);
+  });
   it('keeps the anchor with the first line and flows the remaining note to the next frame', () => {
     const manager = manuscript();
     const state = manager.getState();

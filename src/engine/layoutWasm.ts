@@ -3,11 +3,15 @@ import type { WrapObstacle } from './wrapGeometry';
 import type { StoryRun } from '../types';
 import type { RunStyle, StoryMeasure } from './storyLayout';
 import { getRasterWasm, loadRasterWasm } from './rasterWasm';
+import { nativeFootnotes, nativeTableRows } from './paginationWasm';
+import { measureRegisteredFont, registerShapingFont, shapeRegisteredFont } from './fontShapingWasm';
 
 export async function loadLayoutKernels() {
   const engine = await loadRasterWasm();
   if (!engine?.layout_optimal_breaks) return undefined;
-  return { optimalBreaks: nativeOptimalBreaks, storyLines: nativeStoryLines, place: nativePlacement };
+  return { optimalBreaks: nativeOptimalBreaks, storyLines: nativeStoryLines, place: nativePlacement,
+    tableRows: nativeTableRows, footnotes: nativeFootnotes, shapeFont: shapeRegisteredFont,
+    measureFont: measureRegisteredFont, registerFont: registerShapingFont };
 }
 
 function nativePlacement(obstacles: WrapObstacle[], x: number, frameY: number, padding: number, bottom: number,

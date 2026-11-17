@@ -5,6 +5,10 @@
 <h1 align="center">Recto Studio</h1>
 
 <p align="center">
+  Created by <a href="https://github.com/artificia1"><strong>Abhinav Sidhu</strong></a>
+</p>
+
+<p align="center">
   Open-source desktop publishing for books, magazines, zines, and print.
 </p>
 
@@ -107,10 +111,13 @@ over, which checks run automatically, and what needs review before production.
 
 - **Rust migration in progress.** Recto uses bounded Rust WebAssembly kernels
   for raster processing, paragraph break selection, line placement around
-  artwork and baseline grids, and classic and compressed PDF cross-references.
+  artwork and baseline grids, linked-table pagination, footnote flow, and
+  classic and compressed PDF cross-references and object streams.
   Desktop raster commands also probe image dimensions before allocating pixel
-  surfaces. The editor, font shaping, and PDF object construction continue to
-  use the existing TypeScript stack.
+  surfaces. Supported embedded OpenType fonts use Rust shaping for measurement
+  and PDF glyph positioning. The editor, PDF object graph, and production
+  publishing commands continue to use the existing TypeScript stack. A
+  standalone Rust command is available for read-only project inspection.
 
 - **Editorial interchange.** Expand IDML and Scribus coverage for compound
   paths, complex groups, linked images, and advanced typography. Run a broader
@@ -147,7 +154,7 @@ browser tests plus independent checks on generated publication files.
 
 ## Project and support
 
-Created by **Abhinav Sidhu**. Recto Studio is released under the [MIT License](LICENSE).
+Recto Studio is released under the [MIT License](LICENSE).
 
 Thanks to [shega2901](https://github.com/shega2901) for testing real InDesign
 exports and reporting IDML import and development startup bugs.

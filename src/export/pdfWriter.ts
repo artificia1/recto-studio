@@ -1,4 +1,4 @@
-import { PDFHeader, PDFInvalidObject, PDFName, PDFObjectStream, PDFRef, PDFStream, PDFStreamWriter,
+import { PDFHeader, PDFInvalidObject, PDFName, PDFNumber, PDFObjectStream, PDFRef, PDFStream, PDFStreamWriter,
   PDFTrailerDict, PDFWriter, type PDFDocument, type PDFObject } from 'pdf-lib';
 import type { SerializationInfo } from 'pdf-lib/es/core/writers/PDFWriter';
 import { PdfPayload } from './pdfPayload';
@@ -49,6 +49,37 @@ function writeObjects(header: WritablePdfObject, objects: [ObjectRef, WritablePd
 }
 
 type Engine = NonNullable<Awaited<ReturnType<typeof loadRasterWasm>>>;
+
+function objectStream(context: PDFDocument['context'], engine: Engine, contents: [PDFRef, PDFObject][]) {
+  const encode = engine.pdf_object_stream;
+  if (encode) {
+    const lengths = contents.map(([, object]) => object.sizeInBytes());
+    const header = contents.length * 8;
+    const length = lengths.reduce((total, size) => total + size, header);
+    if (length <= engine.raster_capacity()) {
+      const input = new Uint8Array(engine.memory.buffer, engine.raster_input(), length);
+      const records = new DataView(input.buffer, input.byteOffset, header);
+      let offset = header;
+      for (const [i, [ref, object]] of contents.entries()) {
+        records.setUint32(i * 8, ref.objectNumber, true);
+        records.setUint32(i * 8 + 4, lengths[i], true);
+        if (object.copyBytesInto(input, offset) !== lengths[i]) throw new Error('PDF object size changed during serialization.');
+        offset += lengths[i];
+      }
+      const size = encode(contents.length, length);
+      if (size > 4) {
+        const output = new Uint8Array(engine.memory.buffer, engine.raster_output(), size);
+        const first = new DataView(output.buffer, output.byteOffset, 4).getUint32(0, true);
+        const stream = context.flateStream(output.subarray(4));
+        stream.dict.set(PDFName.of('Type'), PDFName.of('ObjStm'));
+        stream.dict.set(PDFName.of('N'), PDFNumber.of(contents.length));
+        stream.dict.set(PDFName.of('First'), PDFNumber.of(first));
+        return stream;
+      }
+    }
+  }
+  return PDFObjectStream.withContextAndObjects(context, contents, true);
+}
 
 function appendFooter(payload: PdfPayload, engine: Engine, offset: number) {
   const size = engine.pdf_classic_footer?.(BigInt(offset));
@@ -124,7 +155,8 @@ function writeStreamPdf(pdf: PDFDocument, engine: Engine, version?: string) {
   // One contiguous scratch input, including a conservative upper bound for object streams.
   const maxEntries = objects.length + Math.ceil(objects.length / objectsPerStream) + 2;
   if (maxEntries * 24 > engine.raster_capacity() || context.largestObjectNumber + maxEntries >= 0xffffffff) return undefined;
-  const entries = new DataView(engine.memory.buffer, engine.raster_input(), maxEntries * 24);
+  // Object-stream assembly borrows the same scratch space before the xref is finalized.
+  const entries = new DataView(new ArrayBuffer(maxEntries * 24));
   let count = 0;
   function record(number: number, type: number, offset: number, generation: number) {
     const row = count++ * 24;
@@ -156,11 +188,12 @@ function writeStreamPdf(pdf: PDFDocument, engine: Engine, version?: string) {
   }
   for (const { ref, contents } of groups) {
     record(ref.objectNumber, 1, payload.size, 0);
-    writeIndirect(payload, ref, PDFObjectStream.withContextAndObjects(context, contents, true));
+    writeIndirect(payload, ref, objectStream(context, engine, contents));
   }
   const xrefRef = PDFRef.of(nextObject++);
   const offset = payload.size;
   record(xrefRef.objectNumber, 1, offset, 0);
+  new Uint8Array(engine.memory.buffer, engine.raster_input(), count * 24).set(new Uint8Array(entries.buffer, 0, count * 24));
   const size = engine.pdf_stream_xref(count);
   if (!size) return undefined;
   const output = new DataView(engine.memory.buffer, engine.raster_output(), size);

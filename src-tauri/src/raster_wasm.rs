@@ -2,6 +2,7 @@ mod raster_kernel;
 mod layout_kernel;
 mod pdf_kernel;
 mod story_geometry;
+mod pagination_kernel;
 
 use std::ptr::addr_of_mut;
 use std::slice;
@@ -13,6 +14,63 @@ static mut TABLE: [u8; 256] = [0; 256];
 
 fn number(bytes: &[u8]) -> f64 {
     f64::from_le_bytes(bytes.try_into().expect("eight-byte number"))
+}
+
+fn integer(bytes: &[u8]) -> u32 {
+    u32::from_le_bytes(bytes.try_into().unwrap())
+}
+
+#[no_mangle]
+pub extern "C" fn layout_table_rows(count: usize, frame: f64, used: f64, footer: f64, padding: f64, leading: f64,
+    consumed: f64, allow_split: bool) -> i32 {
+    if count > 8192 || leading <= 0.0 { return -1; }
+    let input = unsafe { slice::from_raw_parts(raster_input(), count * 24) };
+    let output = unsafe { slice::from_raw_parts_mut(raster_output(), count * 16) };
+    let rows: Vec<_> = input.chunks_exact(24).map(|row| pagination_kernel::TableRow {
+        height: number(&row[..8]), minimum: number(&row[8..16]),
+        lines: integer(&row[16..20]), group_end: integer(&row[20..24]) as usize,
+    }).collect();
+    let mut slots = output.chunks_exact_mut(16);
+    let mut written = 0;
+    let result = pagination_kernel::table_rows(&rows, frame, used, footer, padding, leading, consumed, allow_split, |index, height, lines| {
+        let Some(slot) = slots.next() else { return false; };
+        slot[..4].copy_from_slice(&(index as u32).to_le_bytes());
+        slot[4..8].copy_from_slice(&lines.to_le_bytes());
+        slot[8..16].copy_from_slice(&height.to_le_bytes());
+        written += 1;
+        true
+    });
+    if result.is_some() { written } else { -1 }
+}
+
+#[no_mangle]
+pub extern "C" fn layout_note_columns(count: usize, columns: u32, capacity: u32) -> i32 {
+    if count > 4096 || columns == 0 || columns > 128 || capacity > 65535 { return -1; }
+    let input = unsafe { slice::from_raw_parts(raster_input(), count * 16) };
+    let output = unsafe { slice::from_raw_parts_mut(raster_output(), TILE_BYTES) };
+    let notes: Vec<_> = input.chunks_exact(16).map(|record| pagination_kernel::Note {
+        rows: integer(&record[..4]), label_rows: integer(&record[4..8]),
+        anchor: integer(&record[8..12]), started: record[12] != 0,
+    }).collect();
+    if notes.iter().any(|note| note.rows > 65535 || note.label_rows > 65535) { return -1; }
+    let mut cursor = 16;
+    let result = pagination_kernel::footnote_columns(&notes, columns, capacity, |placement| {
+        let Some(record) = output.get_mut(cursor..cursor + 24) else { return false; };
+        let fields = [placement.index as u32, placement.column, placement.row, placement.start, placement.count, placement.label];
+        for (bytes, value) in record.chunks_exact_mut(4).zip(fields) { bytes.copy_from_slice(&value.to_le_bytes()); }
+        cursor += 24;
+        true
+    });
+    let Some((carry, max_rows, unplaced)) = result else { return -1; };
+    let end = cursor + carry.len() * 8;
+    let Some(carry_buffer) = output.get_mut(cursor..end) else { return -1; };
+    for (record, (index, start)) in carry_buffer.chunks_exact_mut(8).zip(&carry) {
+        record[..4].copy_from_slice(&(*index as u32).to_le_bytes());
+        record[4..].copy_from_slice(&start.to_le_bytes());
+    }
+    let header = [((cursor - 16) / 24) as u32, carry.len() as u32, max_rows, unplaced];
+    for (bytes, value) in output[..16].chunks_exact_mut(4).zip(header) { bytes.copy_from_slice(&value.to_le_bytes()); }
+    end as i32
 }
 
 #[no_mangle]
@@ -120,6 +178,18 @@ pub extern "C" fn pdf_stream_xref(count: usize) -> usize {
     let input = unsafe { slice::from_raw_parts(raster_input(), count * 24) };
     let output = unsafe { slice::from_raw_parts_mut(raster_output(), TILE_BYTES) };
     pdf_kernel::stream_xref(input, output).unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "C" fn pdf_object_stream(count: usize, length: usize) -> usize {
+    if count == 0 || count > 50 || length > TILE_BYTES || length < count * 8 { return 0; }
+    let input = unsafe { slice::from_raw_parts(raster_input(), length) };
+    let output = unsafe { slice::from_raw_parts_mut(raster_output(), TILE_BYTES) };
+    let (records, objects) = input.split_at(count * 8);
+    let (header, body) = output.split_at_mut(4);
+    let Some((first, size)) = pdf_kernel::object_stream(records, objects, body) else { return 0; };
+    header.copy_from_slice(&(first as u32).to_le_bytes());
+    size + 4
 }
 
 #[no_mangle]

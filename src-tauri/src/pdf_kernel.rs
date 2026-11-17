@@ -54,6 +54,28 @@ pub fn classic_footer(xref_offset: u64, output: &mut [u8]) -> Option<usize> {
     Some(writer.position() as usize)
 }
 
+/// Build the /ObjStm index and copy serialized PDF objects into their indexed positions.
+pub fn object_stream(records: &[u8], objects: &[u8], output: &mut [u8]) -> Option<(usize, usize)> {
+    let mut writer = Cursor::new(output);
+    let size = |record: &[u8]| u32::from_le_bytes(record[4..8].try_into().unwrap()) as usize;
+    let mut offset = 0usize;
+    for record in records.chunks_exact(8) {
+        let number = u32::from_le_bytes(record[..4].try_into().unwrap());
+        write!(writer, "{number} {offset} ").ok()?;
+        offset = offset.checked_add(size(record) + 1)?;
+    }
+    let first = writer.position() as usize;
+    let mut cursor = 0usize;
+    for record in records.chunks_exact(8) {
+        let end = cursor.checked_add(size(record))?;
+        writer.write_all(objects.get(cursor..end)?).ok()?;
+        writer.write_all(b"\n").ok()?;
+        cursor = end;
+    }
+    if cursor != objects.len() { return None; }
+    Some((first, writer.position() as usize))
+}
+
 /// Encode PDF /W fields as big-endian integers and generate its sparse /Index.
 /// Input records carry object number, type, byte offset or stream ID, and generation or stream index.
 pub fn stream_xref(entries: &[u8], output: &mut [u8]) -> Option<usize> {
