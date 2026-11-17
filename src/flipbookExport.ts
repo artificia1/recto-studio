@@ -30,7 +30,7 @@ function svgGradient(gradient: FillGradient | undefined, id: string, width: numb
   return `<defs><${tag} id="${id}" gradientUnits="userSpaceOnUse" ${geometry}>${stops}</${tag}></defs>`;
 }
 
-export function generateFlipbookHtml(state: ProjectState): string {
+export function generateFlipbookHtml(state: ProjectState, onWarning?: (message: string) => void): string {
   const widthMm = state.settings.widthMm || 210;
   const heightMm = state.settings.heightMm || 297;
   const title = escapeXml(state.settings.title || 'Recto Interactive Flipbook');
@@ -293,7 +293,7 @@ export function generateFlipbookHtml(state: ProjectState): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
   <title>${title} — Interactive Web Flipbook</title>
   <style>
-    ${embeddedFontCss(state.embeddedFonts)}
+    ${embeddedFontCss(state.embeddedFonts, onWarning)}
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       background: #111113;
@@ -736,8 +736,9 @@ ${spreadsMarkup}
 export function exportDocumentToFlipbook(
   state: ProjectState,
   options: FlipbookExportOptions = { download: true }
-): { html: string; filename: string } {
-  const html = generateFlipbookHtml(state);
+): { html: string; filename: string; warnings: string[] } {
+  const warnings: string[] = [];
+  const html = generateFlipbookHtml(state, message => warnings.push(message));
   const baseTitle = state.settings.title.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'recto-flipbook';
   const filename = `${baseTitle}.html`;
 
@@ -753,6 +754,6 @@ export function exportDocumentToFlipbook(
     URL.revokeObjectURL(url);
   }
 
-  return { html, filename };
+  return { html, filename, warnings };
 }
 import { tableCellSpan } from './engine/tableCells';
