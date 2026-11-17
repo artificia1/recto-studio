@@ -194,6 +194,13 @@ describe('word and paragraph selection', () => {
     expect(paragraphRangeAt(text, 12)).toEqual({ start: 0, end: 12 });
     expect(paragraphRangeAt(text, 13)).toEqual({ start: 13, end: 24 });
   });
+
+  it('handles empty paragraphs at either end of the text', () => {
+    expect(paragraphRangeAt('\nabc\n', 0)).toEqual({ start: 0, end: 0 });
+    expect(paragraphRangeAt('\nabc\n', 2)).toEqual({ start: 1, end: 4 });
+    expect(paragraphRangeAt('\nabc\n', 5)).toEqual({ start: 5, end: 5 });
+    expect(wordRangeAt('\nabc', 0)).toEqual({ start: 0, end: 0 });
+  });
 });
 
 describe('content of an edited frame', () => {

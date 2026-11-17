@@ -369,7 +369,8 @@ export function wordRangeAt(text: string, offset: number): { start: number; end:
 /** The paragraph around `offset`, without its break, as a triple-click selects it. */
 export function paragraphRangeAt(text: string, offset: number): { start: number; end: number } {
   const at = Math.max(0, Math.min(offset, text.length));
-  const start = text.lastIndexOf('\n', at - 1) + 1;
+  // lastIndexOf treats a negative position as 0, which would find a break at the very start.
+  const start = at === 0 ? 0 : text.lastIndexOf('\n', at - 1) + 1;
   const next = text.indexOf('\n', at);
   return { start, end: next === -1 ? text.length : next };
 }

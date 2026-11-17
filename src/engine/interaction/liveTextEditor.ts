@@ -376,9 +376,11 @@ export class LiveTextEditor {
   }
 
   /** Pointer movement. Extends a drag selection; reports whether the pointer is over the frame's text. */
-  public pointerMove(canvasX: number, canvasY: number): 'drag' | 'over' | null {
+  public pointerMove(canvasX: number, canvasY: number, buttons?: number): 'drag' | 'over' | null {
     const frame = this.host.frame();
     if (!frame) return null;
+    // The button was released where no mouseup reached us (outside the window): the drag is over.
+    if (buttons === 0) this.drag = null;
     if (this.drag) {
       const hit = this.hit(frame, canvasX, canvasY);
       if (hit) {
@@ -404,6 +406,8 @@ export class LiveTextEditor {
 
   /** Follow text changes made elsewhere (inspector, reflow, collaborators) while nothing is pending here. */
   public syncWithState(frame: TextElement) {
+    // The frame, its styles or its neighbours may have changed: compose afresh for the next input.
+    this.composed = null;
     const current = frame.text || '';
     if (current === this.committedText) return;
     if (this.textarea.value === this.committedText) {

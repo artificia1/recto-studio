@@ -895,7 +895,7 @@ export class SpreadCanvas {
 
     const live = this.activeInlineEditor?.live;
     if (live && !this.isPanning) {
-      const over = live.pointerMove(screenX, screenY);
+      const over = live.pointerMove(screenX, screenY, e.buttons);
       if (over) {
         this.canvas.style.cursor = 'text';
         return;
