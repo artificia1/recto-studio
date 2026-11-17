@@ -255,3 +255,30 @@ test('keeps the textarea editor as the fallback when in-place editing is off', a
   await expect(editor).toHaveCount(0);
   expect((await frameState(page)).text).toBe(`${HEADING}\n${BODY}\n${QUOTE} (old editor)`);
 });
+
+test('types a tab character instead of leaving the frame', async ({ page }) => {
+  await openStyledProject(page);
+  const point = await bodyLine(page);
+  await page.mouse.dblclick(point.x, point.y);
+  const editor = page.locator('.canvas-inline-editor');
+  await expect(editor).toBeFocused();
+  const at = (await selection(page)).start;
+  const original = await editor.inputValue();
+
+  await page.keyboard.press('Tab');
+  await expect(editor).toBeFocused();
+  expect((await editor.inputValue()).slice(at, at + 1)).toBe('\t');
+  expect(await selection(page)).toMatchObject({ start: at + 1, end: at + 1 });
+  // The tab is an ordinary edit: Ctrl+Z takes it back.
+  await page.keyboard.press('Control+Z');
+  await expect(editor).toHaveValue(original);
+  await page.keyboard.press('Tab');
+  // Shift+Tab has no meaning in a text frame yet, but it must not move focus out of it either.
+  await page.keyboard.press('Shift+Tab');
+  await expect(editor).toBeFocused();
+
+  await page.keyboard.press('Control+Enter');
+  const text = (await frameState(page)).text;
+  expect(text.slice(at, at + 1)).toBe('\t');
+  expect(text.replace('\t', '')).toBe(`${HEADING}\n${BODY}\n${QUOTE}`);
+});
