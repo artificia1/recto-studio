@@ -19,6 +19,12 @@ const frameId = z.string().min(1).max(512);
 const preset = z.enum(['screen', 'accessible', 'print', 'press', 'flattened', 'pdfx1a', 'pdfx4']);
 const pagination = { offset: z.int().min(0).max(1_000_000).default(0), limit: z.int().min(1).max(50).default(30) };
 const projectInput = { project: file.describe('Workspace-relative .recto or .json publication'), revision: revision.optional() };
+const proofPage = z.int().min(1).max(500);
+const proofBounds = z.strictObject({
+  left: z.number().min(0).max(1), top: z.number().min(0).max(1),
+  right: z.number().min(0).max(1), bottom: z.number().min(0).max(1),
+}).refine(box => box.left < box.right && box.top < box.bottom, 'The region must have positive width and height.');
+const proofSelection = z.strictObject({ page: proofPage, bounds: proofBounds });
 
 function createPublishingServer(workspace: PublishingWorkspace) {
   const server = new McpServer({ name: 'recto-publishing', version: pkg.version }, {
@@ -115,6 +121,43 @@ function createPublishingServer(workspace: PublishingWorkspace) {
     const { preview, ...result } = await locatePdfProofText(bytes, args.quote, args.matchCase, args.startPage, args.pageLimit);
     if (preview && preview.length <= 3 * 1024 * 1024) images.push({ type: 'image', mimeType: 'image/png', data: preview.toString('base64') });
     return { ...result, sha256: sha256(bytes), coordinates: 'Page-relative fractions, measured from top left. Bounds cover matched text fragments.' };
+  });
+
+  tool('recto_render_pdf_region', 'Render a detailed PNG of part of a local PDF page. Reuse the normalized bounds from text location or supply your own region.', z.strictObject({
+    pdf: file, ...proofSelection.shape, revision: revision.optional(),
+    maxEdge: z.int().min(128).max(1800).default(1200),
+  }), async (args, images) => {
+    const bytes = await workspace.read(args.pdf, ['.pdf'], limits.pdf);
+    const hash = sha256(bytes);
+    if (args.revision && args.revision !== hash) throw new Error('The PDF changed. Locate the region in the current edition.');
+    const { openProof } = await import('./proof');
+    const renderer = await openProof(bytes);
+    try {
+      let edge = args.maxEdge;
+      let preview = await renderer.region(args.page - 1, args.bounds, edge);
+      while (preview.bytes.length > limits.proofImage && edge > 256) {
+        edge = Math.max(256, Math.floor(edge * 0.7));
+        preview = await renderer.region(args.page - 1, args.bounds, edge);
+      }
+      const included = preview.bytes.length <= limits.proofImage;
+      if (included) images.push({ type: 'image', mimeType: 'image/png', data: preview.bytes.toString('base64') });
+      return { sha256: hash, page: args.page, bounds: args.bounds, width: preview.width, height: preview.height,
+        dpi: preview.dpi, previewIncluded: included };
+    } finally { await renderer.destroy(); }
+  });
+
+  tool('recto_verify_pdf_proof_regions', 'Check approval-critical regions against a pinned PDF revision. Compare the same marks or copy across independently selected physical pages and return the first visual failure.', z.strictObject({
+    approvedPdf: file, approvedRevision: revision, currentPdf: file, currentRevision: revision.optional(),
+    checks: z.array(z.strictObject({
+      name: z.string().trim().min(1).max(96), approved: proofSelection, current: proofSelection,
+      maxChangedFraction: z.number().min(0).max(1).default(0),
+    })).min(1).max(12),
+    maxEdge: z.int().min(256).max(1200).default(800),
+  }), async (args, images) => {
+    const { verifyProofRegions } = await import('./proofChecks');
+    const result = await verifyProofRegions(workspace, args);
+    if (result.image) images.push({ type: 'image', mimeType: 'image/png', data: result.image.toString('base64') });
+    return result.report;
   });
 
   tool('recto_compile_publication', 'Compile a Markdown or DOCX manuscript into an editable book, reader-order PDF, and PNG proof. Optionally budget offset signatures and compare a prior PDF.', publicationRecipe, async (args, images) => {
@@ -339,7 +382,7 @@ function createPublishingServer(workspace: PublishingWorkspace) {
       'book archive inspection, approved proof comparison, interior PDF and delivery ZIP', 'visual proof images', 'shared desktop canvas snapshots',
       'desktop edit proposals', 'frame geometry and style application', 'image levels and curves', 'vector decorations',
       'table merging, row splitting and continuation pages', 'manuscript layout planning and compilation',
-      'delivery PDF inspection', 'PDF proof comparison and text location', 'PDF edition page matching', 'staged draft visual review'],
+      'delivery PDF inspection', 'PDF proof comparison and text location', 'PDF region previews and approval checks', 'PDF edition page matching', 'staged draft visual review'],
     editorOnly: ['live canvas gestures', 'continuous screen sharing', 'live collaboration', 'native dialogs and updater',
       'freehand drawing', 'advanced style authoring'],
   }));

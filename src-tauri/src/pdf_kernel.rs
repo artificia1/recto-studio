@@ -1,15 +1,38 @@
 use std::io::{Cursor, Write};
 
+fn classic_record(raw: &[u8]) -> (u32, u32, u64) {
+    (
+        u32::from_le_bytes(raw[..4].try_into().unwrap()),
+        u32::from_le_bytes(raw[4..8].try_into().unwrap()),
+        u64::from_le_bytes(raw[8..16].try_into().unwrap()),
+    )
+}
+
+fn write_classic_rows(entries: &[u8], writer: &mut Cursor<&mut [u8]>, range_length: usize) -> Option<()> {
+    if range_length != 0 {
+        let (first, _, _) = classic_record(entries.get(..16)?);
+        writeln!(writer, "{first} {range_length}").ok()?;
+    }
+    for row in entries.chunks_exact(16) {
+        let (number, generation, offset) = classic_record(row);
+        if generation > 65_535 || offset > 9_999_999_999 { return None; }
+        let status = if number == 0 { 'f' } else { 'n' };
+        writeln!(writer, "{offset:010} {generation:05} {status} ").ok()?;
+    }
+    Some(())
+}
+
+pub fn classic_rows(entries: &[u8], output: &mut [u8], range_length: usize) -> Option<usize> {
+    let mut writer = Cursor::new(output);
+    write_classic_rows(entries, &mut writer, range_length)?;
+    Some(writer.position() as usize)
+}
+
 pub fn classic_xref(entries: &[u8], output: &mut [u8]) -> Option<usize> {
     let mut writer = Cursor::new(output);
     writer.write_all(b"xref\n").ok()?;
     let entry = |index: usize| -> Option<(u32, u32, u64)> {
-        let raw = entries.get(index * 16..(index + 1) * 16)?;
-        Some((
-            u32::from_le_bytes(raw[..4].try_into().ok()?),
-            u32::from_le_bytes(raw[4..8].try_into().ok()?),
-            u64::from_le_bytes(raw[8..].try_into().ok()?),
-        ))
+        Some(classic_record(entries.get(index * 16..(index + 1) * 16)?))
     };
     let count = entries.len() / 16;
     let mut start = 0;
@@ -19,13 +42,7 @@ pub fn classic_xref(entries: &[u8], output: &mut [u8]) -> Option<usize> {
         while end < count && u64::from(entry(end)?.0) == u64::from(first) + (end - start) as u64 {
             end += 1;
         }
-        writeln!(writer, "{first} {}", end - start).ok()?;
-        for index in start..end {
-            let (number, generation, offset) = entry(index)?;
-            if generation > 65_535 || offset > 9_999_999_999 { return None; }
-            let status = if number == 0 { 'f' } else { 'n' };
-            writeln!(writer, "{offset:010} {generation:05} {status} ").ok()?;
-        }
+        write_classic_rows(&entries[start * 16..end * 16], &mut writer, end - start)?;
         start = end;
     }
     Some(writer.position() as usize)

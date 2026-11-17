@@ -17,7 +17,10 @@ const paragraph = (text: string, styleId = 'body') => ({ styleId, runs: [{ text 
 describe('Paragraph composition rules', () => {
   it('preserves positions and source offsets through Rust-composed columns and overset', async () => {
     const text = 'One two  three café text with tabs\tand several more words in a single paragraph. '.repeat(8);
-    const content: StoryContent = { version: 1, paragraphs: [paragraph('Short first paragraph.'), paragraph(text)] };
+    const content: StoryContent = { version: 1, paragraphs: [paragraph('Short first paragraph.'),
+      { runs: [{ text: 'Styled words and a forced break\n\n', bold: true, fontSizePt: 11 },
+        { text: text.slice(0, 145), italic: true }, { text: '³', noteId: 'anchor' },
+        { text: text.slice(145), letterSpacingPt: 0.2 }] }] };
     const frames = [
       { ...frame, x: 1.23, height: 18, width: 61, columns: 2, alignment: 'justify' },
       { ...frame, x: 38.7, height: 120, width: 57.2, columns: 3, alignment: 'center' },
@@ -27,7 +30,12 @@ describe('Paragraph composition rules', () => {
     expect(expected[0].overset).toBe(true);
     expect(expected[0].lines.some(line => line.column === 1)).toBe(true);
     await warmLayout();
-    expect(layoutKernels?.uniformLines).toBeTypeOf('function');
+    const plan = layoutKernels?.storyLines(content.paragraphs[1].runs, run => ({
+      ...run, fontFamily: 'serif', fontSizePt: 10, color: '#000', letterSpacingPt: 0,
+    }), measure, 0, 35, 4, 0, 2, 0, 0, 19, 4);
+    expect(plan?.tokens.filter(token => token.text === '\n')).toHaveLength(2);
+    expect(plan?.tokens.some(token => token.text === '3' && token.style.fontSizePt === 7)).toBe(true);
+    expect(plan?.starts.length).toBeGreaterThan(0);
     frames.forEach((testFrame, index) => expect(layoutStory(content, testFrame, [], [], measure)).toEqual(expected[index]));
   });
   it('stops resolving styles when the current frame is full', () => {

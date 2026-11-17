@@ -1,11 +1,13 @@
 import type { KnuthItem } from './knuthPlass';
 import type { WrapObstacle } from './wrapGeometry';
+import type { StoryRun } from '../types';
+import type { RunStyle, StoryMeasure } from './storyLayout';
 import { getRasterWasm, loadRasterWasm } from './rasterWasm';
 
 export async function loadLayoutKernels() {
   const engine = await loadRasterWasm();
-  if (!engine?.layout_optimal_breaks || !engine.layout_uniform_lines) return undefined;
-  return { optimalBreaks: nativeOptimalBreaks, uniformLines: nativeUniformLines, place: nativePlacement };
+  if (!engine?.layout_optimal_breaks) return undefined;
+  return { optimalBreaks: nativeOptimalBreaks, storyLines: nativeStoryLines, place: nativePlacement };
 }
 
 function nativePlacement(obstacles: WrapObstacle[], x: number, frameY: number, padding: number, bottom: number,
@@ -92,24 +94,48 @@ export function nativeOptimalBreaks(items: KnuthItem[], lineWidths: number | num
   }));
 }
 
-function nativeUniformLines(text: string, measure: (text: string) => number, widths: number[],
+function nativeStoryLines(runs: StoryRun[], resolve: (run: StoryRun) => RunStyle, measure: StoryMeasure,
+  x: number, width: number, gutter: number, column: number, columns: number,
   y: number, padding: number, bottom: number, height: number) {
   const engine = getRasterWasm();
-  if (!engine?.layout_uniform_lines || text.length > 8192 || text.includes('\n') || !widths.length || widths.length > 128 ||
-      !widths.every(width => Number.isFinite(width) && width > 1)) return undefined;
-  const words = text.match(/[^\S\n]+|[^\s]+/gu) || [];
-  if (words.length < 16 || words.length > 4096) return undefined;
-  const advances = words.map(measure);
-  const input = new DataView(engine.memory.buffer, engine.raster_input());
-  for (let i = 0; i < words.length; i++) {
-    const advance = advances[i];
-    if (!Number.isFinite(advance) || advance < 0) return undefined;
-    input.setFloat64(i * 16, advance, true);
-    input.setUint8(i * 16 + 8, Number(/^\s+$/u.test(words[i])));
+  if (!engine?.layout_story_lines || !Number.isInteger(columns) || columns > 128 || column >= columns) return undefined;
+  const widths = Array.from({ length: columns - column }, (_, index) => {
+    const left = x + padding + (index + column) * (width + gutter);
+    return left + width - left;
+  });
+  if (!widths.every(value => Number.isFinite(value) && value > 1)) return undefined;
+  const tokens: { text: string; width: number; style: RunStyle }[] = [];
+  let length = 0;
+  for (const run of runs) {
+    length += run.text.length;
+    if (length > 8192) return undefined;
+    const style = resolve(run);
+    let rendered = run.text;
+    if (run.noteId) {
+      style.fontSizePt *= 0.7;
+      const digits = '⁰¹²³⁴⁵⁶⁷⁸⁹';
+      rendered = rendered.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]/g, digit => String(digits.indexOf(digit)));
+    }
+    for (const text of rendered.match(/[^\S\n]+|\n|[^\s]+/gu) || []) {
+      tokens.push({ text, width: 0, style });
+    }
   }
-  widths.forEach((width, i) => input.setFloat64(words.length * 16 + i * 8, width, true));
-  const count = engine.layout_uniform_lines(words.length, widths.length, y, padding, bottom, height);
-  if (count < 0 || count > words.length) return undefined;
+  if (tokens.length < 16 || tokens.length > 4096) return undefined;
+  // Finish callbacks before acquiring shared scratch memory.
+  for (const token of tokens) {
+    const { text, style } = token;
+    if (text === '\n') continue;
+    token.width = measure(text, style) + Array.from(text).length * style.letterSpacingPt * (25.4 / 72);
+    if (!Number.isFinite(token.width) || token.width < 0) return undefined;
+  }
+  const input = new DataView(engine.memory.buffer, engine.raster_input());
+  for (const [i, token] of tokens.entries()) {
+    input.setFloat64(i * 16, token.width, true);
+    input.setUint8(i * 16 + 8, token.text === '\n' ? 2 : Number(/^\s+$/u.test(token.text)));
+  }
+  widths.forEach((value, i) => input.setFloat64(tokens.length * 16 + i * 8, value, true));
+  const count = engine.layout_story_lines(tokens.length, widths.length, y, padding, bottom, height);
+  if (count < 0 || count > tokens.length) return undefined;
   const output = new DataView(engine.memory.buffer, engine.raster_output(), count * 4);
-  return { words, advances, starts: Array.from({ length: count }, (_, i) => output.getUint32(i * 4, true)) };
+  return { tokens, starts: Array.from({ length: count }, (_, i) => output.getUint32(i * 4, true)) };
 }

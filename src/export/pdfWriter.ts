@@ -64,24 +64,49 @@ function writeClassicPdf(pdf: PDFDocument, engine: Engine, version?: string): Pd
   const objects = context.enumerateIndirectObjects();
   const count = objects.length + 1;
   // Allow room for a separate subsection header per entry in a sparse document.
-  if (5 + count * 33 > engine.raster_capacity() ||
-      objects.some(([ref]) => ref.objectNumber <= 0 || ref.objectNumber > 0xffffffff ||
-        ref.generationNumber < 0 || ref.generationNumber > 65535)) return undefined;
-  const entries = new DataView(engine.memory.buffer, engine.raster_input(), count * 16);
-  let cursor = 0;
-  function record(number: number, generation: number, offset: number) {
-    entries.setUint32(cursor, number, true);
-    entries.setUint32(cursor + 4, generation, true);
-    entries.setBigUint64(cursor + 8, BigInt(offset), true);
-    cursor += 16;
+  const fitsScratch = 5 + count * 33 <= engine.raster_capacity();
+  const batch = engine.pdf_classic_rows;
+  if ((!fitsScratch && !batch) ||
+      objects.some(([ref], index) => !Number.isInteger(ref.objectNumber) || ref.objectNumber <= 0 ||
+        ref.objectNumber > 0xffffffff || (index > 0 && ref.objectNumber <= objects[index - 1][0].objectNumber) ||
+        !Number.isInteger(ref.generationNumber) || ref.generationNumber < 0 || ref.generationNumber > 65535)) return undefined;
+  const batchRows = 16_384;
+  const entries = new DataView(engine.memory.buffer, engine.raster_input(), (fitsScratch ? count : batchRows) * 16);
+  const offsets = fitsScratch ? undefined : new Float64Array(count);
+  function pack(row: number, number: number, generation: number, offset: number) {
+    entries.setUint32(row * 16, number, true);
+    entries.setUint32(row * 16 + 4, generation, true);
+    entries.setBigUint64(row * 16 + 8, BigInt(offset), true);
   }
-  record(0, 65535, 0);
+  let cursor = 1;
+  if (!offsets) pack(0, 0, 65535, 0);
   const payload = writeObjects(PDFHeader.forVersion(1, 7), objects, version,
-    (ref, offset) => record(ref.objectNumber, ref.generationNumber, offset));
+    (ref, offset) => {
+      if (offsets) offsets[cursor++] = offset;
+      else pack(cursor++, ref.objectNumber, ref.generationNumber, offset);
+    });
   const xrefOffset = payload.size;
-  const xrefSize = engine.pdf_classic_xref(count);
-  if (!xrefSize) return undefined;
-  payload.append(new Uint8Array(engine.memory.buffer, engine.raster_output(), xrefSize));
+  function appendRows(size: number) {
+    if (size) payload.append(new Uint8Array(engine.memory.buffer, engine.raster_output(), size));
+    return size > 0;
+  }
+  if (offsets && batch) {
+    payload.append('xref\n');
+    const numberAt = (row: number) => row === 0 ? 0 : objects[row - 1][0].objectNumber;
+    for (let first = 0; first < count;) {
+      let end = first + 1;
+      while (end < count && numberAt(end) === numberAt(end - 1) + 1) end++;
+      for (let start = first; start < end; start += batchRows) {
+        const rows = Math.min(batchRows, end - start);
+        for (let i = 0; i < rows; i++) {
+          const row = start + i;
+          pack(i, numberAt(row), row === 0 ? 65535 : objects[row - 1][0].generationNumber, offsets[row]);
+        }
+        if (!appendRows(batch(rows, start === first ? end - first : 0))) return undefined;
+      }
+      first = end;
+    }
+  } else if (!appendRows(engine.pdf_classic_xref(count))) return undefined;
   payload.append('\n');
   const { Root, Encrypt, Info, ID } = context.trailerInfo;
   const trailer = PDFTrailerDict.of(context.obj({ Size: context.largestObjectNumber + 1, Root, Encrypt, Info, ID }));

@@ -1,6 +1,13 @@
 import { pdfRangeOptions } from './pdfRanges';
 import type { PdfPayload } from './pdfPayload';
 
+export interface PdfProofRegion {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
 /** Native canvas is only loaded by the headless exporter, never bundled into the app. */
 export async function createNodePdfRaster(source: Uint8Array | PdfPayload, assets?: { standardFontDataUrl: string; cMapUrl: string; wasmUrl: string }) {
   const canvasModule = '@napi-rs/canvas', pdfModule = 'pdfjs-dist/legacy/build/pdf.mjs';
@@ -72,6 +79,34 @@ export async function createNodePdfRaster(source: Uint8Array | PdfPayload, asset
         page.cleanup();
         canvas.width = canvas.height = 1;
       }
+    },
+    async region(pageIndex: number, region: PdfProofRegion, maxEdge: number) {
+      if (!Number.isInteger(pageIndex) || pageIndex < 0 || pageIndex >= pdf.numPages) throw new Error('The proof page does not exist.');
+      const { left, top, right, bottom } = region;
+      if (![left, top, right, bottom].every(Number.isFinite) || left < 0 || top < 0 || right > 1 || bottom > 1 ||
+          left >= right || top >= bottom || !Number.isInteger(maxEdge) || maxEdge < 1 || maxEdge > 2400) {
+        throw new Error('Choose a positive in-page region and an image size of at most 2400 pixels.');
+      }
+      const page = await pdf.getPage(pageIndex + 1);
+      try {
+        const view = page.getViewport({ scale: 1 });
+        if (!(view.width > 0 && view.height > 0 && Number.isFinite(view.width + view.height))) {
+          throw new Error('The PDF contains an invalid page size.');
+        }
+        const w = (right - left) * view.width, h = (bottom - top) * view.height;
+        const scale = Math.min(24, maxEdge / Math.max(w, h));
+        const width = Math.max(1, Math.min(maxEdge, Math.ceil(w * scale)));
+        const height = Math.max(1, Math.min(maxEdge, Math.ceil(h * scale)));
+        const canvas = native.createCanvas(width, height), context = canvas.getContext('2d');
+        try {
+          const viewport = page.getViewport({ scale });
+          await page.render({ canvas, canvasContext: context, viewport,
+            transform: [1, 0, 0, 1, -left * viewport.width, -top * viewport.height],
+            annotationMode: engine.AnnotationMode.DISABLE, background: '#ffffff' }).promise;
+          return { bytes: canvas.toBuffer('image/png') as Buffer, width, height, dpi: scale * 72,
+            widthPt: w, heightPt: h };
+        } finally { canvas.width = canvas.height = 1; }
+      } finally { page.cleanup(); }
     },
     async png(pageIndices: readonly number[], maxEdge: number) {
       const pages = await Promise.all(pageIndices.map(index => pdf.getPage(index + 1)));

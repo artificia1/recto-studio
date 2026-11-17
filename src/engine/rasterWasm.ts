@@ -8,8 +8,9 @@ interface RasterExports {
   raster_mark_diff?(length: number): number;
   layout_optimal_breaks?(count: number, widths: number, tolerance: number, hyphenCost: number): number;
   layout_place_line?(length: number): number;
-  layout_uniform_lines?(count: number, columns: number, y: number, padding: number, bottom: number, height: number): number;
+  layout_story_lines?(count: number, columns: number, y: number, padding: number, bottom: number, height: number): number;
   pdf_classic_xref?(count: number): number;
+  pdf_classic_rows?(count: number, rangeLength: number): number;
   pdf_classic_footer?(offset: bigint): number;
   pdf_stream_xref?(count: number): number;
 }

@@ -96,16 +96,21 @@ pub fn optimal_breaks(items: &[Item], widths: &[f64], tolerance: f64, hyphen_cos
 /// Find all line starts for a uniform-width run of measured tokens. A wide token
 /// requires the host's grapheme-aware recovery, so leave that run to the host.
 pub fn uniform_line_starts(
-    tokens: impl Iterator<Item = (f64, bool)>,
+    tokens: impl Iterator<Item = (f64, u8)>,
     minimum_width: f64,
     mut next_width: impl FnMut() -> f64,
     mut record: impl FnMut(usize),
 ) -> bool {
     let mut used = 0.0;
     let mut width = next_width();
-    for (index, (advance, whitespace)) in tokens.enumerate() {
+    for (index, (advance, kind)) in tokens.enumerate() {
+        if kind == 2 {
+            used = 0.0;
+            width = next_width();
+            continue;
+        }
         if advance > minimum_width { return false; }
-        let limit = if whitespace { width + 0.0001 } else { width };
+        let limit = if kind == 1 { width + 0.0001 } else { width };
         if used != 0.0 && used + advance > limit {
             record(index);
             used = 0.0;

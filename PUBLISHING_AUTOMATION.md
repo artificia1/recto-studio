@@ -71,7 +71,7 @@ For batch work, use a saved template with `{{field}}` placeholders:
 | --- | --- |
 | Find a physical page, frame, style, or story | `recto_inspect_publication`, `recto_read_spread`, `recto_read_story` |
 | Preview and save edits | `recto_preview_story_edit`, `recto_preview_layout_edit`, `recto_save_draft` |
-| Inspect the layout visually | `recto_render_preview_image`, `recto_view_shared_canvas` |
+| Inspect the layout visually | `recto_render_preview_image`, `recto_render_pdf_region`, `recto_view_shared_canvas` |
 | Review visual changes across pages | `recto_review_publication_change`, `recto_review_pdf_editions` |
 | Review a proposal in the desktop editor | `recto_offer_desktop_proposal` |
 | Start a document or convert a file | `recto_create_publication`, `recto_import_publication` (IDML and Scribus) |
@@ -106,6 +106,19 @@ moves, classifies the visual difference, and can return an overlay PNG. Walk
 `nextOffset` to review the rest of the publication. For PDFs without project
 IDs, `recto_review_pdf_editions` finds exact, unique matches across page moves
 and reports ambiguous matches as uncertain.
+
+Pass the bounds and SHA-256 from `recto_locate_pdf_text` to
+`recto_render_pdf_region` to inspect small type, labels, or marks at higher
+resolution. Bounds are fractions of the rotated page, measured from its
+top-left corner.
+
+Use `recto_verify_pdf_proof_regions` to protect approved regions such as legal
+copy, a logo, or a printer mark. Pin the approved PDF by SHA-256 and give each
+region a physical page and bounds in each edition. The tool reports whether
+every region passed and can return an overlay for the first failure. It counts
+pixels where any RGB channel differs by more than 16 out of 255. It reports
+physical size changes separately and uses zero changed pixels as the default
+allowance.
 
 **Visual feedback.** Call `recto_render_preview_image` with a project and
 revision, or with a `planId`. Choose a one-based `page` or `spread`, or omit

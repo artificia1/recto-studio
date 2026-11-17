@@ -59,6 +59,13 @@ pub extern "C" fn layout_optimal_breaks(count: usize, width_count: usize, tolera
 
 #[no_mangle]
 pub extern "C" fn layout_uniform_lines(
+    count: usize, columns: usize, y: f64, padding: f64, bottom: f64, height: f64,
+) -> i32 {
+    layout_story_lines(count, columns, y, padding, bottom, height)
+}
+
+#[no_mangle]
+pub extern "C" fn layout_story_lines(
     count: usize, columns: usize, mut y: f64, padding: f64, bottom: f64, height: f64,
 ) -> i32 {
     if count > 4096 || columns == 0 || columns > 128 { return -1; }
@@ -76,7 +83,7 @@ pub extern "C" fn layout_uniform_lines(
         width_at(column)
     };
     let output = unsafe { slice::from_raw_parts_mut(raster_output(), count * 4) };
-    let tokens = input.chunks_exact(16).map(|token| (number(&token[..8]), token[8] != 0));
+    let tokens = input.chunks_exact(16).map(|token| (number(&token[..8]), token[8]));
     let mut written = 0;
     if !layout_kernel::uniform_line_starts(tokens, minimum_width, &mut next_width, |index| {
         output[written..written + 4].copy_from_slice(&(index as u32).to_le_bytes());
@@ -97,6 +104,14 @@ pub extern "C" fn pdf_classic_xref(count: usize) -> usize {
 pub extern "C" fn pdf_classic_footer(offset: u64) -> usize {
     let output = unsafe { slice::from_raw_parts_mut(raster_output(), 64) };
     pdf_kernel::classic_footer(offset, output).unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "C" fn pdf_classic_rows(count: usize, range_length: usize) -> usize {
+    if count == 0 || count > TILE_BYTES / 20 { return 0; }
+    let input = unsafe { slice::from_raw_parts(raster_input(), count * 16) };
+    let output = unsafe { slice::from_raw_parts_mut(raster_output(), TILE_BYTES) };
+    pdf_kernel::classic_rows(input, output, range_length).unwrap_or(0)
 }
 
 #[no_mangle]

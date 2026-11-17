@@ -155,32 +155,25 @@ function composeStory(paragraphs: StoryParagraphs, frame: TextElement, styles: P
       return true;
     };
     const cjk = !!style.cjkLineBreak;
-    const plainRun = paragraph.runs.length === 1 ? paragraph.runs[0] : undefined;
-    if (layoutKernels && plainRun && !plainRun.noteId && !cjk && !style.hyphenate &&
-        !wrapObstacles.length && !breaks.size && !(options.baselineGrid?.enabled && (style.snapToBaseline ?? frame.snapToBaseline)) &&
-        Number.isInteger(cols) && cols <= 128) {
-      const runStyle = resolveRunStyle(frame, style, plainRun, characters);
-      const widths = Array.from({ length: cols - column }, (_, index) => {
-        const left = frame.x + padding + (index + column) * (width + gutter);
-        return left + width - left;
-      });
-      const plan = layoutKernels.uniformLines(plainRun.text,
-        word => measure(word, runStyle) + Array.from(word).length * runStyle.letterSpacingPt * PT,
-        widths, y, padding, bottom, height);
+    if (layoutKernels && !cjk && !style.hyphenate && !wrapObstacles.length && !breaks.size && !(pitch > 0)) {
+      const plan = layoutKernels.storyLines(paragraph.runs, run => resolveRunStyle(frame, style, run, characters),
+        measure, frame.x, width, gutter, column, cols, y, padding, bottom, height);
       if (plan) {
-        const { words, advances, starts } = plan;
         let next = 0;
-        for (let i = 0; i < words.length; i++) {
-          if (i === starts[next]) {
+        for (const [i, token] of plan.tokens.entries()) {
+          if (i === plan.starts[next]) {
             if (!flush(false)) return { lines, consumed, overset: true };
             next++;
           }
           if (!prepare()) return { lines, consumed, overset: true };
-          const text = words[i], advance = advances[i];
-          segments.push({ text, x: lineWidth, width: advance, style: runStyle });
-          lineWidth += advance;
-          offset += text.length;
-          height = Math.max(height, runStyle.fontSizePt * PT * leading);
+          offset += token.text.length;
+          if (token.text === '\n') {
+            if (!flush(true)) return { lines, consumed, overset: true };
+            continue;
+          }
+          segments.push({ ...token, x: lineWidth });
+          lineWidth += token.width;
+          height = Math.max(height, token.style.fontSizePt * PT * leading);
         }
         if (pi < paragraphs.length - 1) offset++;
         if (!flush(true)) return { lines, consumed, overset: true };

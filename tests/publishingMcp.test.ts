@@ -134,6 +134,46 @@ describe('Recto publishing MCP over stdio', () => {
     expect(location.isError, JSON.stringify(location.content)).not.toBe(true);
     expect(location.structuredContent).toMatchObject({ pageCount: 2, nextPage: null, matches: [{ page: 2 }] });
     expect((location.content as { type: string }[]).some(block => block.type === 'image')).toBe(true);
+    const { matches, sha256 } = location.structuredContent as {
+      matches: { boxes: Array<{ left: number; top: number; right: number; bottom: number }> }[]; sha256: string;
+    };
+    const bounds = matches[0].boxes[0];
+    const args = { pdf: pdfPath, page: 2, bounds, revision: sha256, maxEdge: 300 };
+    const detail = await call('recto_render_pdf_region', args, readClient);
+    expect(detail.isError, JSON.stringify(detail.content)).not.toBe(true);
+    expect(detail.structuredContent).toMatchObject({ sha256, page: 2, width: 300, bounds, previewIncluded: true });
+    const crop = detail.content.find(block => block.type === 'image');
+    expect(crop?.type).toBe('image');
+    if (crop?.type !== 'image') throw new Error('Expected a cropped proof image');
+    const { createCanvas, loadImage } = await import('@napi-rs/canvas');
+    const image = await loadImage(Buffer.from(crop.data, 'base64'));
+    const canvas = createCanvas(image.width, image.height);
+    const context = canvas.getContext('2d');
+    context.drawImage(image, 0, 0);
+    const pixels = context.getImageData(0, 0, image.width, image.height).data;
+    expect(pixels.some((value, index) => index % 4 === 0 && value < 128)).toBe(true);
+    expect((await call('recto_render_pdf_region', { ...args, revision: '0'.repeat(64) }, readClient)).isError).toBe(true);
+
+    const revised = await PDFDocument.create();
+    revised.addPage([360, 540]).drawText('A printer proof', { x: 55, y: 450, size: 14 });
+    revised.addPage([360, 540]);
+    await writeFile(files('region-revised.pdf'), await revised.save());
+    const checks = { approvedPdf: pdfPath, approvedRevision: sha256, currentPdf: 'region-revised.pdf', maxEdge: 300,
+      checks: [
+        { name: 'Moved legal notice', approved: { page: 2, bounds }, current: { page: 1, bounds } },
+        { name: 'Missing legal notice', approved: { page: 2, bounds }, current: { page: 2, bounds } },
+        { name: 'Changed region size', approved: { page: 2, bounds }, current: {
+          page: 1, bounds: { ...bounds, bottom: (bounds.top + bounds.bottom) / 2 },
+        } },
+      ] };
+    const review = await call('recto_verify_pdf_proof_regions', checks, readClient);
+    expect(review.isError, JSON.stringify(review.content)).not.toBe(true);
+    expect(review.structuredContent).toMatchObject({ passed: false, approvedRevision: sha256,
+      rows: [{ status: 'passed', changedFraction: 0 }, { status: 'changed' }, { status: 'geometry-changed', changedFraction: null }],
+      preview: { name: 'Missing legal notice', kind: 'diff' },
+    });
+    expect(review.content.some(block => block.type === 'image')).toBe(true);
+    expect((await call('recto_verify_pdf_proof_regions', { ...checks, approvedRevision: '0'.repeat(64) }, readClient)).isError).toBe(true);
   }, timeout);
 
   it('previews rich text, refuses stale and overwriting drafts, then compiles the saved copy', async () => {

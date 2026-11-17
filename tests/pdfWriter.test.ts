@@ -1,5 +1,5 @@
 import { jsPDF } from 'jspdf';
-import { PDFDocument, PDFRef, PDFStreamWriter, PDFWriter } from 'pdf-lib';
+import { PDFDocument, PDFNumber, PDFRef, PDFStreamWriter, PDFWriter } from 'pdf-lib';
 import { expect, it, vi } from 'vitest';
 import { loadRasterWasm } from '../src/engine/rasterWasm';
 import { serializeJsPdf } from '../src/export/pdfPayload';
@@ -67,6 +67,27 @@ it('writes native compressed cross references for multiple object streams and sp
     expect(fallback).not.toHaveBeenCalled();
     expect(Buffer.from(payload.bytes()).equals(expected)).toBe(true);
     expect((await loadPdfChunks(payload)).getPageCount()).toBe(1);
+  } finally { fallback.mockRestore(); }
+});
+
+it('streams a classic xref larger than the single-batch limit and preserves sparse subsections', async () => {
+  const pdf = await PDFDocument.create();
+  pdf.addPage();
+  for (let i = 0; i < 33_000; i++) pdf.context.register(PDFNumber.of(i));
+  pdf.context.assign(PDFRef.of(40_000, 7), PDFNumber.of(123));
+  expect((await loadRasterWasm())?.pdf_classic_rows).toBeTypeOf('function');
+  const fallback = vi.spyOn(PDFWriter, 'forContext');
+  try {
+    const payload = await serializePdf(pdf, false);
+    expect(fallback).not.toHaveBeenCalled();
+    const footer = Buffer.from(payload.range(-128, payload.size)).toString();
+    const xref = Number(footer.match(/startxref\n(\d+)/)?.[1]);
+    const header = Buffer.from(payload.range(xref, xref + 60)).toString();
+    expect(header).toMatch(/^xref\n0 33005\n0000000000 65535 f /);
+    const tail = Buffer.from(payload.range(-256, payload.size)).toString();
+    const offset = Number(tail.match(/40000 1\n(\d{10}) 00007 n /)?.[1]);
+    expect(Buffer.from(payload.range(offset, offset + 16)).toString()).toBe('40000 7 obj\n123\n');
+    expect((await PDFDocument.load(payload.bytes())).getPageCount()).toBe(1);
   } finally { fallback.mockRestore(); }
 });
 
