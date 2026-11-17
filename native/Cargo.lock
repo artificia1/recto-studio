@@ -230,7 +230,7 @@ dependencies = [
 
 [[package]]
 name = "recto-native"
-version = "1.4.5"
+version = "1.4.6"
 dependencies = [
  "cap-std",
  "rustybuzz",

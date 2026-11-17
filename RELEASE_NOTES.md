@@ -1,4 +1,27 @@
-# Recto Studio 1.4.4
+# Recto Studio 1.4.6
+
+Stable desktop release for Windows and Debian-based Linux.
+
+## Layout and print
+
+- Save a printer-order sheet map as JSON from the imposition dialog. Mini-zine
+  exports place all eight vector panels on one side of a sheet.
+- Imposed proofs use the normal PDF renderer to preserve publication artwork
+  and type.
+- Rust-backed composition handles mixed styles, inline note markers, table
+  continuations, footnote pagination, and supported embedded OpenType shaping.
+- PDF writing assembles compressed object streams and large cross-reference
+  tables in bounded chunks.
+
+## Downloads
+
+- **Windows x64** — Setup EXE and portable ZIP.
+- **Linux x64** — Debian package and AppImage.
+- **Source** — ZIP and tar.gz archives of the release tag.
+
+---
+
+# Previous release: Recto Studio 1.4.4
 
 ## Manuscripts and canvas
 
