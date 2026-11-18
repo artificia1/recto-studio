@@ -23,7 +23,11 @@ test('loads a font installed on the computer into a text frame', async ({ page }
   const families = await installedFamilies(page);
   test.skip(!families.length, 'No fonts are installed where this test runs.');
 
-  await page.evaluate(() => (window as any).recto.stateManager.selectElement('text-qa'));
+  const before = await page.evaluate(() => {
+    const { stateManager } = (window as any).recto;
+    stateManager.selectElement('text-qa');
+    return stateManager.getElementById('text-qa').fontFamily as string;
+  });
   const open = page.getByRole('button', { name: 'Fonts on this computer…' });
   await open.scrollIntoViewIfNeeded();
   await open.click();
@@ -41,7 +45,10 @@ test('loads a font installed on the computer into a text frame', async ({ page }
     return { font: stateManager.getElementById('text-qa').fontFamily as string,
       embedded: (stateManager.getState().embeddedFonts || []).map((asset: { family: string }) => asset.family) as string[] };
   });
-  expect(frame.font.startsWith(families[0])).toBe(true);
+  // The font is registered under the full name its file declares, which need not repeat the
+  // family name the system lists, so the test checks that the frame took the loaded font.
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  expect(frame.font, `font chosen from "${families[0]}"`).not.toBe(before);
   expect(frame.embedded).toContain(frame.font);
 });
 
