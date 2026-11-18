@@ -368,7 +368,8 @@ export function TopBar({
       if (action === 'image' && stateManager.getState().activeSpreadIndex !== state.activeSpreadIndex) {
         throw new Error('The active spread changed. Export the image again.');
       }
-      await downloadPublication(state, action);
+      const warnings = [...new Set(await downloadPublication(state, action))];
+      if (warnings.length) alert(`Export finished. Please review:\n\n${warnings.map(warning => `• ${warning}`).join('\n')}`);
     });
   };
 

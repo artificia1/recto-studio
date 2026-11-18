@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { importProject, projectFixture } from './fixtures';
 
 // Fonts installed on the machine running the test differ, so the test asks the browser which
@@ -98,6 +99,15 @@ test('says when a chosen font may not be embedded in exports', async ({ page }) 
   await expect(page.locator('.local-font-notice')).toContainText('EPUB and flipbook exports leave it out');
   const embedded = await page.evaluate(() => ((window as any).recto.stateManager.getState().embeddedFonts || []).length);
   expect(embedded).toBeGreaterThan(0);
+
+  // The EPUB leaves the font out and says so once the file is saved.
+  const message = new Promise<string>(resolve => page.once('dialog', dialog => { resolve(dialog.message()); void dialog.accept(); }));
+  await page.getByTitle('Export Clean PDF, Print PDF, EPUB 3, Web Flipbook, or Package').click();
+  const download = page.waitForEvent('download');
+  await page.getByText('Export EPUB 3', { exact: true }).click();
+  const epub = await readFile((await (await download).path())!);
+  expect(await message).toMatch(/Please review:[\s\S]*Open Sans[\s\S]*left out of this export/);
+  expect(epub.includes(Buffer.from('OEBPS/fonts/'))).toBe(false);
 });
 
 test('offers the font file import when access to the fonts is refused', async ({ page }) => {
