@@ -188,8 +188,8 @@ export function generateFixedEpubPackage(source: ProjectState, onWarning?: (mess
   return files;
 }
 
-export async function exportFixedEpub(state: ProjectState) {
+export async function exportFixedEpub(state: ProjectState, onWarning?: (message: string) => void) {
   const { fontManager } = await import('../fontManager');
   await fontManager.restoreFonts(state.embeddedFonts);
-  return createZipArchive(generateFixedEpubPackage(await prepareExportAssets(state, typeof window !== 'undefined', false, true)));
+  return createZipArchive(generateFixedEpubPackage(await prepareExportAssets(state, typeof window !== 'undefined', false, true), onWarning));
 }
