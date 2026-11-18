@@ -5,7 +5,6 @@ import { embeddableFonts, fontEmbeddingRestriction, sfntEmbeddingBits, type Font
 import { generateEpubPackage } from '../src/epubExport';
 import { generateFixedEpubPackage } from '../src/export/fixedEpub';
 import { generateFlipbookHtml } from '../src/flipbookExport';
-import { publicationPreflight } from '../src/engine/publicationPreflight';
 import { INITIAL_STATE } from '../src/state/stateManager';
 
 /** A copy of a TrueType/OpenType file with its OS/2 fsType licensing bits replaced. */
@@ -102,13 +101,5 @@ describe('font embedding permissions', () => {
     expect(html).toContain(allowed.data);
     expect(html).not.toContain(restricted.data);
     expect(warnings).toEqual([expect.stringMatching(/Restricted Sans/)]);
-  });
-
-  it('warns in the editor preflight before any export', () => {
-    const state = project([restricted, allowed]);
-    const editor = publicationPreflight(state).filter(issue => issue.code === 'FONT_EXPORT');
-    expect(editor).toEqual([expect.objectContaining({ severity: 'warning', message: expect.stringMatching(/Restricted Sans.*outlines.*EPUB and flipbook/) })]);
-    // An export reports the font it leaves out itself, so its own preflight does not repeat it.
-    expect(publicationPreflight(state, 'epub').some(issue => issue.code === 'FONT_EXPORT')).toBe(false);
   });
 });

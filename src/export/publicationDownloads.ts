@@ -3,8 +3,14 @@ import { isDesktop, savePublicationFile } from '../desktop';
 
 export type PublicationDownload = 'proof' | 'press' | 'epub' | 'fixed' | 'flipbook' | 'image' | 'package' | 'archive' | 'idml' | 'kit';
 
-/** Saves the chosen publication and returns the warnings the export reported, for the user to review. */
-export async function downloadPublication(state: ProjectState, action: PublicationDownload): Promise<string[]> {
+/** Saves the chosen publication, then lists any warnings the export reported for the user to review. */
+export async function downloadPublication(state: ProjectState, action: PublicationDownload) {
+  const warnings = [...new Set(await savePublication(state, action))];
+  if (warnings.length && typeof alert === 'function') alert(`Export finished. Please review:\n\n${warnings.map(warning => `• ${warning}`).join('\n')}`);
+  return warnings;
+}
+
+async function savePublication(state: ProjectState, action: PublicationDownload): Promise<string[]> {
   switch (action) {
     case 'proof':
     case 'press': {
