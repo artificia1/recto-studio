@@ -3,7 +3,14 @@ import { isDesktop, savePublicationFile } from '../desktop';
 
 export type PublicationDownload = 'proof' | 'press' | 'epub' | 'fixed' | 'flipbook' | 'image' | 'package' | 'archive' | 'idml' | 'kit';
 
+/** Saves the chosen publication, then lists any warnings the export reported for the user to review. */
 export async function downloadPublication(state: ProjectState, action: PublicationDownload) {
+  const warnings = [...new Set(await savePublication(state, action))];
+  if (warnings.length && typeof alert === 'function') alert(`Export finished. Please review:\n\n${warnings.map(warning => `• ${warning}`).join('\n')}`);
+  return warnings;
+}
+
+async function savePublication(state: ProjectState, action: PublicationDownload): Promise<string[]> {
   switch (action) {
     case 'proof':
     case 'press': {
@@ -23,24 +30,25 @@ export async function downloadPublication(state: ProjectState, action: Publicati
       const { exportDocumentToEpubAsync } = await import('../epubExport');
       const result = await exportDocumentToEpubAsync(state, { download: !isDesktop(), strict: true });
       if (isDesktop()) await savePublicationFile(result.filename, result.buffer, 'application/epub+zip');
-      break;
+      return result.warnings;
     }
     case 'fixed': {
       const { exportFixedEpub } = await import('./fixedEpub');
       const name = state.settings.title.replace(/[^\p{L}\p{N} _-]/gu, '').trim() || 'publication';
-      await savePublicationFile(`${name}-fixed.epub`, await exportFixedEpub(state), 'application/epub+zip');
-      break;
+      const warnings: string[] = [];
+      await savePublicationFile(`${name}-fixed.epub`, await exportFixedEpub(state, message => warnings.push(message)), 'application/epub+zip');
+      return warnings;
     }
     case 'flipbook': {
       const { exportDocumentToFlipbook } = await import('../flipbookExport');
       const result = exportDocumentToFlipbook(state, { download: !isDesktop() });
       if (isDesktop()) await savePublicationFile(result.filename, result.html, 'text/html');
-      break;
+      return result.warnings;
     }
     case 'image': {
       const canvas = (window as Window & { recto?: { spreadCanvas?: { exportSpreadAsPng?: (scale: number) => string | undefined } } }).recto?.spreadCanvas;
       const dataUrl = canvas?.exportSpreadAsPng?.(3);
-      if (!dataUrl) return;
+      if (!dataUrl) return [];
       const title = (state.settings.title || 'recto-spread').toLowerCase().replace(/[^a-z0-9_-]/g, '-');
       const filename = `${title}-spread-${state.activeSpreadIndex + 1}.png`;
       if (isDesktop()) {
@@ -79,4 +87,5 @@ export async function downloadPublication(state: ProjectState, action: Publicati
       break;
     }
   }
+  return [];
 }

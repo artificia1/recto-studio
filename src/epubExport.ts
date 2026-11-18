@@ -35,7 +35,7 @@ export function escapeXml(str: string): string {
 import { bezierNodesToSvgPath } from './engine/vectorPath';
 export { bezierNodesToSvgPath } from './engine/vectorPath';
 
-import { fontFamilyCss } from './export/fontAssets';
+import { embeddableFonts, fontFamilyCss } from './export/fontAssets';
 import { variationCss } from './engine/fontVariations';
 
 export function generateEpubPackage(source: ProjectState, options: EpubExportOptions = {}): Record<string, string | Uint8Array> {
@@ -53,10 +53,10 @@ export function generateEpubPackage(source: ProjectState, options: EpubExportOpt
   const fontManifest: string[] = [];
   const equationManifest: string[] = [];
   const imageCache = new Map<string, string>();
-  const fontStyles = (state.embeddedFonts || []).map((font, index) => {
+  const fontStyles = embeddableFonts(state.embeddedFonts, options.onWarning).map(({ asset: font, bytes }, index) => {
     const extension = font.fileName.match(/\.(ttf|otf|woff2?)$/i)?.[1].toLowerCase() || 'ttf';
     const location = `fonts/font-${index}.${extension}`;
-    files[`OEBPS/${location}`] = Uint8Array.from(atob(font.data), char => char.charCodeAt(0));
+    files[`OEBPS/${location}`] = bytes;
     fontManifest.push(`    <item id="font-${index}" href="${location}" media-type="font/${extension}"/>`);
     return `@font-face{font-family:${fontFamilyCss(font.family)};src:url("${location}");font-variation-settings:${variationCss(font.variations)};}`;
   }).join('\n');
