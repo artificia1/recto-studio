@@ -21,14 +21,14 @@ test('keeps a 256-page overview bounded and preserves editable text', async ({ p
   await expect(page.getByTitle('Click to rename document')).toHaveValue(project.settings.title);
   await page.getByRole('button', { name: 'All spreads', exact: true }).click();
   const workspace = page.getByRole('dialog', { name: 'Multi-spread workspace' });
-  const firstImage = workspace.locator('[data-workspace-object="text-0"] image');
+  const firstImage = workspace.locator('[data-workspace-object="text-0"] canvas');
   await expect(firstImage).toBeVisible();
-  const source = await firstImage.getAttribute('href');
+  const source = await firstImage.evaluate((element: HTMLCanvasElement) => element.toDataURL());
   expect(source).toMatch(/^data:image\/png;base64,/);
   const scroll = workspace.locator('.spatial-scroll');
   for (const top of [20, 40, 60]) {
     await scroll.evaluate((element, top) => { element.scrollTop = top; element.dispatchEvent(new Event('scroll')); }, top);
-    await expect(firstImage).toHaveAttribute('href', source!);
+    await expect.poll(() => firstImage.evaluate((element: HTMLCanvasElement) => element.toDataURL())).toBe(source);
   }
   expect(await workspace.locator('[data-workspace-object]').count()).toBeLessThan(128);
   expect(await workspace.locator('svg *').count()).toBeLessThan(3000);

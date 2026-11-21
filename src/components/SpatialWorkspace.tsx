@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { memo } from 'preact/compat';
 import type { CanvasElement, ProjectState } from '../types';
 import { stateManager } from '../state';
@@ -23,15 +23,16 @@ interface PreviewProps {
   scale: number;
 }
 
-const WorkspacePreview = memo(function WorkspacePreview({ element, state, scale }: PreviewProps) {
-  if (element.type === 'text') {
+const WorkspacePreview = memo(function WorkspacePreview({ element, state, scale, revision, fontGeneration, kernels }: PreviewProps) {
+  const bitmap = useRef<HTMLCanvasElement>(null);
+  useLayoutEffect(() => {
+    if (element.type !== 'text' || !bitmap.current) return;
     const layout = layoutStory(element.textContent || plainStory(element.text, element.paragraphStyleId),
       element, state.paragraphStyles, state.characterStyles || []);
-    const bitmap = document.createElement('canvas');
     const pixelsPerMm = Math.min(Math.max(0.6, Math.min(2, scale)), 1024 / Math.max(element.width, element.height));
-    bitmap.width = Math.max(1, Math.ceil(element.width * pixelsPerMm));
-    bitmap.height = Math.max(1, Math.ceil(element.height * pixelsPerMm));
-    const context = bitmap.getContext('2d')!;
+    bitmap.current.width = Math.max(1, Math.ceil(element.width * pixelsPerMm));
+    bitmap.current.height = Math.max(1, Math.ceil(element.height * pixelsPerMm));
+    const context = bitmap.current.getContext('2d')!;
     for (const line of layout.lines) for (const segment of line.segments) {
       context.font = canvasRunFont(segment.style, pixelsPerMm);
       context.fillStyle = segment.style.color;
@@ -41,7 +42,11 @@ const WorkspacePreview = memo(function WorkspacePreview({ element, state, scale 
       context.fillText(segment.text, x, y);
       if (segment.style.underline) context.fillRect(x, y + 1, segment.width * pixelsPerMm, 0.6);
     }
-    return <image width={element.width} height={element.height} href={bitmap.toDataURL()} preserveAspectRatio="none"/>;
+  }, [element, state, scale, revision, fontGeneration, kernels]);
+  if (element.type === 'text') {
+    return <foreignObject width={element.width} height={element.height}>
+      <canvas ref={bitmap} aria-label="Text frame preview" style={{ width: '100%', height: '100%', display: 'block' }}/>
+    </foreignObject>;
   }
   if (element.type === 'image') {
     const fit = calculateImageFitting(0, 0, element.width, element.height, element.originalWidth || element.width,
