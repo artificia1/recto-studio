@@ -2,10 +2,10 @@ import type { ProjectState } from '../../types';
 import { printReadiness } from '../../engine/printReadiness';
 import { stateManager } from '../../state';
 import { savePublicationFile } from '../../desktop';
-import { useState } from 'preact/hooks';
+import { useMemo, useState } from 'preact/hooks';
 
 export default function PrintReadinessPanel({ state }: { state: ProjectState }) {
-  const report = printReadiness(state);
+  const report = useMemo(() => printReadiness(state), [stateManager.getDocumentRevision()]);
   const [status, setStatus] = useState('');
   return <details className="publication-panel">
     <summary>Print production readiness</summary>

@@ -90,6 +90,7 @@ export class FontManager {
   private customFonts: Map<string, FontMetadata> = new Map();
   private loadedGoogleFonts: Set<string> = new Set();
   private listeners: Set<() => void> = new Set();
+  public generation = 0;
 
   constructor() {
     // A font is cached only after its actual bytes or stylesheet have loaded.
@@ -101,6 +102,7 @@ export class FontManager {
   }
 
   private notify() {
+    this.generation++;
     for (const listener of this.listeners) {
       try {
         listener();

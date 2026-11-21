@@ -20,6 +20,9 @@ export interface StoryLayoutOptions {
 }
 const PT = 25.4 / 72;
 let context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null | undefined;
+const measuredFaces = new Map<string, Map<string, number>>();
+let measuredFontGeneration = -1;
+let measuredKernels = layoutKernels;
 
 export function canvasRunFont(style: RunStyle, scale: number): string {
   return `${style.italic ? 'italic ' : ''}${style.bold ? 'bold ' : ''}${style.fontSizePt * PT * scale}px ${style.fontFamily}`;
@@ -27,18 +30,40 @@ export function canvasRunFont(style: RunStyle, scale: number): string {
 
 /** Measurements and layout are in millimetres, independent of canvas zoom. */
 export const measureStoryText: StoryMeasure = (text, style) => {
+  if (measuredFontGeneration !== fontManager.generation || measuredKernels !== layoutKernels) {
+    measuredFaces.clear();
+    measuredFontGeneration = fontManager.generation;
+    measuredKernels = layoutKernels;
+  }
+  const face = canvasRunFont(style, 96 / 25.4);
+  let widths = measuredFaces.get(face);
+  const cached = widths?.get(text);
+  if (cached !== undefined) return cached;
+  if (!widths) {
+    if (measuredFaces.size >= 32) measuredFaces.clear();
+    widths = new Map();
+    measuredFaces.set(face, widths);
+  }
+  const remember = (width: number) => {
+    // Do not retain large manuscript strings or an unbounded vocabulary.
+    if (text.length <= 512) {
+      if (widths.size >= 4096) widths.delete(widths.keys().next().value!);
+      widths.set(text, width);
+    }
+    return width;
+  };
   const font = fontManager.getFont(style.fontFamily);
-  if (font) return (layoutKernels?.measureFont(font, text) ?? font.layout(text).advanceWidth) / font.unitsPerEm * style.fontSizePt * PT;
+  if (font) return remember((layoutKernels?.measureFont(font, text) ?? font.layout(text).advanceWidth) / font.unitsPerEm * style.fontSizePt * PT);
   if (context === undefined) {
     context = typeof document !== 'undefined' ? document.createElement('canvas').getContext('2d')
       : typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(1, 1).getContext('2d') : null;
   }
   if (context) {
-    context.font = canvasRunFont(style, 96 / 25.4);
+    if (context.font !== face) context.font = face;
     context.letterSpacing = '0px';
-    return context.measureText(text).width * 25.4 / 96;
+    return remember(context.measureText(text).width * 25.4 / 96);
   }
-  return Array.from(text).reduce((n, c) => n + (/\s/.test(c) ? 0.28 : /[ilI.,!]/.test(c) ? 0.27 : /[MW]/.test(c) ? 0.85 : 0.52), 0) * style.fontSizePt * PT;
+  return remember(Array.from(text).reduce((n, c) => n + (/\s/.test(c) ? 0.28 : /[ilI.,!]/.test(c) ? 0.27 : /[MW]/.test(c) ? 0.85 : 0.52), 0) * style.fontSizePt * PT);
 };
 
 export function resolveParagraphStyle(paragraph: StoryParagraph, styles: ParagraphStyle[]): Partial<ParagraphStyle> {

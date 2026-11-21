@@ -19,8 +19,9 @@ export default function EditorialPanel({ state }: { state: ProjectState }) {
     try { action(); setMessage(''); } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
   };
   // Local review drafts must not repeatedly rebuild every manuscript in a long book.
-  const outlineEntries = useMemo(() => editorialOutline(state), [state]);
-  const storyEntries = useMemo(() => editorialStories(state), [state]);
+  const revision = stateManager.getDocumentRevision();
+  const outlineEntries = useMemo(() => editorialOutline(state), [revision]);
+  const storyEntries = useMemo(() => editorialStories(state), [revision]);
   const term = query.trim().toLocaleLowerCase();
   const outline = outlineEntries.filter(heading => !term || `${heading.title} ${heading.label}`.toLocaleLowerCase().includes(term));
   const stories = storyEntries.filter(story => !term || `${story.title} ${story.text} ${story.label}`.toLocaleLowerCase().includes(term));

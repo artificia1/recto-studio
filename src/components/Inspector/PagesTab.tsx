@@ -1,6 +1,6 @@
 import { stateManager } from '../../state';
 import { ProjectState } from '../../types';
-import { useState } from 'preact/hooks';
+import { useMemo, useState } from 'preact/hooks';
 import { PublicationPanel } from './PublicationPanel';
 import { pageLabel } from '../../engine/pageLabels';
 import { lazy, Suspense } from 'preact/compat';
@@ -23,6 +23,10 @@ export function PagesTab({ state }: PagesTabProps) {
   };
   const spreads = state.spreads;
   const masterSpreads = state.masterSpreads || [];
+  const labels = useMemo(() => {
+    const pages = state.spreads.flatMap(spread => spread.pages);
+    return new Map(pages.map(page => [page.id, pageLabel(pages, page.id).label]));
+  }, [stateManager.getDocumentRevision()]);
 
   const handleDeleteSpread = (e: MouseEvent, idx: number) => {
     e.stopPropagation();
@@ -148,7 +152,7 @@ export function PagesTab({ state }: PagesTabProps) {
       <div className="spread-list">
         {spreads.map((spread, idx) => {
           const isCurrent = idx === state.activeSpreadIndex;
-          const pageNames = spread.pages.map((p) => `p.${pageLabel(spreads.flatMap(spread => spread.pages), p.id).label}`).join(' - ');
+          const pageNames = spread.pages.map(p => `p.${labels.get(p.id)}`).join(' - ');
           const elementCount = spread.elements.length;
           const assignedMaster = masterSpreads.find((m) => m.id === spread.masterSpreadId);
 
@@ -161,7 +165,7 @@ export function PagesTab({ state }: PagesTabProps) {
               <div className="spread-preview-mini">
                 {spread.pages.map((p) => (
                   <div key={p.id} className="mini-page">
-                    {pageLabel(spreads.flatMap(spread => spread.pages), p.id).label}
+                    {labels.get(p.id)}
                   </div>
                 ))}
               </div>

@@ -1,3 +1,23 @@
+# Recto Studio 1.4.7
+
+Performance fixes for large publications on Windows and Linux.
+
+- Reuse text previews while scrolling the all-spreads workspace. Overview text
+  is painted into bounded preview bitmaps using the normal text composer.
+- Reuse preflight results during panning, zooming and selection. Document edits
+  and font changes refresh the audit.
+- Cache font measurements with bounded storage and invalidate them when fonts
+  or the layout engine change.
+- Reuse the publication outline and print-readiness report during navigation.
+- Resolve linked text frames through indexed lookups while finding headings
+  and editing long stories.
+
+Windows users can install this release through **Check for Updates** and
+**Install update**. Windows setup and portable packages, Debian and AppImage
+packages are also available as downloads.
+
+---
+
 # Recto Studio 1.4.6
 
 Stable desktop release for Windows and Debian-based Linux.

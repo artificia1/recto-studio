@@ -37,6 +37,8 @@ import { assetStore } from './engine/assetStore';
 import { tableEngine } from './engine/tableEngine';
 import { tableThread } from './engine/tableCells';
 import { canvasRunFont, layoutStory } from './engine/storyLayout';
+import { fontManager } from './fontManager';
+import { layoutKernels } from './engine/layoutRuntime';
 
 export { MM_TO_PX } from './engine/viewport';
 
@@ -249,6 +251,11 @@ export class SpreadCanvas {
 
   // Text layout memoization
   private textLayoutCache = new Map<string, CanvasTextLayout>();
+  private formattedLayouts = new Map<TextElement, {
+    content: NonNullable<TextElement['textContent']>; reserve: number; layout: ReturnType<typeof layoutStory>;
+  }>();
+  private formattedLayoutRevision = '';
+  private formattedLayoutKernels = layoutKernels;
 
   // Active in-place canvas overlay editor (WordPad/Figma style)
   private activeInlineEditor: { elementId: string; el: HTMLElement } | null = null;
@@ -2741,6 +2748,12 @@ export class SpreadCanvas {
 
   public render(proof?: { context: CanvasRenderingContext2D; spot?: string }) {
     if (!proof) this.overflownTextFrameIds.clear();
+    const revision = `${stateManager.getDocumentRevision()}:${fontManager.generation}`;
+    if (revision !== this.formattedLayoutRevision || layoutKernels !== this.formattedLayoutKernels) {
+      this.formattedLayouts.clear();
+      this.formattedLayoutRevision = revision;
+      this.formattedLayoutKernels = layoutKernels;
+    }
     const original = stateManager.getState();
     const state = proof ? { ...original, previewMode: true, displayQuality: 'high' as const, selectedElementId: null, selectedElementIds: [] } : original;
     const rect = this.canvas.getBoundingClientRect();
@@ -3083,8 +3096,14 @@ export class SpreadCanvas {
 
         const flowContent = text.textContent || (obstacles.length ? wrappedPlainContent(text, processedText) : undefined);
         if (flowContent) {
-          const layout = layoutStory(flowContent, text, state.paragraphStyles, state.characterStyles,
-            undefined, totalFootnoteHeightPx / pxPerMm, { obstacles, baselineGrid: state.settings.baselineGrid });
+          const cached = this.formattedLayouts.get(text);
+          const layout = cached?.content === flowContent && cached.reserve === noteLayout.height ? cached.layout :
+            layoutStory(flowContent, text, state.paragraphStyles, state.characterStyles,
+              undefined, noteLayout.height, { obstacles, baselineGrid: state.settings.baselineGrid });
+          if (cached?.layout !== layout && flowContent === text.textContent && !inheritedIds.has(text.id)) {
+            if (this.formattedLayouts.size >= 64) this.formattedLayouts.clear();
+            this.formattedLayouts.set(text, { content: flowContent, reserve: noteLayout.height, layout });
+          }
           ctx.textAlign = 'left';
           ctx.textBaseline = 'alphabetic';
           for (const line of layout.lines) for (const segment of line.segments) {

@@ -1331,10 +1331,12 @@ export class StateManager {
 
   public getStoryHead(frameId: string): TextElement | null {
     let frame = this.getElementById(frameId);
+    if (frame?.type !== 'text' || !frame.prevFrameId) return frame?.type === 'text' ? frame : null;
+    const frames = new Map(textFrames(this.state).map(item => [item.id, item]));
     const seen = new Set<string>();
     while (frame?.type === 'text' && frame.prevFrameId && !seen.has(frame.id)) {
       seen.add(frame.id);
-      frame = this.getElementById(frame.prevFrameId);
+      frame = frames.get(frame.prevFrameId) ?? null;
     }
     return frame?.type === 'text' ? frame : null;
   }
@@ -1416,11 +1418,12 @@ export class StateManager {
     if (!head) throw new Error('The selected text frame no longer exists.');
     if (head.generated) throw new Error('Make the generated list static in Pages before editing its manuscript.');
     let frame: TextElement | null = head;
+    const frames = new Map(textFrames(this.state).map(item => [item.id, item]));
     const seen = new Set<string>();
     while (frame && !seen.has(frame.id)) {
       if (frame.locked || this.state.layers.find(layer => layer.id === frame!.layerId)?.locked) throw new Error('Unlock the story frames before editing this manuscript.');
       seen.add(frame.id);
-      frame = frame.nextFrameId ? this.getElementById(frame.nextFrameId) as TextElement | null : null;
+      frame = frame.nextFrameId ? frames.get(frame.nextFrameId) ?? null : null;
     }
     head.storyContent = structuredClone(content);
     head.rawStoryText = storyText(content);

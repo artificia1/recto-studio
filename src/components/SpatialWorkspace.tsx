@@ -1,15 +1,65 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { memo } from 'preact/compat';
 import type { CanvasElement, ProjectState } from '../types';
 import { stateManager } from '../state';
 import { spreadGrid, visibleSpreadCells, workspaceDrop } from '../engine/spatialWorkspace';
 import { instantiateMasterItem, resolveMaster } from '../engine/masterInheritance';
 import { publicationText } from '../engine/publicationReferences';
 import { masterTargetPage } from '../engine/pageLabels';
-import { layoutStory } from '../engine/storyLayout';
+import { canvasRunFont, layoutStory } from '../engine/storyLayout';
+import { fontManager } from '../fontManager';
+import { layoutKernels } from '../engine/layoutRuntime';
 import { plainStory } from '../engine/storyContent';
 import { bezierNodesToSvgPath } from '../engine/vectorPath';
 import { useModalFocus } from '../hooks/useModalFocus';
 import { calculateImageFitting } from '../canvas';
+
+interface PreviewProps {
+  element: CanvasElement;
+  state: ProjectState;
+  revision: number;
+  fontGeneration: number;
+  kernels: typeof layoutKernels;
+  scale: number;
+}
+
+const WorkspacePreview = memo(function WorkspacePreview({ element, state, scale }: PreviewProps) {
+  if (element.type === 'text') {
+    const layout = layoutStory(element.textContent || plainStory(element.text, element.paragraphStyleId),
+      element, state.paragraphStyles, state.characterStyles || []);
+    const bitmap = document.createElement('canvas');
+    const pixelsPerMm = Math.min(Math.max(0.6, Math.min(2, scale)), 1024 / Math.max(element.width, element.height));
+    bitmap.width = Math.max(1, Math.ceil(element.width * pixelsPerMm));
+    bitmap.height = Math.max(1, Math.ceil(element.height * pixelsPerMm));
+    const context = bitmap.getContext('2d')!;
+    for (const line of layout.lines) for (const segment of line.segments) {
+      context.font = canvasRunFont(segment.style, pixelsPerMm);
+      context.fillStyle = segment.style.color;
+      context.letterSpacing = `${segment.style.letterSpacingPt * 25.4 / 72 * pixelsPerMm}px`;
+      const x = segment.x * pixelsPerMm;
+      const y = (line.y + segment.style.fontSizePt * 25.4 / 72) * pixelsPerMm;
+      context.fillText(segment.text, x, y);
+      if (segment.style.underline) context.fillRect(x, y + 1, segment.width * pixelsPerMm, 0.6);
+    }
+    return <image width={element.width} height={element.height} href={bitmap.toDataURL()} preserveAspectRatio="none"/>;
+  }
+  if (element.type === 'image') {
+    const fit = calculateImageFitting(0, 0, element.width, element.height, element.originalWidth || element.width,
+      element.originalHeight || element.height, element.fitMode, element.focalPoint);
+    return <svg width={element.width} height={element.height} overflow="hidden"><image href={element.proxySrc || element.src}
+      x={fit.drawX} y={fit.drawY} width={fit.drawW} height={fit.drawH} preserveAspectRatio="none"/></svg>;
+  }
+  if (element.type === 'shape') return element.shapeKind === 'line'
+    ? <line x1={0} y1={0} x2={element.width} y2={element.height} stroke={element.strokeColor} stroke-width={element.strokeWidthMm}/>
+    : element.shapeKind === 'ellipse'
+      ? <ellipse cx={element.width / 2} cy={element.height / 2} rx={element.width / 2} ry={element.height / 2} fill={element.fillColor} stroke={element.strokeColor} stroke-width={element.strokeWidthMm}/>
+      : <rect width={element.width} height={element.height} fill={element.fillColor} stroke={element.strokeColor} stroke-width={element.strokeWidthMm}/>;
+  if (element.type === 'path') return <path d={bezierNodesToSvgPath(element.nodes, element.closed)} fill={element.fillColor}
+    stroke={element.strokeColor} stroke-width={element.strokeWidthMm}/>;
+  return <><rect width={element.width} height={element.height} fill="#eee" stroke="#777" stroke-width={0.3}/>
+    <text x={2} y={5} font-size={3}>Table {element.rows} × {element.cols}</text></>;
+}, (before, after) => before.element === after.element && before.revision === after.revision &&
+  before.fontGeneration === after.fontGeneration && before.kernels === after.kernels && before.scale === after.scale);
 
 export default function SpatialWorkspace({ state, onClose }: { state: ProjectState; onClose: () => void }) {
   const [zoom, setZoom] = useState(0.15), [columns, setColumns] = useState(4), [message, setMessage] = useState('');
@@ -19,7 +69,8 @@ export default function SpatialWorkspace({ state, onClose }: { state: ProjectSta
   const pointer = useRef<{ x: number; y: number } | null>(null);
   useModalFocus(true, root);
   const scale = zoom * 96 / 25.4;
-  const grid = useMemo(() => spreadGrid(state, columns), [state, columns]);
+  const revision = stateManager.getDocumentRevision();
+  const grid = useMemo(() => spreadGrid(state, columns), [revision, columns]);
   const overscan = 200;
   const visibleCells = visibleSpreadCells(grid, {
     x: (viewport.x - overscan) / scale,
@@ -54,21 +105,6 @@ export default function SpatialWorkspace({ state, onClose }: { state: ProjectSta
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
   }, [drag?.id]);
-  const preview = (element: CanvasElement) => {
-    if (element.type === 'image') {
-      const fit = calculateImageFitting(0, 0, element.width, element.height, element.originalWidth || element.width, element.originalHeight || element.height, element.fitMode, element.focalPoint);
-      return <svg width={element.width} height={element.height} overflow="hidden"><image href={element.proxySrc || element.src} x={fit.drawX} y={fit.drawY} width={fit.drawW} height={fit.drawH} preserveAspectRatio="none"/></svg>;
-    }
-    if (element.type === 'shape') return element.shapeKind === 'line' ? <line x1={0} y1={0} x2={element.width} y2={element.height} stroke={element.strokeColor} stroke-width={element.strokeWidthMm}/> : element.shapeKind === 'ellipse' ? <ellipse cx={element.width / 2} cy={element.height / 2} rx={element.width / 2} ry={element.height / 2} fill={element.fillColor} stroke={element.strokeColor} stroke-width={element.strokeWidthMm}/> : <rect width={element.width} height={element.height} fill={element.fillColor} stroke={element.strokeColor} stroke-width={element.strokeWidthMm}/>;
-    if (element.type === 'path') {
-      return <path d={bezierNodesToSvgPath(element.nodes, element.closed)} fill={element.fillColor} stroke={element.strokeColor} stroke-width={element.strokeWidthMm}/>;
-    }
-    if (element.type === 'text') {
-      const layout = layoutStory(element.textContent || plainStory(element.text, element.paragraphStyleId), element, state.paragraphStyles, state.characterStyles || []);
-      return layout.lines.slice(0, 100).map((line, index) => <g key={index}>{line.segments.map((segment, part) => <text key={part} x={segment.x} y={line.y + segment.style.fontSizePt * 25.4 / 72} font-size={segment.style.fontSizePt * 25.4 / 72} font-family={segment.style.fontFamily} font-weight={segment.style.bold ? 'bold' : 'normal'} font-style={segment.style.italic ? 'italic' : 'normal'} fill={segment.style.color}>{segment.text}</text>)}</g>);
-    }
-    return <><rect width={element.width} height={element.height} fill="#eee" stroke="#777" stroke-width={0.3}/><text x={2} y={5} font-size={3}>Table {element.rows} × {element.cols}</text></>;
-  };
   return <div className="spatial-workspace" role="dialog" aria-modal="true" aria-label="Multi-spread workspace" ref={root} onKeyDown={event => { event.stopPropagation(); if (event.key === 'Escape') onClose(); }}>
     <div className="spatial-controls"><strong>Multi-spread workspace</strong>
       <label>Zoom<select aria-label="Workspace zoom" value={zoom} onChange={event => setZoom(Number(event.currentTarget.value))}>{[0.05,0.1,0.15,0.25,0.5,1].map(value => <option value={value}>{Math.round(value * 100)}%</option>)}</select></label>
@@ -108,7 +144,8 @@ export default function SpatialWorkspace({ state, onClose }: { state: ProjectSta
                 setDrag({ id: element.id, ids, x: p.x, y: p.y, dx: 0, dy: 0, grabX: p.x - cell.x - pageIndex * state.settings.widthMm - element.x, grabY: p.y - cell.y - element.y });
               }}>
                 <rect width={element.width} height={element.height} fill="transparent" stroke={state.selectedElementIds.includes(element.id) ? 'var(--accent-cyan)' : 'none'} stroke-width={0.5}/>
-                <g pointer-events="none">{preview(element)}</g>
+                <g pointer-events="none"><WorkspacePreview element={element} state={state} revision={revision}
+                  fontGeneration={fontManager.generation} kernels={layoutKernels} scale={scale}/></g>
               </g>;
             })}
           </g>;

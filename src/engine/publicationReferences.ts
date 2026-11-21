@@ -35,13 +35,13 @@ export function insertRun(content: StoryContent, start: number, end: number, run
   return { version: 1, paragraphs: [...left.slice(0, -1), { ...left.at(-1)!, runs: [...left.at(-1)!.runs, run, ...right[0].runs] }, ...right.slice(1)] };
 }
 
-function frameAt(state: ProjectState, head: TextElement, offset: number): TextElement {
+function frameAt(state: ProjectState, head: TextElement, offset: number, byId?: Map<string, TextElement>): TextElement {
   let frame = head;
   const seen = new Set<string>();
-  const frames = textFrames(state);
+  byId ??= new Map(textFrames(state).map(frame => [frame.id, frame]));
   while (frame.nextFrameId && !seen.has(frame.id) && offset >= (frame.storyEnd ?? Infinity)) {
     seen.add(frame.id);
-    const next = frames.find(item => item.id === frame.nextFrameId);
+    const next = byId.get(frame.nextFrameId);
     if (!next) break;
     frame = next;
   }
@@ -51,10 +51,13 @@ function frameAt(state: ProjectState, head: TextElement, offset: number): TextEl
 export interface PublicationHeading { title: string; level: number; elementId: string; paragraphId?: string; pageId: string; label: string; pageNumber: number }
 export const publicationId = (kind: string, id: string) => `${kind}-${[...new TextEncoder().encode(id)].map(byte => byte.toString(16).padStart(2, '0')).join('')}`;
 export function publicationText(state: ProjectState, text: string, pageNumber: number): string {
+  if (!text.includes('{')) return text;
   const pages = state.spreads.flatMap(spread => spread.pages);
   const page = pages.find(page => page.pageNumber === pageNumber);
   const labels = pageLabel(pages, page?.id || '');
-  const chapter = publicationHeadings(state).filter(heading => heading.level === 1 && heading.pageNumber <= pageNumber).at(-1)?.title || labels.sectionTitle || state.settings.title;
+  const chapter = /\{\{(?:sectionTitle|chapterTitle)\}\}/i.test(text)
+    ? publicationHeadings(state).filter(heading => heading.level === 1 && heading.pageNumber <= pageNumber).at(-1)?.title || labels.sectionTitle || state.settings.title
+    : '';
   const hidden = new Set(state.conditions?.filter(condition => !condition.visible).map(condition => condition.name.toLowerCase()) || []);
   return text.replace(/\{\{(page|physicalPage|totalPages|docTitle|sectionTitle|chapterTitle)\}\}/gi, (_, token: string) => ({ page: labels.label, physicalpage: String(pageNumber), totalpages: String(pages.length), doctitle: state.settings.title, sectiontitle: labels.sectionTitle || chapter, chaptertitle: chapter }[token.toLowerCase()] || ''))
     .replace(/\{xref:([^}]+)\}/g, (_, id: string) => { const target = textFrames(state).find(frame => frame.id === id.trim()); return target ? pageLabel(pages, target.pageId).label : '[#?]'; })
@@ -63,8 +66,12 @@ export function publicationText(state: ProjectState, text: string, pageNumber: n
 }
 export function publicationHeadings(state: ProjectState): PublicationHeading[] {
   const pages = state.spreads.flatMap(spread => spread.pages);
+  const pageById = new Map<string, { page: typeof pages[number]; index: number }>();
+  pages.forEach((page, index) => { if (!pageById.has(page.id)) pageById.set(page.id, { page, index }); });
+  const frames = textFrames(state);
+  const byId = new Map(frames.map(frame => [frame.id, frame]));
   const result: PublicationHeading[] = [];
-  for (const head of storyHeads(state)) {
+  for (const head of frames.filter(frame => !frame.prevFrameId)) {
     if (head.generated || head.pasteboard) continue;
     let offset = 0;
     for (const [index, paragraph] of contentOf(head).paragraphs.entries()) {
@@ -75,15 +82,15 @@ export function publicationHeadings(state: ProjectState): PublicationHeading[] {
         (/headline|heading\s*1/i.test(style?.name || '') ? 1 : !head.storyContent && index === 0 && head.fontSizePt >= 24 ? 1 : 0);
       const title = paragraph.runs.map(run => run.text).join('').trim();
       if (level && title) {
-        const frame = frameAt(state, head, offset);
+        const frame = frameAt(state, head, offset, byId);
         result.push({ title, level: Number(level), elementId: head.id, paragraphId: paragraph.id,
-          pageId: frame.pageId, pageNumber: pages.find(page => page.id === frame.pageId)?.pageNumber || 1,
+          pageId: frame.pageId, pageNumber: pageById.get(frame.pageId)?.page.pageNumber || 1,
           label: pageLabel(pages, frame.pageId).label });
       }
       offset += paragraph.runs.reduce((n, run) => n + run.text.length, 0) + 1;
     }
   }
-  return result.sort((a, b) => pages.findIndex(page => page.id === a.pageId) - pages.findIndex(page => page.id === b.pageId));
+  return result.sort((a, b) => (pageById.get(a.pageId)?.index ?? -1) - (pageById.get(b.pageId)?.index ?? -1));
 }
 
 export function notesForFrame(state: Pick<StoryLayoutState, 'settings'>, frame: TextElement): Footnote[] {

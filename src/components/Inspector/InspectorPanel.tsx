@@ -1,5 +1,5 @@
 import { useRef, useState } from 'preact/hooks';
-import { lazy, Suspense } from 'preact/compat';
+import { lazy, memo, Suspense } from 'preact/compat';
 const PropertiesTab = lazy(() => import('./PropertiesTab').then(module => ({ default: module.PropertiesTab })));
 const PagesTab = lazy(() => import('./PagesTab').then(module => ({ default: module.PagesTab })));
 const LinksTab = lazy(() => import('./LinksTab').then(module => ({ default: module.LinksTab })));
@@ -11,13 +11,14 @@ import { ProjectState } from '../../types';
 
 interface InspectorPanelProps {
   state: ProjectState;
+  revision: number;
   activeTab?: 'properties' | 'styles' | 'pages' | 'layers' | 'links' | 'templates' | 'setup';
   onTabChange?: (tab: 'properties' | 'styles' | 'pages' | 'layers' | 'links' | 'templates' | 'setup') => void;
   isOpen?: boolean;
   onClose?: () => void;
 }
 
-export function InspectorPanel({ state, activeTab: propActiveTab, onTabChange, isOpen, onClose }: InspectorPanelProps) {
+export const InspectorPanel = memo(function InspectorPanel({ state, activeTab: propActiveTab, onTabChange, isOpen, onClose }: InspectorPanelProps) {
   const [internalTab, setInternalTab] = useState<'properties' | 'styles' | 'pages' | 'layers' | 'links' | 'templates' | 'setup'>('properties');
   const activeTab = propActiveTab !== undefined ? propActiveTab : internalTab;
   const setupTab = useRef<HTMLButtonElement>(null);
@@ -83,4 +84,7 @@ export function InspectorPanel({ state, activeTab: propActiveTab, onTabChange, i
       </div>
     </aside>
   );
-}
+}, (before, after) => before.revision === after.revision && before.activeTab === after.activeTab &&
+  before.isOpen === after.isOpen && before.onClose === after.onClose && before.onTabChange === after.onTabChange &&
+  (Object.keys(before.state) as (keyof ProjectState)[]).every(key =>
+    key === 'zoom' || key === 'panX' || key === 'panY' || before.state[key] === after.state[key]));

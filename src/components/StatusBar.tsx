@@ -1,9 +1,11 @@
-import { useState, useEffect, useRef } from 'preact/hooks';
+import { useState, useEffect, useMemo, useRef } from 'preact/hooks';
 import { ProjectState, DisplayQuality } from '../types';
 import { lazy, Suspense } from 'preact/compat';
 import { stateManager } from '../state';
 import type { SaveStatus } from '../state/autosave';
 import { version } from '../../package.json';
+import { fontManager } from '../fontManager';
+import { layoutKernels } from '../engine/layoutRuntime';
 
 const PreflightDrawer = lazy(() => import('./PreflightDrawer'));
 
@@ -28,7 +30,9 @@ export function StatusBar({ state }: StatusBarProps) {
   const pages = currentSpread?.pages.map(page => page.pageNumber) ?? [];
   const pagesDesc = pages.length > 1 ? `Pages ${pages.join('–')}` : pages.length === 1 ? `Page ${pages[0]}` : 'Spread';
 
-  const issues = stateManager.runPreflightCheck();
+  // Viewport changes also render this component, but leave the document revision alone.
+  const issues = useMemo(() => stateManager.runPreflightCheck(),
+    [stateManager.getDocumentRevision(), fontManager.generation, layoutKernels]);
 
   // Close drawer when clicking outside
   useEffect(() => {

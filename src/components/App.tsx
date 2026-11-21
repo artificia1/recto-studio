@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'preact/hooks';
+import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
 import { lazy, Suspense } from 'preact/compat';
 import type { IngestedStory } from '../contentImport';
 import type { TextElement, ImageElement } from '../types';
@@ -7,7 +7,6 @@ import { useProjectState } from '../hooks/useProjectState';
 import { TopBar } from './TopBar';
 import { ControlBar } from './ControlBar';
 import { Toolbar } from './Toolbar';
-import { InspectorPanel } from './Inspector/InspectorPanel';
 import { StatusBar } from './StatusBar';
 import { BookletImpositionModal, CoverSpineModal, SpreadOverviewDialog } from './LazyPrintDialogs';
 import { SpreadCanvas } from '../canvas';
@@ -24,6 +23,7 @@ const ShortcutsModal = lazy(() => import('./ShortcutsModal').then(module => ({ d
 const ScriptsModal = lazy(() => import('./ScriptsModal').then(module => ({ default: module.ScriptsModal })));
 const FindChangeModal = lazy(() => import('./FindChangeModal').then(module => ({ default: module.FindChangeModal })));
 const QuickApply = lazy(() => import('./QuickApply').then(module => ({ default: module.QuickApply })));
+const InspectorPanel = lazy(() => import('./Inspector/InspectorPanel').then(module => ({ default: module.InspectorPanel })));
 
 declare global {
   interface Window {
@@ -73,6 +73,7 @@ export function App() {
   if (showShortcuts) shortcutsMounted.current = true;
   if (showScriptsModal) scriptsMounted.current = true;
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
+  const closeInspector = useCallback(() => setMobileInspectorOpen(false), []);
   const [inspectorTab, setInspectorTab] = useState<'properties' | 'styles' | 'pages' | 'layers' | 'links' | 'templates' | 'setup'>('properties');
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -504,13 +505,14 @@ export function App() {
           />
         )}
 
-        <InspectorPanel
+        <Suspense fallback={<aside className="inspector-panel" aria-busy="true"/>}><InspectorPanel
           state={state}
+          revision={stateManager.getDocumentRevision()}
           activeTab={inspectorTab}
           onTabChange={setInspectorTab}
           isOpen={mobileInspectorOpen}
-          onClose={() => setMobileInspectorOpen(false)}
-        />
+          onClose={closeInspector}
+        /></Suspense>
       </div>
 
       <StatusBar state={state} />

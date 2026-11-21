@@ -6,6 +6,42 @@ import { fontCollectionFixture } from '../tests/fixtures/fontCollection';
 import type { ProjectState, TextElement } from '../src/types';
 const runtimeErrors = new WeakMap<Page, string[]>();
 
+test('panning and zooming reuse preflight while edits refresh it', async ({ page }) => {
+  await page.goto('/');
+  await importProject(page);
+  await expect(page.getByText('Preflight: No errors')).toBeVisible();
+  const counts = await page.evaluate(async () => {
+    const app = (window as Window & { recto?: { stateManager: {
+      runPreflightCheck(): unknown;
+      setZoomAndPan(zoom: number, x: number, y: number): void;
+      updateElement(id: string, update: Partial<TextElement>): void;
+    } } }).recto;
+    if (!app) throw new Error('The editor is not initialized.');
+    const { stateManager } = app;
+    const original = stateManager.runPreflightCheck;
+    let checks = 0;
+    stateManager.runPreflightCheck = () => {
+      checks++;
+      return original.call(stateManager);
+    };
+    const nextFrame = () => new Promise(resolve => requestAnimationFrame(resolve));
+    try {
+      for (let step = 1; step <= 4; step++) {
+        stateManager.setZoomAndPan(1 + step / 10, step, 0);
+        await nextFrame();
+      }
+      const viewport = checks;
+      stateManager.updateElement('text-qa', { text: 'A straight quote: "test".' });
+      await nextFrame();
+      return { viewport, edit: checks - viewport };
+    } finally {
+      stateManager.runPreflightCheck = original;
+    }
+  });
+  expect(counts).toEqual({ viewport: 0, edit: 1 });
+  await expect(page.getByText('Preflight: 1 to review')).toBeVisible();
+});
+
 test('opens Markdown as a complete book and retains its text and hierarchy after reopening', async ({ page }) => {
   await page.goto('/');
   await page.getByTitle('File Management, Project IO, and Document Imports').click();
