@@ -186,6 +186,58 @@ test('applies a paragraph style under the caret and goes on editing', async ({ p
   expect(committed.styles).toEqual(['ps-head', 'ps-quote', 'ps-quote']);
 });
 
+// The in-place editor is loaded on demand, outside the startup bundle.
+const EDITOR_MODULE = /\/liveTextCanvas[^/]*\.(js|ts)(\?|$)/;
+
+test('opens the frame once the in-place editor has loaded when it is opened earlier', async ({ page }) => {
+  let release!: () => void;
+  const released = new Promise<void>(resolve => { release = resolve; });
+  await page.route(EDITOR_MODULE, async route => { await released; await route.continue(); });
+  await openStyledProject(page);
+  const point = await bodyLine(page);
+  await page.mouse.dblclick(point.x, point.y);
+
+  const editor = page.locator('.canvas-inline-editor');
+  await expect(editor).toHaveCount(0);
+  release();
+  await expect(editor).toBeFocused();
+  await expect(editor).toHaveCSS('opacity', '0');
+  await expect.poll(async () => Math.abs((await caret(page))!.x - point.x)).toBeLessThan(6);
+  await page.keyboard.type('Ёж ');
+  const away = await outside(page);
+  await page.mouse.click(away.x, away.y);
+  await expect(editor).toHaveCount(0);
+  expect((await frameState(page)).text).toContain('Ёж ');
+});
+
+test('does not open a frame when the user clicked elsewhere while the in-place editor was loading', async ({ page }) => {
+  let release!: () => void;
+  const released = new Promise<void>(resolve => { release = resolve; });
+  await page.route(EDITOR_MODULE, async route => { await released; await route.continue(); });
+  await openStyledProject(page);
+  const point = await bodyLine(page);
+  await page.mouse.dblclick(point.x, point.y);
+  // Beside the page, on the ruler: a press on the interface counts as well as one on the canvas.
+  const away = await outside(page);
+  await page.mouse.click(away.x, away.y);
+  release();
+  await page.waitForResponse(EDITOR_MODULE);
+  await page.waitForTimeout(200);
+  await expect(page.locator('.canvas-inline-editor')).toHaveCount(0);
+});
+
+test('opens frames in the textarea editor when the in-place editor cannot load', async ({ page }) => {
+  await page.route(EDITOR_MODULE, route => route.abort());
+  await openStyledProject(page);
+  const point = await bodyLine(page);
+  await page.mouse.dblclick(point.x, point.y);
+
+  const editor = page.locator('.canvas-inline-editor');
+  await expect(editor).toBeFocused();
+  await expect(editor).toHaveCSS('opacity', '1');
+  await expect(page.locator('.canvas-live-caret')).toHaveCount(0);
+});
+
 test('keeps the textarea editor as the fallback when in-place editing is off', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('recto.liveTextEditing', 'off'));
   await openStyledProject(page);

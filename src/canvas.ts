@@ -370,7 +370,7 @@ export class SpreadCanvas {
    * so without this a paragraph style would fall back to the whole frame.
    */
   private rememberedTextSelection: { elementId: string; text: string; start: number; end: number } | null = null;
-  /** Bumped by anything that should cancel an editor still waiting for its module to load. */
+  /** Ticket of a frame waiting for the in-place editor to load; bumping it cancels that open. */
   private pendingLiveOpen = 0;
   private opacityPreview?: { id: string; value: number; revision: number };
 
@@ -623,7 +623,6 @@ export class SpreadCanvas {
 
   private handleMouseDown(e: CanvasMouseDown) {
     this.rememberedTextSelection = null;
-    this.pendingLiveOpen++;
     prefetchLiveTextRuntime();
     const state = stateManager.getState();
     const rect = this.canvas.getBoundingClientRect();
@@ -1389,10 +1388,16 @@ export class SpreadCanvas {
         this.openLiveTextEditor(liveTextRuntime, textEl, options);
         return;
       }
-      // First use before the editor has loaded: open it once it arrives, unless the user moved on.
+      // First use before the editor has loaded: open it once it arrives, unless the user moved on
+      // meanwhile. Any press, on the canvas or on the interface around it, counts as moving on.
       const ticket = ++this.pendingLiveOpen;
       const selection = this.selectionKey();
-      const stillWanted = () => ticket === this.pendingLiveOpen && !this.activeInlineEditor && this.selectionKey() === selection;
+      const cancel = () => { if (ticket === this.pendingLiveOpen) this.pendingLiveOpen++; };
+      window.addEventListener('pointerdown', cancel, { capture: true });
+      const stillWanted = () => {
+        window.removeEventListener('pointerdown', cancel, { capture: true });
+        return ticket === this.pendingLiveOpen && !this.activeInlineEditor && this.selectionKey() === selection;
+      };
       loadLiveTextRuntime().then(() => {
         if (stillWanted()) this.openInlineTextEditor(elementId, options);
       }, (error: unknown) => {
