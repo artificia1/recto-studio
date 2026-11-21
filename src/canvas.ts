@@ -6,7 +6,7 @@ import { formatOpenTypeText, segmentTextWithGrep } from './engine/legacyTypograp
 export { formatOpenTypeText, segmentTextWithGrep, type TextRunSegment } from './engine/legacyTypography';
 import { publicationWrapObjects, wrappedPlainContent } from './engine/publicationWrap';
 export { calculateImageFitting, type ImageFitTransform } from './engine/imageFitting';
-import { createFrameNoteLayoutLookup, createPublicationTextResolver, layoutFrameNotes } from './engine/publicationReferences';
+import { createFrameNoteLayoutLookup, createPublicationTextResolver } from './engine/publicationReferences';
 import { reviewPinPosition } from './engine/reviewPins';
 import { calculateSpreadGeometry, getSpreadScreenOrigin, MM_TO_PX, screenToSpreadMm } from './engine/viewport';
 import { bindCanvasInput, type CanvasMouseDown, type CanvasMouseMove, type CanvasMouseUp } from './engine/interaction/canvasInput';
@@ -28,7 +28,6 @@ import {
   TextOnPathSettings,
   DisplayQuality,
   GrepStyleRule,
-  StoryContent,
 } from './types';
 import { stateManager, numberToSuperscript } from './state';
 import { collabSession } from './collab';
@@ -43,12 +42,36 @@ import { createContentTableLayoutLookup } from './engine/tableLayout';
 import { canvasRunFont, layoutStory } from './engine/storyLayout';
 import { fontManager } from './fontManager';
 import { layoutKernels } from './engine/layoutRuntime';
-import { indexLines, liveStoryContent, spliceStory, supportsLiveEditing } from './engine/liveTextEditing';
-import { storyText } from './engine/storyContent';
-import { LiveTextEditor, liveTextEditingEnabled, setLiveTextEditingEnabled,
-  type LiveTextBox, type LiveTextComposition, type LiveTextOpenOptions } from './engine/interaction/liveTextEditor';
+import { liveTextEditingEnabled, setLiveTextEditingEnabled, supportsLiveEditing } from './engine/liveTextEditingSupport';
+import type { LiveTextEditor, LiveTextOpenOptions } from './engine/interaction/liveTextEditor';
 
 export { MM_TO_PX } from './engine/viewport';
+
+/**
+ * The in-place text editor is loaded on demand so it stays out of the startup bundle. It is fetched
+ * when the browser is idle after start-up or on the first press on the canvas, so it is normally
+ * ready before a frame is opened; until then (or if it cannot be loaded) frames open as before.
+ */
+type LiveTextRuntime = typeof import('./engine/interaction/liveTextCanvas');
+let liveTextRuntime: LiveTextRuntime | null = null;
+let liveTextRuntimeLoad: Promise<LiveTextRuntime> | null = null;
+let liveTextRuntimeFailed = false;
+
+function loadLiveTextRuntime(): Promise<LiveTextRuntime> {
+  liveTextRuntimeLoad ??= import('./engine/interaction/liveTextCanvas').then(runtime => {
+    liveTextRuntime = runtime;
+    return runtime;
+  }, error => {
+    liveTextRuntimeLoad = null;
+    throw error;
+  });
+  return liveTextRuntimeLoad;
+}
+
+function prefetchLiveTextRuntime(): void {
+  if (liveTextRuntime || liveTextRuntimeFailed || !liveTextEditingEnabled()) return;
+  void loadLiveTextRuntime().catch(() => { /* Retried, and reported, when a frame is opened. */ });
+}
 
 interface FormattedLine {
   text: string;
@@ -347,6 +370,8 @@ export class SpreadCanvas {
    * so without this a paragraph style would fall back to the whole frame.
    */
   private rememberedTextSelection: { elementId: string; text: string; start: number; end: number } | null = null;
+  /** Bumped by anything that should cancel an editor still waiting for its module to load. */
+  private pendingLiveOpen = 0;
   private opacityPreview?: { id: string; value: number; revision: number };
 
   public previewOpacity(id: string, value?: number): void {
@@ -418,6 +443,12 @@ export class SpreadCanvas {
     const onFontLoaded = () => { this.rulers.invalidateMarks(); this.drawRulers(); };
     document.fonts?.addEventListener('loadingdone', onFontLoaded);
     this.windowCleanups.push(() => document.fonts?.removeEventListener('loadingdone', onFontLoaded));
+
+    if (typeof window.requestIdleCallback === 'function') {
+      const idle = window.requestIdleCallback(() => prefetchLiveTextRuntime(), { timeout: 5000 });
+      this.windowCleanups.push(() => window.cancelIdleCallback(idle));
+    }
+
     this.windowCleanups.push(collabSession.onPeersChange(() => this.scheduleRender()));
   }
 
@@ -592,6 +623,8 @@ export class SpreadCanvas {
 
   private handleMouseDown(e: CanvasMouseDown) {
     this.rememberedTextSelection = null;
+    this.pendingLiveOpen++;
+    prefetchLiveTextRuntime();
     const state = stateManager.getState();
     const rect = this.canvas.getBoundingClientRect();
     const screenX = e.clientX - rect.left;
@@ -1351,8 +1384,22 @@ export class SpreadCanvas {
     }
 
     const state = stateManager.getState();
-    if (liveTextEditingEnabled() && supportsLiveEditing(textEl, state.paragraphStyles)) {
-      this.openLiveTextEditor(textEl, options);
+    if (liveTextEditingEnabled() && !liveTextRuntimeFailed && supportsLiveEditing(textEl, state.paragraphStyles)) {
+      if (liveTextRuntime) {
+        this.openLiveTextEditor(liveTextRuntime, textEl, options);
+        return;
+      }
+      // First use before the editor has loaded: open it once it arrives, unless the user moved on.
+      const ticket = ++this.pendingLiveOpen;
+      const selection = this.selectionKey();
+      const stillWanted = () => ticket === this.pendingLiveOpen && !this.activeInlineEditor && this.selectionKey() === selection;
+      loadLiveTextRuntime().then(() => {
+        if (stillWanted()) this.openInlineTextEditor(elementId, options);
+      }, (error: unknown) => {
+        console.warn('In-place text editing could not be loaded; using the textarea editor.', error);
+        liveTextRuntimeFailed = true;
+        if (stillWanted()) this.openInlineTextEditor(elementId, options);
+      });
       return;
     }
     const origin = this.getSpreadScreenOrigin(state);
@@ -1493,79 +1540,29 @@ export class SpreadCanvas {
     live?.destroy();
     el.remove();
     if (commit && changed) {
-      if (!draft || !this.commitLiveStory(currentEl as TextElement, draft, text)) {
+      // A draft only exists while an editor runs, so its module has loaded.
+      if (!draft || !liveTextRuntime?.commitLiveStory(currentEl as TextElement, draft, text)) {
         stateManager.updateElement(elementId, { text });
       }
     }
     this.scheduleRender();
   }
 
-  private openLiveTextEditor(textEl: TextElement, options: LiveTextOpenOptions): void {
+  private openLiveTextEditor(runtime: LiveTextRuntime, textEl: TextElement, options: LiveTextOpenOptions): void {
     const id = textEl.id;
-    const parent = this.canvas.parentElement || this.container;
-    const frame = () => {
-      const current = stateManager.getActiveSpread().elements.find(item => item.id === id);
-      return current?.type === 'text' ? current : null;
-    };
-    const live = new LiveTextEditor({
-      parent,
-      frame,
-      compose: (current, value, content) => this.composeLiveText(current, value, content),
-      box: current => this.liveTextBox(current),
+    const live = runtime.openLiveTextEditor({
+      canvas: this.canvas,
+      parent: this.canvas.parentElement || this.container,
+      spreadOrigin: () => this.getSpreadScreenOrigin(stateManager.getState()),
       requestRender: () => this.scheduleRender(),
-      close: (commit, toUi) => {
-        const active = this.activeInlineEditor;
-        if (active?.live !== live) return;
-        if (toUi) {
-          this.rememberedTextSelection = { elementId: id, text: live.value, ...live.selection };
-        }
+      close: (editor, commit, toUi) => {
+        if (this.activeInlineEditor?.live !== editor) return;
+        if (toUi) this.rememberedTextSelection = { elementId: id, text: editor.value, ...editor.selection };
         this.closeInlineTextEditor(commit);
       },
-    }, textEl, this.canvas, options);
+    }, textEl, options);
     this.activeInlineEditor = { elementId: id, el: live.textarea, live, selectionAtOpen: this.selectionKey() };
     this.render();
-  }
-
-  /**
-   * Commit a formatted story edited in place. The draft was built one edit at a time, so it is stored
-   * as content: sending only the text would make the document re-derive the formatting from a single
-   * before/after comparison and restyle everything between two separate edits.
-   */
-  private commitLiveStory(frame: TextElement, draft: StoryContent, text: string): boolean {
-    try {
-      const story = stateManager.getStoryContent(frame.id);
-      const start = frame.storyStart ?? 0;
-      const end = frame.storyEnd ?? storyText(story).length;
-      stateManager.setStoryContent(frame.id, spliceStory(story, start, end, draft));
-    } catch {
-      // A locked frame elsewhere in the thread, for one: fall back to the frame-level text edit.
-      return false;
-    }
-    stateManager.onMutation?.({ type: 'update', elementId: frame.id, updates: { text } as Partial<CanvasElement> });
-    return true;
-  }
-
-  /** Lay out the frame as it will look once the editor's text is committed. */
-  private composeLiveText(text: TextElement, value: string, draft?: StoryContent | null): LiveTextComposition {
-    const state = stateManager.getState();
-    const spread = stateManager.getActiveSpread();
-    const obstacles = publicationWrapObjects(state, spread).filter(other => other.id !== text.id && other.pageId === text.pageId);
-    const content = draft || liveStoryContent(text, value, obstacles.length > 0);
-    const layout = layoutStory(content, text, state.paragraphStyles, state.characterStyles,
-      undefined, layoutFrameNotes(state, text).height, { obstacles, baselineGrid: state.settings.baselineGrid });
-    return {
-      content, lines: layout.lines, consumed: layout.consumed, overset: layout.overset,
-      live: indexLines(layout.lines, value, content, text, state.paragraphStyles, state.characterStyles),
-      topBaseline: !text.textContent && !obstacles.length,
-    };
-  }
-
-  private liveTextBox(text: TextElement): LiveTextBox {
-    const state = stateManager.getState();
-    const origin = this.getSpreadScreenOrigin(state);
-    const pxPerMm = MM_TO_PX * state.zoom;
-    const pageIdx = Math.max(0, stateManager.getActiveSpread().pages.findIndex(page => page.id === text.pageId));
-    return { x: origin.x + (pageIdx * state.settings.widthMm + text.x) * pxPerMm, y: origin.y + text.y * pxPerMm, pxPerMm };
   }
 
   private selectionKey(): string {

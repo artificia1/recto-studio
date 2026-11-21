@@ -13,20 +13,6 @@ import { applyTextEdit, caretAt, lineIndexAt, lineOffsetAt, offsetAtPoint, parag
   textEdit, verticalTarget, wordRangeAt, type CaretAffinity, type LiveLine, type TextEdit } from '../liveTextEditing';
 
 const PT = 25.4 / 72;
-const STORAGE_KEY = 'recto.liveTextEditing';
-
-/** In-place editing is on unless it was switched off; the textarea editor remains the fallback. */
-export function liveTextEditingEnabled(): boolean {
-  try { return localStorage.getItem(STORAGE_KEY) !== 'off'; } catch { return true; }
-}
-
-export function setLiveTextEditingEnabled(enabled: boolean): void {
-  try {
-    if (enabled) localStorage.removeItem(STORAGE_KEY);
-    else localStorage.setItem(STORAGE_KEY, 'off');
-  } catch { /* Private browsing: the choice lasts for this page only. */ }
-}
-
 export interface LiveTextComposition {
   content: StoryContent;
   lines: StoryLine[];

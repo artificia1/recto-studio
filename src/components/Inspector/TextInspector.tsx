@@ -8,7 +8,7 @@ import { CommitNumberInput } from '../common/CommitNumberInput';
 import { MathInput } from '../common/MathInput';
 import { lazy, Suspense } from 'preact/compat';
 import { FONT_FILES, useFontFileImport } from '../common/useFontFileImport';
-import { liveTextEditingEnabled, setLiveTextEditingEnabled } from '../../engine/interaction/liveTextEditor';
+import { liveTextEditingEnabled, setLiveTextEditingEnabled } from '../../engine/liveTextEditingSupport';
 const VariableFontPanel = lazy(() => import('./VariableFontPanel'));
 
 export default function TextInspector({
