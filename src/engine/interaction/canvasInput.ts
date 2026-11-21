@@ -21,6 +21,7 @@ interface CanvasInputHandlers {
   keyUp(event: KeyboardEvent): void;
   penIsDown(): boolean;
   touchPointer(): void;
+  cancelInteraction?(): boolean;
   startPinch(): void;
   stopPinch(): void;
   getViewport(): Viewport;
@@ -100,6 +101,11 @@ export function bindCanvasInput(canvas: HTMLCanvasElement, handlers: CanvasInput
   function endTouch(event: TouchEvent) {
     if (!gesture) return;
     gesture = event.type !== 'touchcancel' && event.touches.length > 0;
+    if (event.type === 'touchcancel' && handlers.cancelInteraction?.()) {
+      handlers.stopPinch();
+      pinch = undefined;
+      return;
+    }
     if (handlers.penIsDown()) return;
     if (event.touches.length <= 1 || !gesture) {
       handlers.stopPinch();

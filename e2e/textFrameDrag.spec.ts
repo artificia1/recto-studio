@@ -1,0 +1,196 @@
+import { test, expect, type Page } from '@playwright/test';
+import { projectFileInput, projectFixture } from './fixtures';
+import type { CanvasElement, ProjectState, TextElement } from '../src/types';
+
+interface DragTestWindow extends Window {
+  recto: {
+    stateManager: {
+      getState(): ProjectState;
+      getElementById(id: string): CanvasElement | null;
+      getDocumentRevision(): number;
+      setActiveSpread(index: number): void;
+      selectElement(id: string): void;
+      selectElements(ids: string[]): void;
+      setZoom(zoom: number): void;
+      setPan(x: number, y: number): void;
+      updateSettings(settings: Partial<ProjectState['settings']>): void;
+      reflowStory(id: string): void;
+      runPreflightCheck(): unknown;
+      autosave: { schedule(): void };
+      onMutation?: (...args: unknown[]) => void;
+    };
+    spreadCanvas: { getSpreadScreenOrigin(state: ProjectState): { x: number; y: number } };
+  };
+  dragCounts: { reflow: number; preflight: number; autosave: number; mutations: number };
+}
+
+const runtimeErrors = new WeakMap<Page, string[]>();
+test.beforeEach(({ page }) => {
+  const errors: string[] = [];
+  runtimeErrors.set(page, errors);
+  page.on('pageerror', error => errors.push(error.message));
+});
+test.afterEach(({ page }) => { expect(runtimeErrors.get(page)).toEqual([]); });
+
+async function openBook(page: Page, baselineGrid = false) {
+  await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.abort());
+  const base = projectFixture();
+  const frames: TextElement[] = Array.from({ length: 256 }, (_, index) => ({
+    ...base.spreads[0].elements[0], type: 'text', id: `drag-${index}`, pageId: `page-${index}`,
+    x: 25, y: 35, width: 150, height: 100, text: '', fontSizePt: 11, fontFamily: 'Times New Roman, serif', alignment: 'left',
+    prevFrameId: index ? `drag-${index - 1}` : undefined,
+    nextFrameId: index < 255 ? `drag-${index + 1}` : undefined,
+  }));
+  frames[0].storyContent = { version: 1, paragraphs: frames.map((_, index) => ({ id: `paragraph-${index}`,
+    runs: [{ text: `Section ${index + 1}. ` + 'The long manuscript keeps its editable text while the frame is moved. '.repeat(20) }] })) };
+  const project = { ...base, settings: { ...base.settings, title: 'Linked book drag test',
+    baselineGrid: { enabled: baselineGrid, incrementPt: 12, startMm: 25 } },
+    spreads: frames.map((frame, index) => ({ id: `spread-${index}`, spreadIndex: index,
+      pages: [{ id: frame.pageId, pageNumber: index + 1, side: 'single' }], elements: [frame] })) };
+  await page.goto('/');
+  await projectFileInput(page).setInputFiles({ name: 'drag-book.recto', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)) });
+  await expect(page.getByTitle('Click to rename document')).toHaveValue(project.settings.title);
+  return page.evaluate(async () => {
+    const { stateManager: manager, spreadCanvas: canvas } = (window as unknown as DragTestWindow).recto;
+    manager.setActiveSpread(25);
+    manager.selectElement('drag-25');
+    manager.setZoom(1);
+    manager.setPan(0, 0);
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const state = manager.getState();
+    const frame = manager.getElementById('drag-25')!;
+    const origin = canvas.getSpreadScreenOrigin(state);
+    const box = document.querySelector('#spread-canvas')!.getBoundingClientRect();
+    return { x: box.left + origin.x + (frame.x + frame.width / 2) * 96 / 25.4,
+      y: box.top + origin.y + (frame.y + frame.height / 3) * 96 / 25.4 };
+  });
+}
+
+async function snapshot(page: Page) {
+  return page.evaluate(() => {
+    const manager = (window as unknown as DragTestWindow).recto.stateManager;
+    const frame = manager.getElementById('drag-25')!;
+    return { x: frame.x, y: frame.y, revision: manager.getDocumentRevision(),
+      story: (manager.getElementById('drag-0') as TextElement).rawStoryText };
+  });
+}
+
+test('drags a linked frame without reflowing or saving the book until release, then undoes once', async ({ page }) => {
+  test.setTimeout(120000);
+  const point = await openBook(page);
+  const before = await snapshot(page);
+  await page.evaluate(() => {
+    const current = window as unknown as DragTestWindow;
+    const manager = current.recto.stateManager;
+    const counts = current.dragCounts = { reflow: 0, preflight: 0, autosave: 0, mutations: 0 };
+    const reflow = manager.reflowStory.bind(manager);
+    manager.reflowStory = id => { counts.reflow++; reflow(id); };
+    const preflight = manager.runPreflightCheck.bind(manager);
+    manager.runPreflightCheck = () => { counts.preflight++; return preflight(); };
+    const save = manager.autosave.schedule.bind(manager.autosave);
+    manager.autosave.schedule = () => { counts.autosave++; save(); };
+    const mutation = manager.onMutation;
+    manager.onMutation = (...args) => { counts.mutations++; mutation?.(...args); };
+  });
+  await page.mouse.move(point.x, point.y);
+  await page.mouse.down();
+  await page.mouse.move(point.x + 80, point.y + 30, { steps: 16 });
+  expect(await snapshot(page)).toEqual(before);
+  expect(await page.evaluate(() => (window as unknown as DragTestWindow).dragCounts))
+    .toEqual({ reflow: 0, preflight: 0, autosave: 0, mutations: 0 });
+  await page.mouse.up();
+  const after = await snapshot(page);
+  expect(after.x).not.toBe(before.x);
+  expect(after.story).toBe(before.story);
+  expect(after.revision).toBe(before.revision + 1);
+  expect(await page.evaluate(() => (window as unknown as DragTestWindow).dragCounts))
+    .toEqual({ reflow: 0, preflight: 1, autosave: 1, mutations: 1 });
+  await page.keyboard.press('Control+z');
+  const undone = await snapshot(page);
+  expect([undone.x, undone.y, undone.story]).toEqual([before.x, before.y, before.story]);
+  await page.keyboard.press('Control+Shift+z');
+  const redone = await snapshot(page);
+  expect([redone.x, redone.y, redone.story]).toEqual([after.x, after.y, after.story]);
+});
+
+test('cancels a frame drag on Escape, pointer cancellation, focus loss, or a document edit', async ({ page }) => {
+  test.setTimeout(120000);
+  const point = await openBook(page);
+  const before = await snapshot(page);
+  for (const cancel of ['Escape', 'pointercancel', 'blur', 'edit']) {
+    await page.mouse.move(point.x, point.y);
+    await page.mouse.down();
+    await page.mouse.move(point.x + 60, point.y + 20, { steps: 4 });
+    if (cancel === 'Escape') await page.keyboard.press('Escape');
+    else if (cancel === 'edit') await page.evaluate(() => (window as unknown as DragTestWindow).recto.stateManager.updateSettings({ title: 'Edited during drag' }));
+    else await page.evaluate(event => window.dispatchEvent(event === 'pointercancel'
+      ? new PointerEvent(event, { pointerId: 1 }) : new Event(event)), cancel);
+    await page.mouse.up();
+    const after = await snapshot(page);
+    expect([after.x, after.y, after.story]).toEqual([before.x, before.y, before.story]);
+    expect(after.revision).toBe(before.revision + (cancel === 'edit' ? 1 : 0));
+  }
+});
+
+test('reflows a grid-dependent story once after a drag is released', async ({ page }) => {
+  test.setTimeout(120000);
+  const point = await openBook(page, true);
+  await page.evaluate(() => {
+    const current = window as unknown as DragTestWindow;
+    current.dragCounts = { reflow: 0, preflight: 0, autosave: 0, mutations: 0 };
+    const manager = current.recto.stateManager;
+    const original = manager.reflowStory.bind(manager);
+    manager.reflowStory = id => { current.dragCounts.reflow++; original(id); };
+  });
+  const before = await snapshot(page);
+  await page.mouse.move(point.x, point.y);
+  await page.mouse.down();
+  await page.mouse.move(point.x + 70, point.y + 25, { steps: 12 });
+  expect(await page.evaluate(() => (window as unknown as DragTestWindow).dragCounts.reflow)).toBe(0);
+  await page.mouse.up();
+  expect(await page.evaluate(() => (window as unknown as DragTestWindow).dragCounts.reflow)).toBe(1);
+  const after = await snapshot(page);
+  expect(after.x).not.toBe(before.x);
+  expect(after.story).toBe(before.story);
+});
+
+test('moves a selected group together, leaves locked artwork fixed, and undoes once', async ({ page }) => {
+  await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.abort());
+  const base = projectFixture();
+  const original = base.spreads[0].elements[0];
+  const project = { ...base, spreads: [{ ...base.spreads[0], elements: [
+    { ...original, groupId: 'group' },
+    { ...original, id: 'second', y: 140, height: 40, groupId: 'group' },
+    { ...original, id: 'locked', x: 50, y: 220, height: 40, locked: true },
+  ] }] };
+  await page.goto('/');
+  await projectFileInput(page).setInputFiles({ name: 'group.recto', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)) });
+  await expect(page.getByTitle('Click to rename document')).toHaveValue(project.settings.title);
+  const point = await page.evaluate(async () => {
+    const { stateManager: manager, spreadCanvas: canvas } = (window as unknown as DragTestWindow).recto;
+    manager.selectElements(['text-qa', 'second', 'locked']);
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const state = manager.getState(), origin = canvas.getSpreadScreenOrigin(state);
+    const box = document.querySelector('#spread-canvas')!.getBoundingClientRect();
+    return { x: box.left + origin.x + 90 * 96 / 25.4 * state.zoom,
+      y: box.top + origin.y + 60 * 96 / 25.4 * state.zoom };
+  });
+  const positions = () => page.evaluate(() => {
+    const manager = (window as unknown as DragTestWindow).recto.stateManager;
+    return ['text-qa', 'second', 'locked'].map(id => {
+      const element = manager.getElementById(id)!;
+      return { x: element.x, y: element.y };
+    });
+  });
+  const before = await positions();
+  await page.mouse.move(point.x, point.y); await page.mouse.down();
+  await page.mouse.move(point.x + 70, point.y + 25, { steps: 10 });
+  expect(await positions()).toEqual(before);
+  await page.mouse.up();
+  const after = await positions();
+  expect(after[0].x).not.toBe(before[0].x);
+  expect(after[1].x - before[1].x).toBeCloseTo(after[0].x - before[0].x, 5);
+  expect(after[2]).toEqual(before[2]);
+  await page.keyboard.press('Control+z');
+  expect(await positions()).toEqual(before);
+});

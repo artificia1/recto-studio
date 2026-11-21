@@ -844,6 +844,12 @@ export class StateManager {
 
   public updateElements(updates: { id: string; partial: Partial<CanvasElement> }[], recordHistory: boolean = true) {
     const spread = this.getActiveSpread();
+    // Translation preserves line geometry when neither a grid nor wrap/anchor objects depend on page coordinates.
+    const translationOnly = updates.every(({ partial }) => Object.keys(partial).every(key => key === 'x' || key === 'y'));
+    const layoutIsCurrent = translationOnly && !this.state.settings.baselineGrid?.enabled &&
+      !this.state.settings.footnotes?.length && ![...this.state.spreads, ...this.state.masterSpreads].some(spread =>
+        spread.elements.some(element => element.anchor || element.pasteboard ||
+          (element.textWrap?.mode && element.textWrap.mode !== 'none')));
     let changed = false;
     for (const { id, partial } of updates) {
       const idx = spread.elements.findIndex(el => el.id === id);
@@ -861,7 +867,7 @@ export class StateManager {
             textEl.rawStoryText = textEl.text;
           }
           this.updateStoryFrameFormatting(textEl, textPartial);
-          if (textEl.nextFrameId || textEl.prevFrameId) {
+          if (!recordHistory && (textEl.nextFrameId || textEl.prevFrameId)) {
             this.reflowStory(id);
           }
         }
@@ -871,7 +877,7 @@ export class StateManager {
     }
     if (changed) {
       if (recordHistory) {
-        this.pushHistory();
+        this.pushHistory(undefined, layoutIsCurrent);
       }
       this.notify();
     }

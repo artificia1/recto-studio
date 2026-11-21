@@ -1,3 +1,22 @@
+# Recto Studio 1.4.8
+
+Fixes text-frame dragging in long, threaded publications.
+
+- Pointer movement paints a temporary frame position without reflowing the book,
+  saving the project, or broadcasting document mutations on every movement.
+- Releasing the pointer commits the final geometry as one undoable change.
+- Plain translation reuses the existing composition when grids, wrapping,
+  anchored objects, and footnotes do not require new line positions.
+- Layout-dependent changes recompose after release. Escape, pointer cancellation,
+  focus loss, or another document edit discard the temporary drag safely.
+- Redraws are batched to animation frames.
+
+On Windows, choose **Check for Updates**, then **Install update**.
+Windows setup and portable packages, Debian and AppImage packages are available
+with the release.
+
+---
+
 # Recto Studio 1.4.7
 
 Performance fixes for large publications on Windows and Linux.

@@ -5,7 +5,6 @@ import type { TextElement, ImageElement } from '../types';
 import { storyText } from '../engine/storyContent';
 import { useProjectState } from '../hooks/useProjectState';
 import { TopBar } from './TopBar';
-import { ControlBar } from './ControlBar';
 import { Toolbar } from './Toolbar';
 import { StatusBar } from './StatusBar';
 import { BookletImpositionModal, CoverSpineModal, SpreadOverviewDialog } from './LazyPrintDialogs';
@@ -24,6 +23,7 @@ const ScriptsModal = lazy(() => import('./ScriptsModal').then(module => ({ defau
 const FindChangeModal = lazy(() => import('./FindChangeModal').then(module => ({ default: module.FindChangeModal })));
 const QuickApply = lazy(() => import('./QuickApply').then(module => ({ default: module.QuickApply })));
 const InspectorPanel = lazy(() => import('./Inspector/InspectorPanel').then(module => ({ default: module.InspectorPanel })));
+const ControlBar = lazy(() => import('./ControlBar').then(module => ({ default: module.ControlBar })));
 
 declare global {
   interface Window {
@@ -379,7 +379,7 @@ export function App() {
         onOpenScripts={() => setShowScriptsModal(true)}
         onOpenDocumentSetup={() => setInspectorTab('setup')}
       />
-      <ControlBar state={state} />
+      <Suspense fallback={<div className="control-bar" aria-busy="true"/>}><ControlBar state={state} /></Suspense>
 
       <div className="workspace">
         <Toolbar state={state} />

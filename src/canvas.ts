@@ -237,6 +237,16 @@ export class SpreadCanvas {
     { name: 'w', x: 0, y: 0 },
   ];
   private _dragUpdates: Array<{ id: string; partial: Partial<CanvasElement> }> = [];
+  private dragPreview = new Map<string, CanvasElement>();
+  private dragDocument?: { state: ProjectState; spread: Spread; revision: number; tool: ProjectState['activeTool'] };
+
+  private cancelDrag() {
+    this.isDragging = false;
+    this.dragPreview.clear();
+    this.dragDocument = undefined;
+    this.dragInitialPositions.clear();
+    this.activeSmartGuides = { lines: [], spacings: [] };
+  }
 
   // Multi-tier image caches (Full-Res vs Downscaled Viewport Proxy)
   private fullResCache: Map<string, HTMLImageElement> = new Map();
@@ -312,13 +322,20 @@ export class SpreadCanvas {
     });
 
     this.unsubState = stateManager.subscribe(() => {
+      if (this.dragDocument && (this.dragDocument.state !== stateManager.getState() ||
+        this.dragDocument.spread !== stateManager.getActiveSpread() ||
+        this.dragDocument.revision !== stateManager.getDocumentRevision() ||
+        this.dragDocument.tool !== stateManager.getState().activeTool)) this.cancelDrag();
       this.scheduleRender();
     });
+
+    this.addWindowListener('blur', () => { this.cancelDrag(); this.scheduleRender(); });
 
     this.windowCleanups.push(collabSession.onPeersChange(() => this.scheduleRender()));
   }
 
   public destroy(): void {
+    this.cancelDrag();
     if (this.renderRafId !== null) {
       cancelAnimationFrame(this.renderRafId);
       this.renderRafId = null;
@@ -392,7 +409,12 @@ export class SpreadCanvas {
       drop: this.handleFileDrop.bind(this),
       penIsDown: () => this.activePenPointerId !== null,
       touchPointer: () => { this.currentPointerType = 'touch'; },
+      cancelInteraction: () => {
+        if (!this.isDragging) return false;
+        this.cancelDrag(); this.scheduleRender(); return true;
+      },
       startPinch: () => {
+        this.cancelDrag();
         this.isPanning = true;
         this.isDrawingNew = false;
         this.isDragging = false;
@@ -405,7 +427,11 @@ export class SpreadCanvas {
         return { zoom, panX, panY };
       },
       setViewport: (zoom, panX, panY) => stateManager.setZoomAndPan(zoom, panX, panY),
-      keyDown: event => handleCanvasKeyDown(event, stateManager, {
+      keyDown: event => {
+        if (event.key === 'Escape' && this.isDragging) {
+          this.cancelDrag(); this.scheduleRender(); event.preventDefault(); return;
+        }
+        handleCanvasKeyDown(event, stateManager, {
         beginSpacePan: () => {
           if (this.isSpacePanning) return false;
           this.isSpacePanning = true;
@@ -420,7 +446,8 @@ export class SpreadCanvas {
           stateManager.setTool('select');
           this.render();
         },
-      }),
+        });
+      },
       keyUp: event => {
         if (event.code !== 'Space') return;
         this.isSpacePanning = false;
@@ -732,7 +759,9 @@ export class SpreadCanvas {
   }
 
   private prepareGroupDrag(screenX: number, screenY: number, state: ProjectState) {
+    this.cancelDrag();
     this.isDragging = true;
+    this.dragDocument = { state, spread: stateManager.getActiveSpread(), revision: stateManager.getDocumentRevision(), tool: state.activeTool };
     this.dragStartX = screenX;
     this.dragStartY = screenY;
     this.dragInitialPositions.clear();
@@ -1119,9 +1148,13 @@ export class SpreadCanvas {
       }
 
       if (updates.length > 0) {
-        stateManager.updateElements(updates, false);
+        const spread = stateManager.getActiveSpread();
+        for (const { id, partial } of updates) {
+          const element = spread.elements.find(element => element.id === id);
+          if (element) this.dragPreview.set(id, { ...element, ...partial } as CanvasElement);
+        }
       }
-      this.render();
+      this.scheduleRender();
       return;
     }
 
@@ -1211,8 +1244,17 @@ export class SpreadCanvas {
     const screenX = e.clientX - rect.left;
     const screenY = e.clientY - rect.top;
 
-    const hadInteractiveMod = this.isDragging || this.isResizing;
-    if (hadInteractiveMod) {
+    if (this.isDragging) {
+      const updates = [...this.dragPreview.values()].flatMap(element => {
+        const initial = this.dragInitialPositions.get(element.id);
+        return initial && (element.x !== initial.x || element.y !== initial.y)
+          ? [{ id: element.id, partial: { x: element.x, y: element.y } }] : [];
+      });
+      this.cancelDrag();
+      if (updates.length) stateManager.updateElements(updates);
+      this.scheduleRender();
+    }
+    if (this.isResizing) {
       stateManager.commitHistory();
     }
 
@@ -1223,12 +1265,6 @@ export class SpreadCanvas {
     if (this.isPanning) {
       this.isPanning = false;
       this.canvas.style.cursor = (this.isSpacePanning || state.activeTool === 'hand') ? 'grab' : 'default';
-    }
-    if (this.isDragging) {
-      this.isDragging = false;
-      this.dragInitialPositions.clear();
-      this.activeSmartGuides = { lines: [], spacings: [] };
-      this.render();
     }
     if (this.isResizing) {
       this.isResizing = false;
@@ -2154,6 +2190,7 @@ export class SpreadCanvas {
   }
 
   private handlePointerCancel(e: PointerEvent) {
+    if (this.isDragging) { this.cancelDrag(); this.scheduleRender(); }
     if (e.pointerId === this.activePenPointerId) {
       this.activePenPointerId = null;
     }
@@ -2774,7 +2811,10 @@ export class SpreadCanvas {
 
     const origin = this.getSpreadScreenOrigin(state);
     const pxPerMm = MM_TO_PX * state.zoom;
-    const spread = stateManager.getActiveSpread();
+    const realSpread = stateManager.getActiveSpread();
+    const spread = !proof && !state.previewMode && this.dragPreview.size
+      ? { ...realSpread, elements: realSpread.elements.map(element => this.dragPreview.get(element.id) || element) }
+      : realSpread;
 
     if (!proof) this.updateStaticBuffer(
       state,
@@ -3065,7 +3105,9 @@ export class SpreadCanvas {
         const startMm = grid?.startMm ?? state.settings.margins.topMm;
         const gridStartY = origin.y + (startMm * pxPerMm);
 
-        const obstacles = publicationWrapObjects(state, spread).filter(other => other.id !== text.id && other.pageId === text.pageId);
+        const layoutFrame = this.dragPreview.has(text.id)
+          ? realSpread.elements.find(element => element.id === text.id) as TextElement : text;
+        const obstacles = publicationWrapObjects(state, realSpread).filter(other => other.id !== text.id && other.pageId === text.pageId);
 
         const fnSettings = state.settings.footnoteSettings || {
           numberingStyle: 'superscript',
@@ -3077,7 +3119,7 @@ export class SpreadCanvas {
         const fnFontSizePx = (fnFontSizePt * (96 / 72)) * state.zoom;
         const fnLineSpacingPx = fnFontSizePx * 1.35;
         const fnRuleGapPx = 6 * state.zoom;
-        const noteLayout = layoutFrameNotes(state, text);
+        const noteLayout = layoutFrameNotes(state, layoutFrame);
         const totalFootnoteHeightPx = noteLayout.height * pxPerMm;
 
         let isOverflowing = false;
@@ -3096,13 +3138,13 @@ export class SpreadCanvas {
 
         const flowContent = text.textContent || (obstacles.length ? wrappedPlainContent(text, processedText) : undefined);
         if (flowContent) {
-          const cached = this.formattedLayouts.get(text);
+          const cached = this.formattedLayouts.get(layoutFrame);
           const layout = cached?.content === flowContent && cached.reserve === noteLayout.height ? cached.layout :
-            layoutStory(flowContent, text, state.paragraphStyles, state.characterStyles,
+            layoutStory(flowContent, layoutFrame, state.paragraphStyles, state.characterStyles,
               undefined, noteLayout.height, { obstacles, baselineGrid: state.settings.baselineGrid });
           if (cached?.layout !== layout && flowContent === text.textContent && !inheritedIds.has(text.id)) {
             if (this.formattedLayouts.size >= 64) this.formattedLayouts.clear();
-            this.formattedLayouts.set(text, { content: flowContent, reserve: noteLayout.height, layout });
+            this.formattedLayouts.set(layoutFrame, { content: flowContent, reserve: noteLayout.height, layout });
           }
           ctx.textAlign = 'left';
           ctx.textBaseline = 'alphabetic';
