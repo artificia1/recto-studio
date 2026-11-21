@@ -659,7 +659,7 @@ test('loads print tools on demand and returns to editing', async ({ page }) => {
   await importProject(page);
   await page.getByTitle('Export Clean PDF, Print PDF, EPUB 3, Web Flipbook, or Package').click();
   await page.getByText('Export Imposed Booklet PDF...', { exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Booklet Signature & Imposition Engine' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Booklet Imposition', exact: true })).toBeVisible();
   await page.getByTitle('Close', { exact: true }).click();
   await page.getByTitle('Export Clean PDF, Print PDF, EPUB 3, Web Flipbook, or Package').click();
   await page.getByText('Export Full Wrap Cover PDF...', { exact: true }).click();
