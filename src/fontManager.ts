@@ -307,6 +307,7 @@ export class FontManager {
     this.fontAssets = new Map();
     this.parsedFonts = new Map();
     this.customFonts = new Map();
+    this.generation++;
     try {
       await this.restoreFonts(assets);
       return await run();
@@ -314,6 +315,7 @@ export class FontManager {
       this.fontAssets = cache.assets;
       this.parsedFonts = cache.fonts;
       this.customFonts = cache.metadata;
+      this.generation++;
     }
   }
 }
