@@ -46,4 +46,41 @@ describe('Document history', () => {
     history.push(3);
     expect(history.undo()).toBeNull();
   });
+  it('restores partitioned snapshots with reordered spreads and isolated nested data', () => {
+    const history = new StateHistory<{ title: string; spreads: { id: string; copy: string }[] }>(3, 'spreads');
+    const document = { title: 'Book', spreads: [{ id: 'a', copy: 'Original' }, { id: 'b', copy: 'Second' }] };
+    const first = JSON.stringify(document);
+    history.push(document);
+    document.spreads[0].copy = 'Revised';
+    history.push(document);
+    document.spreads.reverse();
+    history.push(document);
+    expect(history.undo()?.spreads.map(spread => spread.id)).toEqual(['a', 'b']);
+    const restored = history.undo()!;
+    expect(JSON.stringify(restored)).toBe(first);
+    restored.spreads[0].copy = 'Discard this temporary edit';
+    expect(history.redo()?.spreads[0].copy).toBe('Revised');
+    expect(history.redo()?.spreads.map(spread => spread.id)).toEqual(['b', 'a']);
+  });
+
+  it('restores large manuscripts and image sources alongside independent geometry edits', () => {
+    const copy = 'Quoted manuscript “text” with a newline.\n'.repeat(1_400);
+    const src = 'data:image/png;base64,' + 'abcd'.repeat(12_000);
+    const text = { type: 'text', x: 10, text: copy, rawStoryText: copy,
+      storyContent: { version: 1, paragraphs: [{ runs: [{ text: copy }] }] } };
+    const image = { type: 'image', x: 20, src };
+    const document = { title: 'Large document', spreads: [{ id: 'spread', elements: [text, image] }] };
+    const history = new StateHistory<typeof document>(30, 'spreads');
+    const before = JSON.stringify(document);
+    history.push(document);
+    text.x = 23;
+    history.push(document);
+    text.storyContent.paragraphs[0].runs[0].text = 'Changed content';
+    history.push(document);
+    expect(history.undo()?.spreads[0].elements[0]).toMatchObject({ x: 23, storyContent: {
+      paragraphs: [{ runs: [{ text: copy }] }],
+    } });
+    expect(JSON.stringify(history.undo())).toBe(before);
+    expect(history.redo()?.spreads[0].elements[1]).toEqual(image);
+  });
 });

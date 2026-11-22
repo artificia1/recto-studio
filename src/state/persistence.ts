@@ -68,7 +68,7 @@ export class RectoDB {
       const store = tx.objectStore(STORE_NAME);
       const record = {
         id: RECORD_ID,
-        state: JSON.parse(JSON.stringify(state)),
+        state,
         updatedAt,
       };
       tx.oncomplete = () => resolve();

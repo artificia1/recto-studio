@@ -14,7 +14,7 @@ interface DragTestWindow extends Window {
       setZoom(zoom: number): void;
       setPan(x: number, y: number): void;
       updateSettings(settings: Partial<ProjectState['settings']>): void;
-      reflowStory(id: string): void;
+      reflowStory(id: string, resume?: unknown): void;
       runPreflightCheck(): unknown;
       autosave: { schedule(): void };
       onMutation?: (...args: unknown[]) => void;
@@ -61,7 +61,9 @@ async function openBook(page: Page, baselineGrid = false) {
     const frame = manager.getElementById('drag-25')!;
     const origin = canvas.getSpreadScreenOrigin(state);
     const box = document.querySelector('#spread-canvas')!.getBoundingClientRect();
-    return { x: box.left + origin.x + (frame.x + frame.width / 2) * 96 / 25.4,
+    return { right: box.left + origin.x + (frame.x + frame.width) * 96 / 25.4,
+      middle: box.top + origin.y + (frame.y + frame.height / 2) * 96 / 25.4,
+      x: box.left + origin.x + (frame.x + frame.width / 2) * 96 / 25.4,
       y: box.top + origin.y + (frame.y + frame.height / 3) * 96 / 25.4 };
   });
 }
@@ -75,9 +77,91 @@ async function snapshot(page: Page) {
   });
 }
 
+test('drafts typography and frame dimensions, then applies one undoable change each', async ({ page }) => {
+  test.setTimeout(120000);
+  await openBook(page);
+  await page.evaluate(() => {
+    const app = window as unknown as DragTestWindow;
+    app.dragCounts = { reflow: 0, preflight: 0, autosave: 0, mutations: 0 };
+    const manager = app.recto.stateManager;
+    const reflow = manager.reflowStory.bind(manager);
+    manager.reflowStory = (...args) => { app.dragCounts.reflow++; reflow(...args); };
+    const WorkerConstructor = window.Worker;
+    window.Worker = class extends WorkerConstructor {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        if (!String(url).includes('storyCompositionWorker')) return;
+        const send = this.postMessage.bind(this);
+        this.postMessage = message => {
+          document.body.dataset.typographyWorker = 'pending';
+          setTimeout(() => send(message), 400);
+        };
+        this.addEventListener('message', event => {
+          document.body.dataset.typographyWorker = event.data?.frames?.length ? 'composed' : 'fallback';
+        });
+      }
+    };
+  });
+  const values = () => page.evaluate(() => {
+    const app = window as unknown as DragTestWindow;
+    const manager = app.recto.stateManager;
+    const frame = manager.getElementById('drag-25') as TextElement;
+    return { revision: manager.getDocumentRevision(), reflow: app.dragCounts.reflow, size: frame.fontSizePt,
+      gutter: frame.columnGutterMm, width: frame.width, height: frame.height };
+  });
+  const before = await values();
+  const toolbar = page.getByRole('toolbar', { name: 'Contextual Text Controls' });
+  const size = toolbar.getByRole('spinbutton', { name: 'Font size' });
+  await size.fill('9');
+  await size.fill('18');
+  expect(await values()).toEqual(before);
+  await size.press('Escape');
+  await expect(size).toHaveValue(String(before.size));
+  expect(await values()).toEqual(before);
+
+  await size.fill('18');
+  await size.press('Enter');
+  await expect(page.locator('body')).toHaveAttribute('data-typography-worker', 'pending');
+  expect((await values()).size).toBe(before.size);
+  await page.evaluate(() => (window as unknown as DragTestWindow).recto.stateManager.setPan(5, 0));
+  await expect(page.locator('body')).toHaveAttribute('data-typography-worker', 'composed');
+  await expect.poll(async () => (await values()).size).toBe(18);
+  const gutter = toolbar.getByRole('spinbutton', { name: 'Column gutter' });
+  await gutter.fill('7');
+  expect((await values()).gutter).toBe(before.gutter);
+  await gutter.press('Tab');
+  await expect.poll(async () => (await values()).gutter).toBe(7);
+
+  const width = page.getByRole('textbox', { name: 'Frame width' });
+  await width.fill('280/2');
+  expect((await values()).width).toBe(before.width);
+  await width.press('Enter');
+  await expect.poll(async () => (await values()).width).toBe(140);
+  const height = page.getByRole('textbox', { name: 'Frame height' });
+  await height.focus();
+  await height.press('ArrowUp');
+  await height.press('ArrowUp');
+  expect((await values()).height).toBe(before.height);
+  await height.press('Enter');
+
+  await expect.poll(values).toEqual({ revision: before.revision + 4, reflow: 0,
+    size: 18, gutter: 7, width: 140, height: before.height + 2 });
+  await page.keyboard.press('Control+z');
+  expect((await values()).height).toBe(before.height);
+  expect((await values()).width).toBe(140);
+
+  await size.fill('20');
+  await size.press('Enter');
+  await expect(page.locator('body')).toHaveAttribute('data-typography-worker', 'pending');
+  await page.evaluate(() => (window as unknown as DragTestWindow).recto.stateManager.updateSettings({ title: 'Edited while laying out text' }));
+  await expect(toolbar.getByRole('alert')).toContainText('The document changed during layout');
+  expect((await values()).size).toBe(18);
+});
+
 test('drags a linked frame without reflowing or saving the book until release, then undoes once', async ({ page }) => {
   test.setTimeout(120000);
   const point = await openBook(page);
+  await expect(page.getByRole('button', { name: /^Preflight: / })).toHaveAttribute('aria-busy', 'false');
   const before = await snapshot(page);
   await page.evaluate(() => {
     const current = window as unknown as DragTestWindow;
@@ -103,7 +187,7 @@ test('drags a linked frame without reflowing or saving the book until release, t
   expect(after.x).not.toBe(before.x);
   expect(after.story).toBe(before.story);
   expect(after.revision).toBe(before.revision + 1);
-  expect(await page.evaluate(() => (window as unknown as DragTestWindow).dragCounts))
+  await expect.poll(() => page.evaluate(() => (window as unknown as DragTestWindow).dragCounts))
     .toEqual({ reflow: 0, preflight: 1, autosave: 1, mutations: 1 });
   await page.keyboard.press('Control+z');
   const undone = await snapshot(page);
@@ -225,4 +309,25 @@ test('opens a linked frame and adjusts opacity without recomposing the book', as
   await page.keyboard.press('Escape');
   await page.keyboard.press('Control+z');
   expect(await opacity()).toBe(1);
+});
+
+test('resizes a linked text frame with a preview and commits once on release', async ({ page }) => {
+  test.setTimeout(120000);
+  const point = await openBook(page);
+  const width = () => page.evaluate(() =>
+    (window as unknown as DragTestWindow).recto.stateManager.getElementById('drag-25')!.width);
+  const before = await snapshot(page);
+  const originalWidth = await width();
+  await page.mouse.move(point.right, point.middle);
+  await page.mouse.down();
+  await page.mouse.move(point.right - 45, point.middle, { steps: 12 });
+  expect(await width()).toBe(originalWidth);
+  expect((await snapshot(page)).revision).toBe(before.revision);
+  await page.mouse.up();
+  expect(await width()).toBeLessThan(originalWidth);
+  const after = await snapshot(page);
+  expect(after.revision).toBe(before.revision + 1);
+  expect(after.story).toBe(before.story);
+  await page.keyboard.press('Control+z');
+  expect(await width()).toBe(originalWidth);
 });

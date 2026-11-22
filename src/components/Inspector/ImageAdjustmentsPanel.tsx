@@ -1,6 +1,7 @@
 import type { ImageAdjustments, ImageElement } from '../../types';
 import { neutralAdjustments } from '../../engine/imageAdjustments';
 import { stateManager } from '../../state';
+import { CommitNumberInput } from '../common/CommitNumberInput';
 
 export default function ImageAdjustmentsPanel({ image }: { image: ImageElement }) {
   const settings = image.adjustments || neutralAdjustments;
@@ -11,10 +12,8 @@ export default function ImageAdjustmentsPanel({ image }: { image: ImageElement }
     <button className="sm-btn" disabled={disabled} onClick={() => update()}>Reset image adjustments</button>
   </section> : null;
   const level = (key: 'black' | 'white' | 'gamma', label: string, min: number, max: number, step = 1) =>
-    <label>{label}<input type="number" min={min} max={max} step={step} value={settings[key]} disabled={disabled} onChange={event => {
-      const value = event.currentTarget.valueAsNumber;
-      if (Number.isFinite(value)) update({ ...settings, [key]: Math.max(min, Math.min(max, value)) });
-    }}/></label>;
+    <label>{label}<CommitNumberInput key={image.id + key} min={min} max={max} step={step} value={settings[key]}
+      disabled={disabled} onCommit={value => update({ ...settings, [key]: value })}/></label>;
   const points = [{ input: 0, output: 0 }, ...settings.curve, { input: 255, output: 255 }];
   return <details className="inspector-section">
     <summary>Image adjustments</summary>
@@ -29,11 +28,8 @@ export default function ImageAdjustmentsPanel({ image }: { image: ImageElement }
     </svg>
     {settings.curve.map((point, index) => <div key={index}>
       {(['input', 'output'] as const).map(axis => <label key={axis}>Point {index + 1} {axis}
-        <input type="number" min={axis === 'input' ? points[index].input + 1 : 0} max={axis === 'input' ? points[index + 2].input - 1 : 255}
-          value={point[axis]} disabled={disabled} onChange={event => {
-            const input = event.currentTarget;
-            if (!Number.isFinite(input.valueAsNumber)) return;
-            const value = Math.max(Number(input.min), Math.min(Number(input.max), input.valueAsNumber));
+        <CommitNumberInput key={image.id} min={axis === 'input' ? points[index].input + 1 : 0} max={axis === 'input' ? points[index + 2].input - 1 : 255}
+          value={point[axis]} disabled={disabled} onCommit={value => {
             update({ ...settings, curve: settings.curve.map((item, i) => i === index ? { ...item, [axis]: value } : item) });
           }}/></label>)}
       <button className="sm-btn" disabled={disabled} onClick={() => update({ ...settings, curve: settings.curve.filter((_, i) => i !== index) })}>Remove point {index + 1}</button>

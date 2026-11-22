@@ -4,6 +4,7 @@ import { RectoDB } from './persistence';
 
 export const AUTOSAVE_KEY = 'recto_project_autosave';
 const TIMESTAMP_KEY = `${AUTOSAVE_KEY}_timestamp`;
+const WORKER_SNAPSHOT_MIN_LENGTH = 512 * 1024;
 export type SaveStatus = 'saved' | 'pending' | 'saving' | 'error';
 
 interface RecoverySession {
@@ -11,11 +12,26 @@ interface RecoverySession {
   fileName?: string;
 }
 
+interface QueuedWrite {
+  session: RecoverySession | undefined;
+  run: () => Promise<void>;
+}
+
+interface BrowserSnapshot {
+  json: string;
+  updatedAt: number;
+  localSaved?: boolean;
+}
+
 /** Batches edits while keeping asynchronous writes in document order. */
 export class Autosave {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private pending = false;
   private writes: Promise<void> = Promise.resolve();
+  private queuedTail?: QueuedWrite;
+  private latestBrowserSnapshot?: BrowserSnapshot;
+  private remainingWrites = 0;
+  private saveAfterWrite = false;
   private revision = 0;
   private lastWriteTime = 0;
   private recoverySession?: RecoverySession;
@@ -33,6 +49,7 @@ export class Autosave {
   }
 
   private setStatus(status: SaveStatus) {
+    if (this.status === status) return;
     this.status = status;
     this.listeners.forEach(listener => listener(status));
   }
@@ -43,7 +60,11 @@ export class Autosave {
     this.revision++;
     this.setStatus('pending');
     // A bounded batch also saves periodically during continuous editing.
-    this.timer ??= setTimeout(() => { void this.flush(); }, 500);
+    if (!this.saveAfterWrite) this.timer ??= setTimeout(() => {
+      this.timer = undefined;
+      if (this.remainingWrites) this.saveAfterWrite = true;
+      else void this.savePending(false);
+    }, 500);
   }
 
   beginDesktopDocument(fileName?: string, legacyState?: ProjectState | null) {
@@ -87,8 +108,14 @@ export class Autosave {
   }
 
   flush(): Promise<void> {
+    if (!this.pending && this.latestBrowserSnapshot) this.saveLocalSnapshot(this.latestBrowserSnapshot);
+    return this.savePending(true);
+  }
+
+  private savePending(immediate: boolean): Promise<void> {
     clearTimeout(this.timer);
     this.timer = undefined;
+    this.saveAfterWrite = false;
     if (!this.pending) return this.writes;
     this.pending = false;
     const revision = this.revision;
@@ -102,29 +129,43 @@ export class Autosave {
       this.setStatus('error');
       return this.writes;
     }
-    const state = JSON.parse(json) as ProjectState;
-    let localSaved = false;
-    try {
-      localStorage.setItem(AUTOSAVE_KEY, json);
-      localStorage.setItem(TIMESTAMP_KEY, String(updatedAt));
-      localSaved = true;
-    } catch { /* IndexedDB can still save documents exceeding localStorage quota. */ }
+    const snapshot: BrowserSnapshot = { json, updatedAt };
+    this.latestBrowserSnapshot = snapshot;
+    const database = typeof indexedDB !== 'undefined';
+    const useWorker = database && json.length >= WORKER_SNAPSHOT_MIN_LENGTH && typeof Worker !== 'undefined';
+    // Large scheduled saves use IndexedDB first. A flush on tab exit can still
+    // write the exact pending snapshot synchronously while the worker is busy.
+    if (immediate || !useWorker) this.saveLocalSnapshot(snapshot);
     this.setStatus('saving');
-    this.writes = this.writes.then(async () => {
+    return this.enqueueWrite(undefined, async () => {
       let databaseSaved = false;
-      if (typeof indexedDB !== 'undefined') {
+      if (database) {
         try {
-          await RectoDB.saveProject(state, updatedAt);
-          databaseSaved = true;
+          databaseSaved = useWorker &&
+            await import('./autosaveWorkerClient').then(client => client.saveProjectInWorker(json, updatedAt)).catch(() => false);
+          if (!databaseSaved) {
+            if (snapshot === this.latestBrowserSnapshot) this.saveLocalSnapshot(snapshot);
+            await RectoDB.saveProject(JSON.parse(json) as ProjectState, updatedAt);
+            databaseSaved = true;
+          }
         } catch { /* Report failure only when neither storage backend succeeded. */ }
       }
+      if (snapshot === this.latestBrowserSnapshot) this.latestBrowserSnapshot = undefined;
       if (revision === this.revision) {
-        const saved = localSaved || databaseSaved;
+        const saved = !!snapshot.localSaved || databaseSaved;
         this.pending = !saved;
         this.setStatus(saved ? 'saved' : 'error');
       }
     });
-    return this.writes;
+  }
+
+  private saveLocalSnapshot(snapshot: BrowserSnapshot) {
+    if (snapshot.localSaved !== undefined) return;
+    try {
+      localStorage.setItem(AUTOSAVE_KEY, snapshot.json);
+      localStorage.setItem(TIMESTAMP_KEY, String(snapshot.updatedAt));
+      snapshot.localSaved = true;
+    } catch { snapshot.localSaved = false; }
   }
 
   private saveCheckpoint(session: RecoverySession, revision: number, updatedAt: number, recoverable = true): Promise<void> {
@@ -137,7 +178,7 @@ export class Autosave {
       return this.writes;
     }
     this.setStatus('saving');
-    this.writes = this.writes.then(async () => {
+    return this.enqueueWrite(session, async () => {
       let saved = false;
       try {
         await (await import('./desktopRecovery')).saveRecoveryCheckpoint(session.id, state, updatedAt, fileName, recoverable);
@@ -146,6 +187,25 @@ export class Autosave {
       if (revision === this.revision) {
         this.pending = recoverable && !saved;
         this.setStatus(saved ? 'saved' : 'error');
+      }
+    });
+  }
+
+  private enqueueWrite(session: RecoverySession | undefined, run: () => Promise<void>): Promise<void> {
+    if (this.queuedTail && this.queuedTail.session === session) {
+      // Explicit flushes still capture immediately. Keep only the newest snapshot
+      // when consecutive writes for the same target have yet to start.
+      this.queuedTail.run = run;
+      return this.writes;
+    }
+    const entry = this.queuedTail = { session, run };
+    this.remainingWrites++;
+    this.writes = this.writes.then(async () => {
+      if (this.queuedTail === entry) this.queuedTail = undefined;
+      try { await entry.run(); }
+      finally {
+        this.remainingWrites--;
+        if (!this.remainingWrites && this.saveAfterWrite) void this.savePending(false);
       }
     });
     return this.writes;

@@ -1,0 +1,22 @@
+/** One worker per large save keeps an idle editor from retaining two copies of its project. */
+export function saveProjectInWorker(json: string, updatedAt: number): Promise<boolean> {
+  return new Promise(resolve => {
+    let worker: Worker | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const finish = (saved: boolean) => {
+      clearTimeout(timeout);
+      worker?.terminate();
+      resolve(saved);
+    };
+    try {
+      worker = new Worker(new URL('./autosaveWorker.ts', import.meta.url), { type: 'module' });
+      worker.onmessage = event => finish(event.data === true);
+      worker.onerror = event => { event.preventDefault(); finish(false); };
+      worker.onmessageerror = () => finish(false);
+      timeout = setTimeout(() => finish(false), 15_000);
+      worker.postMessage({ json, updatedAt });
+    } catch {
+      finish(false);
+    }
+  });
+}

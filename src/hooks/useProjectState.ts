@@ -6,8 +6,8 @@ export function useProjectState(): ProjectState {
   const [state, setState] = useState<ProjectState>(stateManager.getState());
 
   useEffect(() => {
-    return stateManager.subscribe((newState: ProjectState) => {
-      setState({ ...newState });
+    return stateManager.subscribe((newState, panOnly) => {
+      if (!panOnly) setState({ ...newState });
     });
   }, []);
 

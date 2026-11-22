@@ -6,6 +6,7 @@ import type { RunStyle, StoryMeasure } from './storyLayout';
 type LinePlan = { tokens: { text: string; width: number; style: RunStyle }[]; starts: number[] };
 
 interface LayoutKernels {
+  flattenPath: typeof import('./layoutWasm').nativeFlattenPath;
   shapeFont: typeof import('./fontShapingWasm').shapeRegisteredFont;
   measureFont: typeof import('./fontShapingWasm').measureRegisteredFont;
   registerFont: typeof import('./fontShapingWasm').registerShapingFont;

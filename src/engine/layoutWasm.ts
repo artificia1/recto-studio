@@ -1,7 +1,7 @@
 import type { KnuthItem } from './knuthPlass';
 import type { WrapObstacle } from './wrapGeometry';
-import type { StoryRun } from '../types';
-import type { RunStyle, StoryMeasure } from './storyLayout';
+import type { BezierNode, StoryRun } from '../types';
+import { measuredAdvance, type RunStyle, type StoryMeasure } from './storyLayout';
 import { getRasterWasm, loadRasterWasm } from './rasterWasm';
 import { nativeFootnotes, nativeTableRows } from './paginationWasm';
 import { measureRegisteredFont, registerShapingFont, shapeRegisteredFont } from './fontShapingWasm';
@@ -10,8 +10,28 @@ export async function loadLayoutKernels() {
   const engine = await loadRasterWasm();
   if (!engine?.layout_optimal_breaks) return undefined;
   return { optimalBreaks: nativeOptimalBreaks, storyLines: nativeStoryLines, place: nativePlacement,
+    flattenPath: nativeFlattenPath,
     tableRows: nativeTableRows, footnotes: nativeFootnotes, shapeFont: shapeRegisteredFont,
     measureFont: measureRegisteredFont, registerFont: registerShapingFont };
+}
+
+export function nativeFlattenPath(nodes: BezierNode[], closed: boolean) {
+  const engine = getRasterWasm();
+  const maxPoints = 8192;
+  if (!engine?.layout_flatten_path || !nodes.length || nodes.length > maxPoints) return undefined;
+  const input = new DataView(engine.memory.buffer, engine.raster_input(), nodes.length * 48);
+  for (const [index, node] of nodes.entries()) {
+    const coordinates = [node.x, node.y, node.x + (node.handleOut?.x ?? 0), node.y + (node.handleOut?.y ?? 0),
+      node.x + (node.handleIn?.x ?? 0), node.y + (node.handleIn?.y ?? 0)];
+    if (!coordinates.every(Number.isFinite)) return undefined;
+    coordinates.forEach((value, axis) => input.setFloat64(index * 48 + axis * 8, value, true));
+  }
+  const count = engine.layout_flatten_path(nodes.length, Number(closed));
+  if (!count || count > maxPoints) return undefined;
+  const output = new DataView(engine.memory.buffer, engine.raster_output(), count * 16);
+  return Array.from({ length: count }, (_, index) => ({
+    x: output.getFloat64(index * 16, true), y: output.getFloat64(index * 16 + 8, true),
+  }));
 }
 
 function nativePlacement(obstacles: WrapObstacle[], x: number, frameY: number, padding: number, bottom: number,
@@ -129,7 +149,7 @@ function nativeStoryLines(runs: StoryRun[], resolve: (run: StoryRun) => RunStyle
   for (const token of tokens) {
     const { text, style } = token;
     if (text === '\n') continue;
-    token.width = measure(text, style) + Array.from(text).length * style.letterSpacingPt * (25.4 / 72);
+    token.width = measuredAdvance(text, style, measure);
     if (!Number.isFinite(token.width) || token.width < 0) return undefined;
   }
   const input = new DataView(engine.memory.buffer, engine.raster_input());

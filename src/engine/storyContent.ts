@@ -1,7 +1,33 @@
-import type { StoryContent, StoryParagraph, StoryRun, TextFormatting } from '../types';
+import type { StoryContent, StoryParagraph, StoryRun, TextElement, TextFormatting } from '../types';
 
 export const storyText = (content: StoryContent): string =>
   content.paragraphs.map(p => p.runs.map(r => r.text).join('')).join('\n');
+
+export type FrameLayoutEdit = Partial<Pick<TextElement,
+  'fontSizePt' | 'lineHeight' | 'letterSpacingPt' | 'columns' | 'columnGutterMm' | 'paddingMm' | 'width' | 'height'>>;
+
+export function formatFrameParagraphs(content: StoryContent, frame: TextElement, updates: Partial<TextElement>) {
+  if (!frame.textContent) return;
+  const keys = ['fontFamily', 'fontSizePt', 'color', 'alignment', 'lineHeight', 'letterSpacingPt'] as const;
+  const formatting = Object.fromEntries(keys.filter(key => updates[key] !== undefined).map(key => [key, updates[key]]));
+  if (!Object.keys(formatting).length) return;
+  const start = frame.storyStart ?? 0, end = frame.storyEnd ?? storyText(content).length;
+  let offset = 0, previousOffset = 0;
+  let unchangedThrough: number | undefined, changedThrough: number | undefined;
+  const paragraphs = content.paragraphs.map(paragraph => {
+    const length = paragraph.runs.reduce((n, run) => n + run.text.length, 0);
+    const selected = offset < end && offset + length >= start;
+    // The preceding paragraph can keep with the first reformatted paragraph.
+    if (selected) {
+      unchangedThrough ??= previousOffset;
+      changedThrough = offset + length;
+    }
+    previousOffset = offset;
+    offset += length + 1;
+    return selected ? { ...paragraph, formatting: { ...paragraph.formatting, ...formatting } } : paragraph;
+  });
+  return { content: { version: 1 as const, paragraphs }, range: { unchangedThrough, changedThrough } };
+}
 
 /** Partial edits detach atomic references instead of duplicating their identity. */
 function cutRun(run: StoryRun, start: number, end: number): StoryRun {
@@ -62,7 +88,8 @@ export function indexStory(content: StoryContent) {
     offset = end + 1;
     return { start, end };
   });
-  const full = content.paragraphs.map(paragraph => sliceParagraph(paragraph, 0, Infinity));
+  const full: StoryParagraph[] = [];
+  const fullParagraph = (index: number) => full[index] ??= sliceParagraph(content.paragraphs[index], 0, Infinity);
 
   const firstParagraphAt = (start: number) => {
     let low = 0;
@@ -81,7 +108,7 @@ export function indexStory(content: StoryContent) {
       const bounds = positions[index];
       // Full slices share immutable copies. Slice boundary paragraphs from the
       // original runs to preserve marker identity and offsets.
-      paragraphs.push(start <= bounds.start && end >= bounds.end ? full[index]
+      paragraphs.push(start <= bounds.start && end >= bounds.end ? fullParagraph(index)
         : sliceParagraph(content.paragraphs[index], start - bounds.start, end - bounds.start));
     }
     return { version: 1, paragraphs: paragraphs.length ? paragraphs : [{ runs: [{ text: '' }] }] };
@@ -89,10 +116,14 @@ export function indexStory(content: StoryContent) {
 
   const from = (start: number): Pick<StoryParagraph[], 'length' | 'at'> => {
     const index = firstParagraphAt(start);
-    if (index === full.length) return [{ runs: [{ text: '' }] }];
-    const first = start <= positions[index].start ? full[index]
+    if (index === positions.length) return [{ runs: [{ text: '' }] }];
+    const first = start <= positions[index].start ? fullParagraph(index)
       : sliceParagraph(content.paragraphs[index], start - positions[index].start, Infinity);
-    return { length: full.length - index, at: offset => offset === 0 ? first : full[index + offset] };
+    return { length: positions.length - index, at: offset => {
+      if (offset === 0) return first;
+      const target = index + offset;
+      return positions[target] ? fullParagraph(target) : undefined;
+    } };
   };
 
   return { slice, from };

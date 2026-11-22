@@ -1,5 +1,6 @@
 import type { CanvasElement, TextElement, BezierNode } from '../types';
 import { calculateImageFitting } from './imageFitting';
+import { layoutKernels } from './layoutRuntime';
 
 interface Point { x: number; y: number }
 interface Polygon { points: Point[]; minY: number; maxY: number; closed: boolean }
@@ -14,6 +15,8 @@ function rotate(point: Point, cx: number, cy: number, angle: number): Point {
 
 function flattenedPath(nodes: BezierNode[], closed: boolean): Point[] {
   if (!nodes.length) return [];
+  const native = layoutKernels?.flattenPath(nodes, closed);
+  if (native) return native;
   const result: Point[] = [{ x: nodes[0].x, y: nodes[0].y }];
   const flatten = (a: Point, b: Point, c: Point, d: Point, depth: number) => {
     const length = Math.hypot(d.x - a.x, d.y - a.y);

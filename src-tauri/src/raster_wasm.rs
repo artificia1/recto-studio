@@ -116,6 +116,37 @@ pub extern "C" fn layout_place_line(length: usize) -> i32 {
 }
 
 #[no_mangle]
+pub extern "C" fn layout_flatten_path(count: usize, closed: bool) -> usize {
+    const MAX_POINTS: usize = 8192;
+    if count == 0 || count > MAX_POINTS { return 0; }
+    let input = unsafe { slice::from_raw_parts(raster_input(), count * 48) };
+    let output = unsafe { slice::from_raw_parts_mut(raster_output(), MAX_POINTS * 16) };
+    let point = |node: usize, offset: usize| {
+        let start = node * 48 + offset;
+        (number(&input[start..start + 8]), number(&input[start + 8..start + 16]))
+    };
+    let mut slots = output.chunks_exact_mut(16);
+    let mut written = 0;
+    let mut emit = |(x, y): story_geometry::Point| {
+        let Some(slot) = slots.next() else { return false; };
+        slot[..8].copy_from_slice(&x.to_le_bytes());
+        slot[8..].copy_from_slice(&y.to_le_bytes());
+        written += 1;
+        true
+    };
+    emit(point(0, 0));
+    for index in 1..count + usize::from(closed) {
+        let next = index % count;
+        let a = point(index - 1, 0);
+        let b = point(index - 1, 16);
+        let c = point(next, 32);
+        let d = point(next, 0);
+        if !story_geometry::flatten_cubic(a, b, c, d, 0, &mut emit) { return 0; }
+    }
+    written
+}
+
+#[no_mangle]
 pub extern "C" fn layout_optimal_breaks(count: usize, width_count: usize, tolerance: f64, hyphen_cost: f64) -> i32 {
     if count > 2048 || width_count == 0 || width_count > 2048 { return -2; }
     let input = unsafe { slice::from_raw_parts(raster_input(), count * 40 + width_count * 8) };

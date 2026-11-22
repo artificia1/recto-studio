@@ -3,6 +3,7 @@ import { availableTextInterval, prepareWrapObstacles } from '../src/engine/wrapG
 import { assetStore } from '../src/engine/assetStore';
 import { layoutStory } from '../src/engine/storyLayout';
 import { layoutKernels, warmLayout } from '../src/engine/layoutRuntime';
+import { getRasterWasm } from '../src/engine/rasterWasm';
 import { plainStory } from '../src/engine/storyContent';
 import type { CanvasElement, ImageElement, TextElement, VectorPathElement } from '../src/types';
 
@@ -17,11 +18,20 @@ describe('shared runaround geometry', () => {
   it('keeps Rust and TypeScript in sync across a baseline grid, rotated contours and column breaks', async () => {
     const text = { ...frame, x: 4.2, y: 8.4, rotation: 11, columns: 2, height: 32, snapToBaseline: true };
     const obstacles = [shape({ x: 11, y: 15, width: 38, height: 13, rotation: 17, shapeKind: 'ellipse' })];
+    const curve = { ...shape(), type: 'path', rotation: 12, closed: false, nodes: [
+      { x: 0, y: 80, handleOut: { x: 60, y: -80 } },
+      { x: 0, y: 0, handleIn: { x: 60, y: 80 } },
+      { x: 30, y: 30 },
+    ] } as VectorPathElement;
+    const curves = [curve, { ...curve, closed: true }];
+    const expectedContours = curves.map(path => prepareWrapObstacles([path], text));
     const options = { obstacles, baselineGrid: { enabled: true, startMm: 3, incrementPt: 12 } };
     const content = plainStory('Alpha beta gamma delta epsilon zeta. '.repeat(32));
     const expected = layoutStory(content, text, [], [], value => value.length, 0, options);
     expect(expected.lines.some(line => line.column === 1)).toBe(true);
     await warmLayout();
+    expect(getRasterWasm()?.layout_flatten_path).toBeTypeOf('function');
+    curves.forEach((path, index) => expect(prepareWrapObstacles([path], text)).toEqual(expectedContours[index]));
     expect(layoutKernels?.place(prepareWrapObstacles(obstacles, text), text.x, text.y, 0, 32, 48, 4, 2)).toBeTypeOf('function');
     expect(layoutStory(content, text, [], [], value => value.length, 0, options)).toEqual(expected);
   });

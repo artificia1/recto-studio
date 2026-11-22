@@ -101,8 +101,15 @@ export function notesForFrame(state: Pick<StoryLayoutState, 'settings'>, frame: 
     (ids.has(note.id) || (!note.anchorVersion && note.elementId === frame.id && frame.text.includes(noteMarker(note.number)))));
 }
 
+export interface StoryReflowRange {
+  frameId: string;
+  unchangedThrough?: number;
+  changedThrough?: number;
+}
+
 export function reflowStoryState(state: StoryLayoutState, frameId: string,
-  getWrapObjects: typeof publicationWrapObjects = publicationWrapObjects, measure?: StoryMeasure) {
+  getWrapObjects: typeof publicationWrapObjects = publicationWrapObjects, measure?: StoryMeasure,
+  resume?: StoryReflowRange) {
   const byId = new Map<string, TextElement>();
   const spreadsByFrame = new Map<string, ProjectState['spreads'][number]>();
   for (const spread of state.spreads) for (const element of spread.elements) {
@@ -125,8 +132,26 @@ export function reflowStoryState(state: StoryLayoutState, frameId: string,
   let offset = 0;
   let pending: NoteContinuation[] = [];
   const documentHasNotes = !!state.settings.footnotes?.length;
-  for (const [index, frame] of chain.entries()) {
+  let first = 0;
+  let edited = -1;
+  let reuseAfter = Infinity;
+  if (resume && !documentHasNotes && !head.generated && !head.autoExtendStory) {
+    edited = chain.findIndex(frame => frame.id === resume.frameId);
+    const unchanged = resume.unchangedThrough ?? head.rawStoryText.length;
+    while (first < edited) {
+      const frame = chain[first];
+      const end = frame.storyEnd;
+      if (!frame.textContent || frame.storyStart !== offset || end === undefined || end < offset ||
+        end > unchanged || frame.text !== head.rawStoryText.slice(offset, end)) break;
+      offset = end;
+      first++;
+    }
+    reuseAfter = resume.changedThrough ?? (first === edited && resume.unchangedThrough === undefined ? -1 : Infinity);
+  }
+  for (let index = first; index < chain.length; index++) {
+    const frame = chain[index];
     const lastFrame = index === chain.length - 1;
+    const previousEnd = frame.storyEnd;
     const remaining = lastFrame ? slice(offset, head.rawStoryText.length) : undefined;
     const paragraphs = remaining?.paragraphs ?? indexed!.from(offset);
     const spread = spreadsByFrame.get(frame.id)!;
@@ -164,6 +189,9 @@ export function reflowStoryState(state: StoryLayoutState, frameId: string,
     }
     if (index) { delete frame.storyContent; delete frame.rawStoryText; }
     offset = end;
+    // Later frames are unchanged once their incoming text offset is stable.
+    const next = chain[index + 1];
+    if (index >= edited && end > reuseAfter && previousEnd === end && next?.textContent && next.storyStart === end) break;
   }
   return chain;
 }
@@ -258,7 +286,7 @@ export function refreshPublication(state: ProjectState): boolean {
   }
   const pages = state.spreads.flatMap(spread => spread.pages);
   const occurrences: { note: Footnote; run: StoryRun; frame: TextElement; offset: number }[] = [];
-  for (const head of heads) {
+  for (const head of state.settings.footnotes?.length || state.indexEntries?.length ? heads : []) {
     if (head.generated) continue;
     let offset = 0;
     for (const paragraph of contentOf(head).paragraphs) {
@@ -285,23 +313,27 @@ export function refreshPublication(state: ProjectState): boolean {
     note.number = number; note.elementId = frame.id; note.pageId = frame.pageId;
     if (run.text !== noteMarker(number)) { run.text = noteMarker(number); changed = true; }
   }
-  const headings = publicationHeadings(state);
-  const captions = publicationCaptions(state);
-  const captionById = new Map(captions.map(item => [item.id, item]));
-  const frameById = new Map(textFrames(state).map(frame => [frame.id, frame]));
-  for (const head of heads) {
-    if (!head.storyContent) continue;
-    for (const paragraph of head.storyContent.paragraphs) for (const run of paragraph.runs) if (run.reference) {
-      const ref = run.reference;
-      const heading = ref.targetParagraphId ? headings.find(heading => ref.targetParagraphId === heading.paragraphId) : undefined;
-      if (heading && ref.targetElementId !== heading.elementId) { ref.targetElementId = heading.elementId; changed = true; }
-      const target = frameById.get(ref.targetElementId);
-      const label = ref.format === 'caption' ? captionById.get(ref.targetElementId)?.label || '[missing caption]' : heading ? (ref.format === 'title' ? heading.title : heading.label) :
-        !ref.targetParagraphId && target ? (ref.format === 'title' ? target.text.split('\n')[0] : pageLabel(pages, target.pageId).label) : '[missing reference]';
-      if (run.text !== label) { run.text = label; changed = true; }
-    }
+  const references: StoryRun[] = [];
+  for (const head of heads) for (const paragraph of head.storyContent?.paragraphs || []) {
+    for (const run of paragraph.runs) if (run.reference) references.push(run);
   }
-  for (const head of heads.filter(head => head.generated)) {
+  const generatedHeads = heads.filter(head => head.generated);
+  const headings = references.some(run => run.reference!.targetParagraphId) ||
+    generatedHeads.some(head => head.generated!.kind === 'toc') ? publicationHeadings(state) : [];
+  const captions = references.some(run => run.reference!.format === 'caption') || generatedHeads.some(head =>
+    ['caption', 'figures', 'tables'].includes(head.generated!.kind)) ? publicationCaptions(state) : [];
+  const captionById = new Map(captions.map(item => [item.id, item]));
+  const frameById = new Map((references.length ? textFrames(state) : []).map(frame => [frame.id, frame]));
+  for (const run of references) {
+    const ref = run.reference!;
+    const heading = ref.targetParagraphId ? headings.find(heading => ref.targetParagraphId === heading.paragraphId) : undefined;
+    if (heading && ref.targetElementId !== heading.elementId) { ref.targetElementId = heading.elementId; changed = true; }
+    const target = frameById.get(ref.targetElementId);
+    const label = ref.format === 'caption' ? captionById.get(ref.targetElementId)?.label || '[missing caption]' : heading ? (ref.format === 'title' ? heading.title : heading.label) :
+      !ref.targetParagraphId && target ? (ref.format === 'title' ? target.text.split('\n')[0] : pageLabel(pages, target.pageId).label) : '[missing reference]';
+    if (run.text !== label) { run.text = label; changed = true; }
+  }
+  for (const head of generatedHeads) {
     const generated = head.generated!;
     let content: StoryContent;
     if (generated.kind === 'caption') {

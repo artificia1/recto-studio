@@ -11,35 +11,48 @@ export function publicationPreflight(state: ProjectState, target: 'editor' | 'ep
   const excluded = (element: CanvasElement) => element.pasteboard || element.editorialOnly || element.nonprinting || hiddenLayers.has(element.layerId || 'layer-1');
   const frames = textFrames(state).filter(frame => !frame.pasteboard);
   const allRuns = storyHeads(state).filter(head => !head.pasteboard).flatMap(head => contentOf(head).paragraphs.flatMap(paragraph => paragraph.runs.map(run => ({ run, head }))));
-  const headings = publicationHeadings(state);
-  const captions = new Set(publicationCaptions(state).map(caption => caption.id));
+  let headingIds: Set<string | undefined> | undefined;
+  let captionIds: Set<string> | undefined;
+  const hasCaption = (id: string) => (captionIds ??= new Set(publicationCaptions(state).map(caption => caption.id))).has(id);
+  const frameIds = new Set(frames.map(frame => frame.id));
+  const notes = state.settings.footnotes || [];
+  const noteIds = new Set(notes.map(note => note.id));
+  const anchorCounts = new Map<string, number>();
+  const indexAnchors = new Set<string>();
+  for (const { run } of allRuns) {
+    if (run.noteId) anchorCounts.set(run.noteId, (anchorCounts.get(run.noteId) || 0) + 1);
+    if (run.indexId) indexAnchors.add(run.indexId);
+  }
   function issue(code: PreflightIssue['code'], message: string, elementId?: string, severity: PreflightIssue['severity'] = 'error') {
     const spreadIndex = Math.max(0, state.spreads.findIndex(spread => spread.elements.some(element => element.id === elementId)));
     const element = state.spreads[spreadIndex]?.elements.find(element => element.id === elementId);
     const page = state.spreads[spreadIndex]?.pages.find(page => page.id === element?.pageId) || state.spreads[spreadIndex]?.pages[0];
     issues.push({ id: `publication-${code}-${elementId || issues.length}`, code, message, severity, elementId, spreadIndex, pageNumber: page?.pageNumber || 1 });
   }
-  for (const note of state.settings.footnotes || []) {
+  for (const note of notes) {
     if (!note.text.trim()) issue('ORPHAN_NOTE', `Note ${note.number} has no body. Fill it in or delete the note before exporting.`, note.elementId);
-    const anchors = allRuns.filter(({ run }) => run.noteId === note.id);
-    if (anchors.length !== 1) issue('ORPHAN_NOTE', `Note ${note.number} has ${anchors.length ? 'duplicated' : 'no surviving'} manuscript anchors. Reinsert or delete this note.`, note.elementId);
+    const anchors = anchorCounts.get(note.id);
+    if (anchors !== 1) issue('ORPHAN_NOTE', `Note ${note.number} has ${anchors ? 'duplicated' : 'no surviving'} manuscript anchors. Reinsert or delete this note.`, note.elementId);
   }
   for (const { run, head } of allRuns) {
-    if (run.noteId && !state.settings.footnotes?.some(note => note.id === run.noteId)) issue('ORPHAN_NOTE', 'A note marker has no note body. Remove or replace the marker.', head.id);
+    if (run.noteId && !noteIds.has(run.noteId)) issue('ORPHAN_NOTE', 'A note marker has no note body. Remove or replace the marker.', head.id);
     if (run.reference) {
       const ref = run.reference;
-      const exists = ref.format === 'caption' ? captions.has(ref.targetElementId) : ref.targetParagraphId ? headings.some(heading => heading.paragraphId === ref.targetParagraphId) : frames.some(frame => frame.id === ref.targetElementId);
+      const exists = ref.format === 'caption' ? hasCaption(ref.targetElementId) : ref.targetParagraphId
+        ? (headingIds ??= new Set(publicationHeadings(state).map(heading => heading.paragraphId))).has(ref.targetParagraphId)
+        : frameIds.has(ref.targetElementId);
       if (!exists) issue('MISSING_REFERENCE', 'A reference target was removed or is no longer a heading. Choose a new target in the Story Editor.', head.id);
     }
   }
-  for (const entry of state.indexEntries || []) if (!frames.some(frame => frame.id === entry.elementId) || !allRuns.some(({ run }) => run.indexId === entry.id)) {
+  for (const entry of state.indexEntries || []) if (!entry.elementId || !frameIds.has(entry.elementId) || !indexAnchors.has(entry.id)) {
     issue('MISSING_REFERENCE', `Index topic “${entry.topic}” has no live text anchor. Mark the text again or remove the entry.`, entry.elementId, 'warning');
   }
   for (const frame of frames) {
-    if (frame.generated?.kind === 'caption' && !captions.has(frame.id)) issue('MISSING_REFERENCE', 'This caption no longer has visible artwork. Move or remove the caption before export.', frame.id);
-    const notes = layoutFrameNotes(state, frame);
-    if (target !== 'epub' && (notes.unplacedAnchors || (!frame.nextFrameId && notes.remaining) ||
-      notes.height > frame.height - 2 * (frame.paddingMm ?? 2) - frame.fontSizePt * 25.4 / 72)) {
+    if (frame.generated?.kind === 'caption' && !hasCaption(frame.id)) issue('MISSING_REFERENCE', 'This caption no longer has visible artwork. Move or remove the caption before export.', frame.id);
+    if (target === 'epub') continue;
+    const available = frame.height - 2 * (frame.paddingMm ?? 2) - frame.fontSizePt * 25.4 / 72;
+    const layout = notes.length ? layoutFrameNotes(state, frame) : undefined;
+    if (layout?.unplacedAnchors || (!frame.nextFrameId && layout?.remaining) || (layout?.height ?? 0) > available) {
       issue('NOTE_OVERFLOW', 'Footnote text does not fit beside its anchor or at the end of its story. Add a continuation frame, enlarge the frame, or convert the note to an endnote.', frame.id);
     }
   }
@@ -63,10 +76,10 @@ export function publicationPreflight(state: ProjectState, target: 'editor' | 'ep
   if (state.publicationError) issue('PUBLICATION_FLOW', state.publicationError);
   const reviewedTables = new Set<string>();
   for (const spread of state.spreads) for (const table of spread.elements) {
-    if (table.type !== 'table' || excluded(table)) continue;
+    if (table.type !== 'table' || excluded(table) || reviewedTables.has(table.id)) continue;
     const thread = tableThread(state.spreads, table), head = thread[0];
-    if (head.rowSizing !== 'content' || reviewedTables.has(head.id)) continue;
-    reviewedTables.add(head.id);
+    for (const frame of thread) reviewedTables.add(frame.id);
+    if (head.rowSizing !== 'content') continue;
     if (thread.some(excluded)) {
       issue('TABLE_LAYOUT', 'A table continuation is hidden or excluded from publication. Show every linked frame or unlink the excluded frame before PDF export.', head.id);
     }

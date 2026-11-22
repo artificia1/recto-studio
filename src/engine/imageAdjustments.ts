@@ -1,38 +1,8 @@
 import type { ImageAdjustments } from '../types';
 import { adjustDesktopRaster } from '../desktop';
 
-export const neutralAdjustments: ImageAdjustments = { black: 0, white: 255, gamma: 1, curve: [] };
-
-export function applyImageAdjustments(data: Uint8Array | Uint8ClampedArray, settings: ImageAdjustments) {
-  applyLookup(data, adjustmentLookup(settings), !!settings.grayscale);
-}
-
-function adjustmentLookup(settings: ImageAdjustments) {
-  const points = [{ input: 0, output: 0 }, ...settings.curve, { input: 255, output: 255 }];
-  const values = new Uint8Array(256);
-  let segment = 0;
-  for (let input = 0; input < 256; input++) {
-    const normalized = Math.max(0, Math.min(1, (input - settings.black) / (settings.white - settings.black)));
-    const level = 255 * Math.pow(normalized, 1 / settings.gamma);
-    while (segment < points.length - 2 && level > points[segment + 1].input) segment++;
-    const from = points[segment], to = points[segment + 1];
-    values[input] = Math.round(from.output + (to.output - from.output) * (level - from.input) / (to.input - from.input));
-  }
-  return values;
-}
-
-function applyLookup(data: Uint8Array | Uint8ClampedArray, values: Uint8Array, grayscale: boolean) {
-  for (let offset = 0; offset < data.length; offset += 4) {
-    if (grayscale) {
-      const gray = values[Math.round(0.2126 * data[offset] + 0.7152 * data[offset + 1] + 0.0722 * data[offset + 2])];
-      data[offset] = data[offset + 1] = data[offset + 2] = gray;
-    } else {
-      data[offset] = values[data[offset]];
-      data[offset + 1] = values[data[offset + 1]];
-      data[offset + 2] = values[data[offset + 2]];
-    }
-  }
-}
+import { adjustmentLookup, applyImageAdjustments, applyLookup } from './imageAdjustmentMath';
+export { applyImageAdjustments, neutralAdjustments } from './imageAdjustmentMath';
 
 export async function adjustedRasterSource(source: string, settings: ImageAdjustments) {
   const { decodeSrgbRaster } = await import('./rasterPixels');
@@ -48,14 +18,19 @@ export async function adjustedRasterSource(source: string, settings: ImageAdjust
   }
   if (typeof OffscreenCanvas !== 'undefined') {
     const canvas = new OffscreenCanvas(width, height);
-    const context = canvas.getContext('2d');
-    if (!context) throw new Error('Could not render adjusted artwork.');
-    const pixels = typeof ImageData === 'function'
-      ? new ImageData(new Uint8ClampedArray(data.buffer as ArrayBuffer, data.byteOffset, data.byteLength), width, height)
-      : context.createImageData(width, height);
-    if (pixels.data.buffer !== data.buffer) pixels.data.set(data);
-    context.putImageData(pixels, 0, 0);
-    const png = await canvas.convertToBlob({ type: 'image/png' });
+    let png: Blob;
+    try {
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Could not render adjusted artwork.');
+      const pixels = typeof ImageData === 'function'
+        ? new ImageData(new Uint8ClampedArray(data.buffer as ArrayBuffer, data.byteOffset, data.byteLength), width, height)
+        : context.createImageData(width, height);
+      if (pixels.data.buffer !== data.buffer) pixels.data.set(data);
+      context.putImageData(pixels, 0, 0);
+      png = await canvas.convertToBlob({ type: 'image/png' });
+    } finally {
+      canvas.width = canvas.height = 0;
+    }
     return `data:image/png;base64,${uint8ArrayToBase64(new Uint8Array(await png.arrayBuffer()))}`;
   }
   const nativeCanvas = '@napi-rs/canvas';
@@ -67,13 +42,18 @@ export async function adjustedRasterSource(source: string, settings: ImageAdjust
   return `data:image/png;base64,${uint8ArrayToBase64(canvas.toBuffer('image/png'))}`;
 }
 
-export function adjustedCanvasBitmap(source: HTMLImageElement | HTMLCanvasElement, settings: ImageAdjustments) {
+export function adjustmentPreviewSize(source: HTMLImageElement | HTMLCanvasElement, maxPixels: number) {
   const width = source instanceof HTMLImageElement ? source.naturalWidth : source.width;
   const height = source instanceof HTMLImageElement ? source.naturalHeight : source.height;
-  const scale = Math.min(1, 1600 / Math.max(width, height));
+  const scale = Math.min(1, 1600 / Math.max(width, height), Math.sqrt(maxPixels / (width * height)));
+  return { width: Math.max(1, Math.floor(width * scale)), height: Math.max(1, Math.floor(height * scale)) };
+}
+
+export function adjustedCanvasBitmap(source: HTMLImageElement | HTMLCanvasElement, settings: ImageAdjustments, maxPixels: number) {
   const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(width * scale));
-  canvas.height = Math.max(1, Math.round(height * scale));
+  const size = adjustmentPreviewSize(source, maxPixels);
+  canvas.width = size.width;
+  canvas.height = size.height;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) return source;
   ctx.drawImage(source, 0, 0, canvas.width, canvas.height);

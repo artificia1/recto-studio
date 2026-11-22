@@ -40,3 +40,17 @@ it('keeps the same pixel limit when the command is unavailable or outside the de
 it('reports a truncated JPEG before the decoder runs', () => {
   expect(() => rasterDimensions(new Uint8Array([255, 216, 255, 255, 255, 255, 255]), 'image/jpeg')).toThrow('Truncated JPEG segment.');
 });
+
+it('releases a decoded bitmap when its canvas allocation fails', async () => {
+  const bytes = Buffer.alloc(24);
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  bytes.writeUInt32BE(1, 16);
+  bytes.writeUInt32BE(1, 20);
+  const close = vi.fn();
+  vi.stubGlobal('createImageBitmap', vi.fn().mockResolvedValue({ width: 1, height: 1, close }));
+  vi.stubGlobal('OffscreenCanvas', class {
+    constructor() { throw new Error('Raster allocation failed.'); }
+  });
+  await expect(decodeSrgbRaster(`data:image/png;base64,${bytes.toString('base64')}`)).rejects.toThrow('Raster allocation failed.');
+  expect(close).toHaveBeenCalledOnce();
+});

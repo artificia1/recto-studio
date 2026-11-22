@@ -6,7 +6,6 @@ import { storyText } from '../engine/storyContent';
 import { useProjectState } from '../hooks/useProjectState';
 import { TopBar } from './TopBar';
 import { Toolbar } from './Toolbar';
-import { StatusBar } from './StatusBar';
 import { BookletImpositionModal, CoverSpineModal, SpreadOverviewDialog } from './LazyPrintDialogs';
 import { SpreadCanvas } from '../canvas';
 import { stateManager } from '../state';
@@ -24,6 +23,7 @@ const FindChangeModal = lazy(() => import('./FindChangeModal').then(module => ({
 const QuickApply = lazy(() => import('./QuickApply').then(module => ({ default: module.QuickApply })));
 const InspectorPanel = lazy(() => import('./Inspector/InspectorPanel').then(module => ({ default: module.InspectorPanel })));
 const ControlBar = lazy(() => import('./ControlBar').then(module => ({ default: module.ControlBar })));
+const StatusBar = lazy(() => import('./StatusBar').then(module => ({ default: module.StatusBar })));
 
 declare global {
   interface Window {
@@ -515,7 +515,7 @@ export function App() {
         /></Suspense>
       </div>
 
-      <StatusBar state={state} />
+      <Suspense fallback={<footer className="status-bar" aria-busy="true" />}><StatusBar state={state} /></Suspense>
       {showWorkspace && <SpreadOverviewDialog state={state} onClose={() => {
         const id = stateManager.getState().selectedElementId;
         if (id) stateManager.zoomToElement(id);

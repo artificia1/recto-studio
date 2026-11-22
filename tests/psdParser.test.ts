@@ -28,7 +28,7 @@ describe('Native Layered .psd Frame Parsing (ag-psd)', () => {
     expect(parsed.layers[2].visible).toBe(false);
   });
 
-  it('binds PSD layers to an ImageElement and toggles layer visibility', () => {
+  it('binds PSD layers to an ImageElement and toggles layer visibility', async () => {
     const page = stateManager.getState().spreads[0].pages[0];
     const imageEl: ImageElement = {
       id: 'test-psd-frame',
@@ -60,7 +60,9 @@ describe('Native Layered .psd Frame Parsing (ag-psd)', () => {
     };
     const psdBuf = writePsdBuffer(mockPsd as any);
 
-    const loaded = stateManager.loadPsdForElement(imageEl.id, psdBuf, 'catalog.psd');
+    const stale = stateManager.loadPsdForElement(imageEl.id, psdBuf, 'old.psd', () => false);
+    expect(await stale).toBe(false);
+    const loaded = await stateManager.loadPsdForElement(imageEl.id, psdBuf, 'catalog.psd');
     expect(loaded).toBe(true);
 
     const updatedEl = stateManager.getElementById(imageEl.id) as ImageElement;

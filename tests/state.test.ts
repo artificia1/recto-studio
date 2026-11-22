@@ -1,10 +1,24 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { stateManager } from '../src/state/stateManager';
 import { PAGE_PRESETS, TextElement } from '../src/types/index';
 
 describe('State Snapshot Stack & Mutation Engine', () => {
   beforeEach(() => {
     stateManager.resetToDefault();
+  });
+
+  it('identifies pan-only notifications while preserving zoom and document updates', () => {
+    const notifications: boolean[] = [];
+    const unsubscribe = stateManager.subscribe((_state, panOnly) => notifications.push(panOnly));
+    try {
+      stateManager.setPan(40, 20);
+      stateManager.setZoomAndPan(stateManager.getState().zoom, 50, 30);
+      stateManager.setZoomAndPan(2.5, 60, 40);
+      stateManager.updateSettings({ title: 'Changed text' });
+      expect(notifications).toEqual([true, true, false, false]);
+    } finally {
+      unsubscribe();
+    }
   });
 
   it('initializes document state accurately with presets', () => {
@@ -24,6 +38,29 @@ describe('State Snapshot Stack & Mutation Engine', () => {
     expect(letterState.settings.preset).toBe('US-Letter');
     expect(letterState.settings.widthMm).toBe(215.9);
     expect(letterState.settings.heightMm).toBe(279.4);
+  });
+
+  it('saves project metadata and default gutters without recomposing existing stories', () => {
+    const frame = stateManager.getActiveSpread().elements.find(element => element.type === 'text')!;
+    stateManager.setStoryContent(frame.id, { version: 1, paragraphs: [{ runs: [{ text: 'Existing story' }] }] });
+    const before = stateManager.getState().settings;
+    const revision = stateManager.getDocumentRevision();
+    const reflow = vi.spyOn(stateManager, 'reflowStory');
+    const renumber = vi.spyOn(stateManager, 'renumberPages');
+    try {
+      const settings = { title: 'Edited title', author: 'A. Writer', columnGutterMm: 8 };
+      stateManager.updateSettings(settings);
+      stateManager.updateSettings(settings);
+      expect(stateManager.getDocumentRevision()).toBe(revision + 1);
+      expect(reflow).not.toHaveBeenCalled();
+      expect(renumber).not.toHaveBeenCalled();
+      expect(stateManager.getState().settings).toMatchObject(settings);
+      stateManager.undo();
+      expect(stateManager.getState().settings).toEqual(before);
+    } finally {
+      reflow.mockRestore();
+      renumber.mockRestore();
+    }
   });
 
   it('manages immutable undo/redo history rollback across mutations', () => {

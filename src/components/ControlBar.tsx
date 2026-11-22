@@ -4,6 +4,7 @@
  * Licensed under the MIT License.
  */
 
+import { CommitNumberInput } from './common/CommitNumberInput';
 import { useState } from 'preact/hooks';
 import { ProjectState, TextElement, ImageElement, ShapeElement, TableElement, VectorPathElement, ImageFitMode } from '../types';
 import { stateManager } from '../state';
@@ -27,30 +28,28 @@ export function ControlBar({ state }: ControlBarProps) {
         
         <div className="control-bar-group">
           <span className="control-bar-label">X:</span>
-          <input
-            type="number"
+          <CommitNumberInput key={img.id + '-x'}
+            disabled={img.locked}
+            aria-label="Frame X"
             className="control-bar-input"
             style={{ width: '56px' }}
             value={Math.round(img.x * 10) / 10}
             step="0.5"
-            onInput={(e) =>
-              stateManager.updateElement(img.id, { x: parseFloat((e.target as HTMLInputElement).value) || 0 })
-            }
+            onCommit={value => stateManager.updateElement(img.id, { x: value })}
           />
           <span className="control-bar-label">mm</span>
         </div>
 
         <div className="control-bar-group">
           <span className="control-bar-label">Y:</span>
-          <input
-            type="number"
+          <CommitNumberInput key={img.id + '-y'}
+            disabled={img.locked}
+            aria-label="Frame Y"
             className="control-bar-input"
             style={{ width: '56px' }}
             value={Math.round(img.y * 10) / 10}
             step="0.5"
-            onInput={(e) =>
-              stateManager.updateElement(img.id, { y: parseFloat((e.target as HTMLInputElement).value) || 0 })
-            }
+            onCommit={value => stateManager.updateElement(img.id, { y: value })}
           />
           <span className="control-bar-label">mm</span>
         </div>
@@ -59,47 +58,44 @@ export function ControlBar({ state }: ControlBarProps) {
 
         <div className="control-bar-group">
           <span className="control-bar-label">W:</span>
-          <input
-            type="number"
+          <CommitNumberInput key={img.id + '-width'}
+            disabled={img.locked}
+            aria-label="Frame width"
             className="control-bar-input"
             style={{ width: '56px' }}
             value={Math.round(img.width * 10) / 10}
             step="0.5"
-            min="1"
-            onInput={(e) =>
-              stateManager.updateElement(img.id, { width: Math.max(1, parseFloat((e.target as HTMLInputElement).value) || 1) })
-            }
+            min={1}
+            onCommit={value => stateManager.updateElement(img.id, { width: value })}
           />
           <span className="control-bar-label">mm</span>
         </div>
 
         <div className="control-bar-group">
           <span className="control-bar-label">H:</span>
-          <input
-            type="number"
+          <CommitNumberInput key={img.id + '-height'}
+            disabled={img.locked}
+            aria-label="Frame height"
             className="control-bar-input"
             style={{ width: '56px' }}
             value={Math.round(img.height * 10) / 10}
             step="0.5"
-            min="1"
-            onInput={(e) =>
-              stateManager.updateElement(img.id, { height: Math.max(1, parseFloat((e.target as HTMLInputElement).value) || 1) })
-            }
+            min={1}
+            onCommit={value => stateManager.updateElement(img.id, { height: value })}
           />
           <span className="control-bar-label">mm</span>
         </div>
 
         <div className="control-bar-group">
           <span className="control-bar-label">∠:</span>
-          <input
-            type="number"
+          <CommitNumberInput key={img.id + '-rotation'}
+            disabled={img.locked}
+            aria-label="Rotation"
             className="control-bar-input"
             style={{ width: '48px' }}
             value={img.rotation || 0}
             step="1"
-            onInput={(e) =>
-              stateManager.updateElement(img.id, { rotation: parseFloat((e.target as HTMLInputElement).value) || 0 })
-            }
+            onCommit={value => stateManager.updateElement(img.id, { rotation: value })}
           />
           <span className="control-bar-label">°</span>
         </div>
@@ -183,48 +179,45 @@ export function ControlBar({ state }: ControlBarProps) {
 
         <div className="control-bar-group">
           <span className="control-bar-label">Size:</span>
-          <input
-            type="number"
+          <CommitNumberInput key={txt.id + '-fontSizePt'}
+            disabled={txt.locked}
+            aria-label="Font size"
             className="control-bar-input"
             style={{ width: '52px' }}
             value={txt.fontSizePt}
-            min="4"
-            max="144"
+            min={4}
+            max={144}
             step="0.5"
-            onInput={(e) =>
-              stateManager.updateElement(txt.id, { fontSizePt: Math.max(4, parseFloat((e.target as HTMLInputElement).value) || 12) })
-            }
+            onCommit={value => stateManager.setFrameLayout(txt.id, { fontSizePt: value })}
           />
           <span className="control-bar-label">pt</span>
         </div>
 
         <div className="control-bar-group">
           <span className="control-bar-label">Leading:</span>
-          <input
-            type="number"
+          <CommitNumberInput key={txt.id + '-lineHeight'}
+            disabled={txt.locked}
+            aria-label="Leading"
             className="control-bar-input"
             style={{ width: '52px' }}
             value={txt.lineHeight}
-            min="0.5"
-            max="3"
+            min={0.5}
+            max={3}
             step="0.05"
-            onInput={(e) =>
-              stateManager.updateElement(txt.id, { lineHeight: Math.max(0.5, parseFloat((e.target as HTMLInputElement).value) || 1.2) })
-            }
+            onCommit={value => stateManager.setFrameLayout(txt.id, { lineHeight: value })}
           />
         </div>
 
         <div className="control-bar-group">
           <span className="control-bar-label">Tracking:</span>
-          <input
-            type="number"
+          <CommitNumberInput key={txt.id + '-letterSpacingPt'}
+            disabled={txt.locked}
+            aria-label="Tracking"
             className="control-bar-input"
             style={{ width: '52px' }}
             value={txt.letterSpacingPt || 0}
             step="0.1"
-            onInput={(e) =>
-              stateManager.updateElement(txt.id, { letterSpacingPt: parseFloat((e.target as HTMLInputElement).value) || 0 })
-            }
+            onCommit={value => stateManager.setFrameLayout(txt.id, { letterSpacingPt: value })}
           />
           <span className="control-bar-label">pt</span>
         </div>
@@ -267,31 +260,29 @@ export function ControlBar({ state }: ControlBarProps) {
 
         <div className="control-bar-group">
           <span className="control-bar-label">Cols:</span>
-          <input
-            type="number"
+          <CommitNumberInput key={txt.id + '-columns'}
+            disabled={txt.locked}
+            aria-label="Columns"
             className="control-bar-input"
             style={{ width: '40px' }}
             value={txt.columns || 1}
-            min="1"
-            max="6"
-            onInput={(e) =>
-              stateManager.updateElement(txt.id, { columns: Math.max(1, parseInt((e.target as HTMLInputElement).value, 10) || 1) })
-            }
+            min={1}
+            max={6}
+            onCommit={value => stateManager.setFrameLayout(txt.id, { columns: Math.trunc(value) })}
           />
         </div>
 
         <div className="control-bar-group">
           <span className="control-bar-label">Gutter:</span>
-          <input
-            type="number"
+          <CommitNumberInput key={txt.id + '-columnGutterMm'}
+            disabled={txt.locked}
+            aria-label="Column gutter"
             className="control-bar-input"
             style={{ width: '48px' }}
-            value={txt.columnGutterMm || 4}
-            min="0"
+            value={txt.columnGutterMm ?? 4}
+            min={0}
             step="0.5"
-            onInput={(e) =>
-              stateManager.updateElement(txt.id, { columnGutterMm: Math.max(0, parseFloat((e.target as HTMLInputElement).value) || 4) })
-            }
+            onCommit={value => stateManager.setFrameLayout(txt.id, { columnGutterMm: value })}
           />
           <span className="control-bar-label">mm</span>
         </div>

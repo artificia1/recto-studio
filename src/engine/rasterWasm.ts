@@ -9,6 +9,7 @@ interface RasterExports {
   raster_proof_bounds?(length: number, width: number, first: number): number;
   layout_optimal_breaks?(count: number, widths: number, tolerance: number, hyphenCost: number): number;
   layout_place_line?(length: number): number;
+  layout_flatten_path?(count: number, closed: number): number;
   layout_table_rows?(count: number, frame: number, used: number, footer: number, padding: number, leading: number,
     consumed: number, allowSplit: boolean): number;
   layout_note_columns?(count: number, columns: number, capacity: number): number;

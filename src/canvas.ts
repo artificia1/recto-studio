@@ -34,6 +34,7 @@ import { registerProofCapture } from './engine/proofCapture';
 import { spotProofContext } from './engine/spotProofContext';
 import { canvasGradient, displayGradientColor } from './engine/fillGradients';
 import { assetStore } from './engine/assetStore';
+import { AdjustmentPreviewCache } from './engine/adjustmentPreviewCache';
 import { tableEngine } from './engine/tableEngine';
 import { tableThread } from './engine/tableCells';
 import { canvasRunFont, layoutStory } from './engine/storyLayout';
@@ -242,6 +243,8 @@ export class SpreadCanvas {
 
   private cancelDrag() {
     this.isDragging = false;
+    this.isResizing = false;
+    this.activeHandle = null;
     this.dragPreview.clear();
     this.dragDocument = undefined;
     this.dragInitialPositions.clear();
@@ -252,12 +255,13 @@ export class SpreadCanvas {
   private fullResCache: Map<string, HTMLImageElement> = new Map();
   private proxyCache: Map<string, HTMLCanvasElement> = new Map();
   private failedImageSrcs: Set<string> = new Set();
+  private imageSpreadId = '';
+  private imageSession = -1;
 
   // Static layer offscreen canvas caching
   private staticCanvas: HTMLCanvasElement = document.createElement('canvas');
-  private staticCtx: CanvasRenderingContext2D = this.staticCanvas.getContext('2d')!;
+  private readonly staticCtx = this.staticCanvas.getContext('2d')!;
   private staticDirtyKey: string = '';
-  private staticBleedPx: number = 0;
 
   // Text layout memoization
   private textLayoutCache = new Map<string, CanvasTextLayout>();
@@ -342,6 +346,8 @@ export class SpreadCanvas {
 
   public destroy(): void {
     this.cancelDrag();
+    this.trimDisplayImages(0);
+    this.staticCanvas.width = this.staticCanvas.height = 0;
     if (this.renderRafId !== null) {
       cancelAnimationFrame(this.renderRafId);
       this.renderRafId = null;
@@ -416,7 +422,7 @@ export class SpreadCanvas {
       penIsDown: () => this.activePenPointerId !== null,
       touchPointer: () => { this.currentPointerType = 'touch'; },
       cancelInteraction: () => {
-        if (!this.isDragging) return false;
+        if (!this.dragDocument) return false;
         this.cancelDrag(); this.scheduleRender(); return true;
       },
       startPinch: () => {
@@ -434,7 +440,7 @@ export class SpreadCanvas {
       },
       setViewport: (zoom, panX, panY) => stateManager.setZoomAndPan(zoom, panX, panY),
       keyDown: event => {
-        if (event.key === 'Escape' && this.isDragging) {
+        if (event.key === 'Escape' && this.dragDocument) {
           this.cancelDrag(); this.scheduleRender(); event.preventDefault(); return;
         }
         handleCanvasKeyDown(event, stateManager, {
@@ -712,6 +718,7 @@ export class SpreadCanvas {
         const handle = this.hitTestHandles(screenX, screenY, state);
         if (handle) {
           this.isResizing = true;
+          this.dragDocument = { state, spread, revision: stateManager.getDocumentRevision(), tool: state.activeTool };
           this.activeHandle = handle;
           this.dragStartX = screenX;
           this.dragStartY = screenY;
@@ -1193,12 +1200,15 @@ export class SpreadCanvas {
         }
       }
 
-      stateManager.updateElement(state.selectedElementId, {
+      const element = stateManager.getActiveSpread().elements.find(item => item.id === state.selectedElementId);
+      if (!element) return;
+      this.dragPreview.set(element.id, { ...element,
         x: Math.round(newX * 10) / 10,
         y: Math.round(newY * 10) / 10,
         width: Math.round(newW * 10) / 10,
         height: Math.round(newH * 10) / 10,
-      }, false);
+      });
+      this.scheduleRender();
       return;
     }
 
@@ -1261,7 +1271,14 @@ export class SpreadCanvas {
       this.scheduleRender();
     }
     if (this.isResizing) {
-      stateManager.commitHistory();
+      const element = state.selectedElementId ? this.dragPreview.get(state.selectedElementId) : undefined;
+      this.cancelDrag();
+      if (element && (element.x !== this.elementInitialX || element.y !== this.elementInitialY ||
+        element.width !== this.elementInitialW || element.height !== this.elementInitialH)) {
+        const { x, y, width, height } = element;
+        stateManager.updateElement(element.id, { x, y, width, height });
+      }
+      this.scheduleRender();
     }
 
     if (this.isPencilDrawing) {
@@ -1271,10 +1288,6 @@ export class SpreadCanvas {
     if (this.isPanning) {
       this.isPanning = false;
       this.canvas.style.cursor = (this.isSpacePanning || state.activeTool === 'hand') ? 'grab' : 'default';
-    }
-    if (this.isResizing) {
-      this.isResizing = false;
-      this.activeHandle = null;
     }
     if (this.isPenDraggingHandle) {
       this.isPenDraggingHandle = false;
@@ -2200,7 +2213,7 @@ export class SpreadCanvas {
   }
 
   private handlePointerCancel(e: PointerEvent) {
-    if (this.isDragging) { this.cancelDrag(); this.scheduleRender(); }
+    if (this.dragDocument) { this.cancelDrag(); this.scheduleRender(); }
     if (e.pointerId === this.activePenPointerId) {
       this.activePenPointerId = null;
     }
@@ -2428,9 +2441,13 @@ export class SpreadCanvas {
     return null;
   }
 
-  private updateStaticBuffer(
+  private drawSpreadBackground(
+    ctx: CanvasRenderingContext2D,
     state: ProjectState,
     spread: Spread,
+    origin: { x: number; y: number },
+    canvasW: number,
+    canvasH: number,
     pxPerMm: number,
     numPages: number,
     pageWidthMm: number,
@@ -2439,26 +2456,32 @@ export class SpreadCanvas {
     spreadHeightPx: number
   ) {
     const grid = state.settings.baselineGrid;
-    const key = `${state.activeSpreadIndex}_${state.settings.preset}_${pageWidthMm}_${pageHeightMm}_${state.settings.bleedMm}_${state.zoom}_${state.showGuides}_${state.showBleed}_${state.showBaselineGrid}_${Boolean(state.previewMode)}_${state.settings.margins.insideMm}_${state.settings.margins.outsideMm}_${state.settings.margins.topMm}_${state.settings.margins.bottomMm}_${state.settings.columnCount}_${state.settings.columnGutterMm}_${grid?.incrementPt}_${grid?.startMm}_${grid?.enabled}_${spread.pages.length}`;
-
-    if (this.staticDirtyKey === key && this.staticCanvas.width > 0) {
-      return;
-    }
-
     const bleedMm = (!state.previewMode && state.showBleed) ? state.settings.bleedMm : 0;
     const paddingPx = Math.ceil(Math.max(30, bleedMm * pxPerMm + 24));
     const targetW = Math.ceil(spreadWidthPx + paddingPx * 2);
     const targetH = Math.ceil(spreadHeightPx + paddingPx * 2);
+    const cached = targetW <= 4096 && targetH <= 4096 && targetW * targetH <= 4_194_304;
+    const { margins, columnCount, columnGutterMm } = state.settings;
+    const key = cached ? [targetW, targetH, spreadWidthPx, spreadHeightPx, bleedMm, paddingPx, state.zoom,
+      state.showGuides, state.showBaselineGrid, state.previewMode, margins.insideMm, margins.outsideMm,
+      margins.topMm, margins.bottomMm, columnCount, columnGutterMm, grid?.incrementPt, grid?.startMm,
+      grid?.enabled, ...spread.pages.map(page => page.side)].join(':') : '';
+    if (cached && this.staticDirtyKey === key) {
+      ctx.drawImage(this.staticCanvas, origin.x - paddingPx, origin.y - paddingPx);
+      return;
+    }
 
-    this.staticCanvas.width = targetW;
-    this.staticCanvas.height = targetH;
-    this.staticBleedPx = paddingPx;
-
-    const sctx = this.staticCtx;
-    sctx.clearRect(0, 0, targetW, targetH);
-
-    const originX = paddingPx;
-    const originY = paddingPx;
+    // Oversized pages draw directly into the viewport already allocated by the editor.
+    if (cached || this.staticCanvas.width) {
+      this.staticCanvas.width = cached ? targetW : 0;
+      this.staticCanvas.height = cached ? targetH : 0;
+    }
+    const sctx = cached ? this.staticCtx : ctx;
+    const originX = cached ? paddingPx : origin.x;
+    const originY = cached ? paddingPx : origin.y;
+    const width = cached ? targetW : canvasW;
+    const height = cached ? targetH : canvasH;
+    sctx.save();
 
     // Bleed guide line
     if (!state.previewMode && state.showBleed && state.settings.bleedMm > 0) {
@@ -2479,6 +2502,10 @@ export class SpreadCanvas {
     for (let i = 0; i < numPages; i++) {
       const pageX = originX + (i * pageWidthMm * pxPerMm);
       const pageW = pageWidthMm * pxPerMm;
+      // Clip the shadowed fill with room for the blur kernel outside the viewport.
+      const left = Math.max(-48, pageX), top = Math.max(-48, originY);
+      const right = Math.min(width + 48, pageX + pageW), bottom = Math.min(height + 48, originY + spreadHeightPx);
+      if (left >= right || top >= bottom) continue;
 
       sctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
       sctx.shadowBlur = 18;
@@ -2486,7 +2513,7 @@ export class SpreadCanvas {
       sctx.shadowOffsetY = 4;
 
       sctx.fillStyle = '#ffffff';
-      sctx.fillRect(pageX, originY, pageW, spreadHeightPx);
+      sctx.fillRect(left, top, right - left, bottom - top);
 
       sctx.shadowColor = 'transparent';
       sctx.shadowBlur = 0;
@@ -2496,7 +2523,6 @@ export class SpreadCanvas {
       sctx.strokeRect(pageX, originY, pageW, spreadHeightPx);
 
       if (!state.previewMode && state.showGuides) {
-        const margins = state.settings.margins;
         const page = spread.pages[i];
 
         const isLeft = page.side === 'left';
@@ -2512,9 +2538,9 @@ export class SpreadCanvas {
         sctx.lineWidth = 0.8;
         sctx.strokeRect(mLeftPx, mTopPx, mWidthPx, mHeightPx);
 
-        if (state.settings.columnCount > 1) {
-          const colCount = state.settings.columnCount;
-          const gutterMm = state.settings.columnGutterMm;
+        if (columnCount > 1) {
+          const colCount = columnCount;
+          const gutterMm = columnGutterMm;
           const totalGuttersMm = gutterMm * (colCount - 1);
           const colWidthMm = ((pageWidthMm - leftMarginMm - rightMarginMm) - totalGuttersMm) / colCount;
 
@@ -2533,16 +2559,19 @@ export class SpreadCanvas {
         }
 
         if (state.showBaselineGrid && grid?.enabled) {
-          const pitchMm = (grid.incrementPt * 25.4) / 72;
-          const startMm = grid.startMm ?? margins.topMm;
-          const maxMm = pageHeightMm - margins.bottomMm;
+          const pitch = grid.incrementPt * 25.4 / 72 * pxPerMm;
+          if (!(pitch > 0) || !Number.isFinite(pitch)) continue;
+          // Subpixel rows are indistinguishable. Keep the original rhythm with a visible stride.
+          const stride = pitch < 1 ? pitch * Math.ceil(1 / pitch) : pitch;
+          const start = originY + (grid.startMm ?? margins.topMm) * pxPerMm;
+          const first = start >= 0 ? start : ((start % stride) + stride) % stride;
+          const last = Math.min(height, originY + (pageHeightMm - margins.bottomMm) * pxPerMm);
 
           sctx.strokeStyle = '#3a86ff2e';
           sctx.lineWidth = 0.5;
 
           sctx.beginPath();
-          for (let yMm = startMm; yMm <= maxMm; yMm += pitchMm) {
-            const yPx = originY + (yMm * pxPerMm);
+          for (let yPx = first; yPx <= last; yPx += stride) {
             sctx.moveTo(mLeftPx, yPx);
             sctx.lineTo(mLeftPx + mWidthPx, yPx);
           }
@@ -2561,73 +2590,55 @@ export class SpreadCanvas {
       sctx.stroke();
     }
 
+    sctx.restore();
     this.staticDirtyKey = key;
+    if (cached) ctx.drawImage(this.staticCanvas, origin.x - paddingPx, origin.y - paddingPx);
+  }
+
+  private trimDisplayImages(keepProxies: number) {
+    this.adjustmentPreviews.clear();
+    for (const image of this.fullResCache.values()) {
+      image.onload = image.onerror = null;
+      image.removeAttribute('src');
+    }
+    this.fullResCache.clear();
+    this.failedImageSrcs.clear();
+    for (const [source, canvas] of this.proxyCache) {
+      if (this.proxyCache.size <= keepProxies) break;
+      canvas.width = canvas.height = 0;
+      this.proxyCache.delete(source);
+    }
   }
 
   private getDisplayImage(src: string, quality: DisplayQuality, proxySrc?: string, assetId?: string): HTMLImageElement | HTMLCanvasElement | null {
-    if (!src && !proxySrc) return null;
     if (quality === 'fast') return null;
-    if (this.failedImageSrcs.has(src) || (proxySrc && this.failedImageSrcs.has(proxySrc))) return null;
-
-    const isInteracting = this.isDragging || this.isPanning || this.isResizing;
-    const effectiveQuality = isInteracting ? 'typical' : quality;
-
-    const effectiveSrc = (effectiveQuality !== 'high' && proxySrc)
-      ? proxySrc
-      : (effectiveQuality !== 'high' && assetId ? assetStore.getScreenProxy(assetId) || src : src);
-
-    if (effectiveQuality === 'high') {
-      let img = this.fullResCache.get(src);
-      if (!img) {
-        img = new Image();
-        img.src = src;
-        img.onload = () => this.render();
-        img.onerror = () => {
-          this.failedImageSrcs.add(src);
-          this.fullResCache.delete(src);
-          this.render();
-        };
-        this.fullResCache.set(src, img);
-      }
-      if (img.complete && img.naturalWidth > 0) {
-        stateManager.registerImageDimensions(src, img.naturalWidth, img.naturalHeight);
-        return img;
-      }
-      return null;
-    }
-
-    const proxy = this.proxyCache.get(effectiveSrc);
-    if (proxy) return proxy;
-
-    let img = this.fullResCache.get(effectiveSrc);
-    if (!img) {
-      img = new Image();
-      img.src = effectiveSrc;
-      img.onload = () => {
-        this.createImageProxy(effectiveSrc, img!);
-        this.fullResCache.delete(effectiveSrc);
-        this.render();
+    const high = quality === 'high' && !this.isDragging && !this.isPanning && !this.isResizing;
+    const proxy = !high && (proxySrc || (assetId && assetStore.getScreenProxy(assetId)));
+    const source = proxy && !this.failedImageSrcs.has(proxy) ? proxy : src;
+    if (!source || this.failedImageSrcs.has(source)) return null;
+    const cached = !high && this.proxyCache.get(source);
+    if (cached) return cached;
+    let image = this.fullResCache.get(source);
+    if (!image) {
+      image = new Image();
+      image.onload = () => this.scheduleRender();
+      image.onerror = () => {
+        this.failedImageSrcs.add(source);
+        this.fullResCache.delete(source);
+        this.scheduleRender();
       };
-      img.onerror = () => {
-        this.failedImageSrcs.add(effectiveSrc);
-        this.failedImageSrcs.add(src);
-        this.fullResCache.delete(effectiveSrc);
-        this.render();
-      };
-      this.fullResCache.set(effectiveSrc, img);
-      return null;
+      this.fullResCache.set(source, image);
+      image.src = source;
     }
-
-    if (img.complete && img.naturalWidth > 0) {
-      stateManager.registerImageDimensions(src, img.naturalWidth, img.naturalHeight);
-      const createdProxy = this.createImageProxy(effectiveSrc, img);
-      this.fullResCache.delete(effectiveSrc);
-      return createdProxy;
-    }
-    return null;
+    if (!image.complete || !image.naturalWidth) return null;
+    if (source === src) stateManager.registerImageDimensions(src, image.naturalWidth, image.naturalHeight);
+    if (high) return image;
+    const canvas = this.createImageProxy(source, image);
+    this.fullResCache.delete(source);
+    return canvas;
   }
 
-  private readonly adjustedImages = new WeakMap<HTMLImageElement | HTMLCanvasElement, Map<string, HTMLImageElement | HTMLCanvasElement>>();
+  private readonly adjustmentPreviews = new AdjustmentPreviewCache(() => this.scheduleRender());
   private vectorDecorationRenderer?: typeof import('./engine/vectorDecoration').drawCanvasDecoration;
   private loadingVectorDecorations = false;
 
@@ -2642,25 +2653,6 @@ export class SpreadCanvas {
       }).catch(() => { /* A later redraw can retry loading the optional tool. */ })
         .finally(() => { this.loadingVectorDecorations = false; });
     }
-  }
-
-  private adjustedBitmap(bitmap: HTMLImageElement | HTMLCanvasElement, settings: NonNullable<ImageElement['adjustments']>) {
-    let variants = this.adjustedImages.get(bitmap);
-    if (!variants) {
-      variants = new Map();
-      this.adjustedImages.set(bitmap, variants);
-    }
-    const key = JSON.stringify(settings), current = variants.get(key);
-    if (current) return current;
-    if (variants.size >= 4) variants.delete(variants.keys().next().value!);
-    variants.set(key, bitmap);
-    const pending = variants;
-    void import('./engine/imageAdjustments').then(({ adjustedCanvasBitmap }) => {
-      if (!pending.has(key)) return;
-      pending.set(key, adjustedCanvasBitmap(bitmap, settings));
-      this.render();
-    }).catch(() => { /* Keep the source preview when browser pixel reads are unavailable. */ });
-    return bitmap;
   }
 
   private renderMissingImagePlaceholder(
@@ -2742,8 +2734,6 @@ export class SpreadCanvas {
 
     const origCanvas = this.canvas;
     const origCtx = this.ctx;
-    const origStaticCanvas = this.staticCanvas;
-    const origStaticDirtyKey = this.staticDirtyKey;
 
     try {
       // 300 DPI print quality: 300 DPI / 25.4 mm = 11.811 px/mm -> exportZoom = 300 / 96 = 3.125
@@ -2760,8 +2750,6 @@ export class SpreadCanvas {
 
       this.canvas = offCanvas;
       this.ctx = offCtx;
-      this.staticCanvas = document.createElement('canvas');
-      this.staticDirtyKey = '';
 
       // Set clean preview mode at 300 DPI with uncompressed assets and zero selection overlays
       state.zoom = exportZoom;
@@ -2772,14 +2760,12 @@ export class SpreadCanvas {
       state.selectedElementId = null;
       state.selectedElementIds = [];
 
-      this.render();
+      this.render({ context: offCtx });
 
       return offCanvas.toDataURL('image/png');
     } finally {
       this.canvas = origCanvas;
       this.ctx = origCtx;
-      this.staticCanvas = origStaticCanvas;
-      this.staticDirtyKey = origStaticDirtyKey;
 
       state.zoom = prevZoom;
       state.panX = prevPanX;
@@ -2822,13 +2808,23 @@ export class SpreadCanvas {
     const origin = this.getSpreadScreenOrigin(state);
     const pxPerMm = MM_TO_PX * state.zoom;
     const realSpread = stateManager.getActiveSpread();
+    const session = stateManager.getDocumentSession();
+    if (realSpread.id !== this.imageSpreadId || session !== this.imageSession) {
+      this.trimDisplayImages(session === this.imageSession ? 12 : 0);
+      this.imageSpreadId = realSpread.id;
+      this.imageSession = session;
+    }
     const spread = !proof && !state.previewMode && this.dragPreview.size
       ? { ...realSpread, elements: realSpread.elements.map(element => this.dragPreview.get(element.id) || element) }
       : realSpread;
 
-    if (!proof) this.updateStaticBuffer(
+    if (!proof) this.drawSpreadBackground(
+      ctx,
       state,
       spread,
+      origin,
+      canvasW,
+      canvasH,
       pxPerMm,
       numPages,
       pageWidthMm,
@@ -2836,8 +2832,6 @@ export class SpreadCanvas {
       spreadWidthPx,
       spreadHeightPx
     );
-
-    if (!proof) ctx.drawImage(this.staticCanvas, origin.x - this.staticBleedPx, origin.y - this.staticBleedPx);
 
     // In preview mode, clip all artwork to the pristine page trim rect
     if (state.previewMode) {
@@ -2875,6 +2869,8 @@ export class SpreadCanvas {
       }
       return a.zIndex - b.zIndex;
     });
+    this.adjustmentPreviews.beginFrame(visibleElements.reduce((count, element) =>
+      count + Number(element.type === 'image' && Boolean(element.adjustments)), 0));
     if (proof?.spot) ctx = spotProofContext(ctx);
     for (const el of sortedElements) {
       const pageIdx = spread.pages.findIndex(p => p.id === el.pageId);
@@ -2885,6 +2881,14 @@ export class SpreadCanvas {
       const elScreenY = origin.y + (el.y * pxPerMm);
       const elScreenW = el.width * pxPerMm;
       const elScreenH = el.height * pxPerMm;
+      if (!proof && !state.previewMode && el.type === 'image') {
+        const shadow = el.shadow;
+        const reach = shadow ? ((shadow.blurMm || 3) * 3 +
+          Math.max(Math.abs(shadow.offsetX || 2), Math.abs(shadow.offsetY || 2))) * pxPerMm : 0;
+        const padding = 32 + reach + (el.borderWidthMm || 0) * pxPerMm;
+        if (elScreenX + elScreenW < -padding || elScreenY + elScreenH < -padding ||
+          elScreenX > canvasW + padding || elScreenY > canvasH + padding) continue;
+      }
       const isSelected = state.selectedElementIds ? state.selectedElementIds.includes(el.id) : state.selectedElementId === el.id;
 
       ctx.save();
@@ -2970,7 +2974,8 @@ export class SpreadCanvas {
 
           if (img.src || img.proxySrc) {
             const bitmap = this.getDisplayImage(img.src, quality, img.proxySrc, img.assetId);
-            const displayBitmap = bitmap && img.adjustments ? this.adjustedBitmap(bitmap, img.adjustments) : bitmap;
+            const displayBitmap = bitmap && img.adjustments
+              ? this.adjustmentPreviews.get(img.id, bitmap, img.adjustments) : bitmap;
             if (displayBitmap) {
               const bW = displayBitmap.width;
               const bH = displayBitmap.height;
@@ -3160,13 +3165,17 @@ export class SpreadCanvas {
           }
           ctx.textAlign = 'left';
           ctx.textBaseline = 'alphabetic';
+          let previousStyle: typeof layout.lines[number]['segments'][number]['style'] | undefined;
           for (const line of layout.lines) for (const segment of line.segments) {
-            ctx.font = canvasRunFont(segment.style, pxPerMm);
-            ctx.fillStyle = segment.style.color;
-            ctx.letterSpacing = `${segment.style.letterSpacingPt * 25.4 / 72 * pxPerMm}px`;
+            if (segment.style !== previousStyle) {
+              ctx.font = canvasRunFont(segment.style, pxPerMm);
+              ctx.fillStyle = segment.style.color;
+              ctx.letterSpacing = `${segment.style.letterSpacingPt * 25.4 / 72 * pxPerMm}px`;
+              previousStyle = segment.style;
+            }
             const x = elScreenX + segment.x * pxPerMm;
             const y = elScreenY + (line.y + segment.style.fontSizePt * 25.4 / 72) * pxPerMm;
-            ctx.fillText(segment.text, x, y);
+            if (segment.text.trim()) ctx.fillText(segment.text, x, y);
             if (segment.style.underline) {
               ctx.fillRect(x, y + state.zoom, segment.width * pxPerMm, Math.max(0.6, state.zoom));
             }
@@ -3596,6 +3605,7 @@ export class SpreadCanvas {
       }
     }
 
+    this.adjustmentPreviews.endFrame();
     if (proof) { ctx.restore(); return; }
 
     // Render Thread Vectors for linked frames

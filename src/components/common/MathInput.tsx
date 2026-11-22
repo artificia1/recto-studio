@@ -1,10 +1,10 @@
 import type { JSX } from 'preact';
-import { useState, useEffect } from 'preact/hooks';
+import { useState, useEffect, useRef } from 'preact/hooks';
 import { evaluateMathExpression } from '../../utils/mathEval';
 
 interface MathInputProps {
   value: number;
-  onChange: (val: number) => void;
+  onChange: (val: number) => void | Promise<void>;
   step?: number;
   min?: number;
   max?: number;
@@ -13,6 +13,8 @@ interface MathInputProps {
   style?: JSX.CSSProperties;
   placeholder?: string;
   title?: string;
+  deferSteps?: boolean;
+  'aria-label'?: string;
 }
 
 export function MathInput({
@@ -26,23 +28,39 @@ export function MathInput({
   style,
   placeholder,
   title,
+  deferSteps = false,
+  'aria-label': ariaLabel,
 }: MathInputProps) {
   const [text, setText] = useState<string>(String(value ?? 0));
   const [isFocused, setIsFocused] = useState<boolean>(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const steppedValue = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!isFocused) {
+    if (!isFocused && !busy) {
       setText(String(value ?? 0));
     }
-  }, [value, isFocused]);
+  }, [value, isFocused, busy]);
 
-  const commitValue = () => {
-    const evaluated = evaluateMathExpression(text, value);
+  const commitValue = (draft: string) => {
+    const evaluated = steppedValue.current ?? (draft === String(value) ? value : evaluateMathExpression(draft, value));
+    steppedValue.current = null;
+    if (evaluated === value) {
+      setText(String(value));
+      return;
+    }
     if (evaluated !== null) {
       let finalVal = evaluated;
       if (typeof min === 'number') finalVal = Math.max(min, finalVal);
       if (typeof max === 'number') finalVal = Math.min(max, finalVal);
-      onChange(finalVal);
+      const commit = finalVal !== value && onChange(finalVal);
+      if (commit) {
+        setBusy(true);
+        void commit.catch((reason: unknown) => {
+          setError(reason instanceof Error ? reason.message : 'Could not apply the change.');
+        }).finally(() => setBusy(false));
+      }
       setText(String(finalVal));
     } else {
       setText(String(value ?? 0));
@@ -51,47 +69,50 @@ export function MathInput({
 
   const handleKeyDown = (e: KeyboardEvent) => {
     e.stopPropagation();
+    const input = e.target as HTMLInputElement;
     if (e.key === 'Enter') {
-      commitValue();
-      (e.target as HTMLInputElement).blur();
+      e.preventDefault();
+      input.blur();
     } else if (e.key === 'Escape') {
-      setText(String(value ?? 0));
-      (e.target as HTMLInputElement).blur();
-    } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      const current = evaluateMathExpression(text, value) ?? value ?? 0;
-      const delta = e.shiftKey ? 10 : (e.altKey ? 0.1 : (step || 1));
-      let next = Math.round((current + delta) * 100) / 100;
-      if (typeof max === 'number') next = Math.min(max, next);
-      onChange(next);
-      setText(String(next));
-    } else if (e.key === 'ArrowDown') {
+      steppedValue.current = null;
+      input.value = String(value ?? 0);
+      input.blur();
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
       e.preventDefault();
-      const current = evaluateMathExpression(text, value) ?? value ?? 0;
-      const delta = e.shiftKey ? 10 : (e.altKey ? 0.1 : (step || 1));
-      let next = Math.round((current - delta) * 100) / 100;
-      if (typeof min === 'number') next = Math.max(min, next);
-      onChange(next);
+      const current = steppedValue.current ?? (input.value === String(value) ? value : evaluateMathExpression(input.value, value)) ?? value ?? 0;
+      const stepSize = e.shiftKey ? 10 : e.altKey ? 0.1 : step || 1;
+      const direction = e.key === 'ArrowUp' ? 1 : -1;
+      const stepped = Math.round((current + direction * stepSize) * 100) / 100;
+      const next = Math.max(min ?? -Infinity, Math.min(max ?? Infinity, stepped));
+      steppedValue.current = next;
+      if (!deferSteps && next !== value) onChange(next);
       setText(String(next));
     }
   };
 
   return (
-    <input
+    <><input
       type="text"
       value={text}
-      disabled={disabled}
+      disabled={disabled || busy}
+      aria-busy={busy || undefined}
       className={className}
       style={style}
       placeholder={placeholder}
+      aria-label={ariaLabel}
       title={title || 'Enter a number or math expression (e.g. 180/2, +10mm, 210-25)'}
       onFocus={() => setIsFocused(true)}
-      onBlur={() => {
+      onBlur={event => {
         setIsFocused(false);
-        commitValue();
+        commitValue(event.currentTarget.value);
       }}
-      onInput={(e) => setText((e.target as HTMLInputElement).value)}
+      onInput={event => {
+        setError('');
+        steppedValue.current = null;
+        setText(event.currentTarget.value);
+      }}
       onKeyDown={handleKeyDown}
-    />
+    />{error && <small role="alert">{error}</small>}</>
   );
 }

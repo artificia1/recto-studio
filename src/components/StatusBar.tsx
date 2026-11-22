@@ -5,7 +5,7 @@ import { stateManager } from '../state';
 import type { SaveStatus } from '../state/autosave';
 import { version } from '../../package.json';
 import { fontManager } from '../fontManager';
-import { layoutKernels } from '../engine/layoutRuntime';
+import { layoutKernels, warmLayout } from '../engine/layoutRuntime';
 
 const PreflightDrawer = lazy(() => import('./PreflightDrawer'));
 
@@ -23,6 +23,16 @@ const SAVE_LABELS: Record<SaveStatus, string> = {
 export function StatusBar({ state }: StatusBarProps) {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved');
   useEffect(() => stateManager.autosave.subscribe(setSaveStatus), []);
+  const [fontGeneration, setFontGeneration] = useState(fontManager.generation);
+  const [layoutReady, setLayoutReady] = useState(Boolean(layoutKernels));
+  useEffect(() => {
+    let mounted = true;
+    const updateFonts = () => setFontGeneration(fontManager.generation);
+    const unsubscribe = fontManager.subscribe(updateFonts);
+    updateFonts();
+    void warmLayout().then(() => { if (mounted) setLayoutReady(true); });
+    return () => { mounted = false; unsubscribe(); };
+  }, []);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -30,9 +40,19 @@ export function StatusBar({ state }: StatusBarProps) {
   const pages = currentSpread?.pages.map(page => page.pageNumber) ?? [];
   const pagesDesc = pages.length > 1 ? `Pages ${pages.join('–')}` : pages.length === 1 ? `Page ${pages[0]}` : 'Spread';
 
-  // Viewport changes also render this component, but leave the document revision alone.
-  const issues = useMemo(() => stateManager.runPreflightCheck(),
-    [stateManager.getDocumentRevision(), fontManager.generation, layoutKernels]);
+  // Coalesce large-document audits after the editor has painted the change.
+  const deferAudit = state.spreads.length >= 24;
+  const revision = useMemo(() => ({}),
+    [stateManager.getDocumentRevision(), fontGeneration, layoutReady]);
+  const [audit, setAudit] = useState<{ revision: object; issues: ReturnType<typeof stateManager.runPreflightCheck> }>();
+  const immediate = useMemo(() => deferAudit || !layoutReady ? undefined : stateManager.runPreflightCheck(), [revision, deferAudit]);
+  useEffect(() => {
+    if (!deferAudit || !layoutReady) return;
+    const timer = setTimeout(() => setAudit({ revision, issues: stateManager.runPreflightCheck() }), 120);
+    return () => clearTimeout(timer);
+  }, [revision, deferAudit]);
+  const issues = immediate ?? (audit?.revision === revision ? audit.issues : undefined);
+  const issueCount = issues?.length ?? 0;
 
   // Close drawer when clicking outside
   useEffect(() => {
@@ -61,13 +81,14 @@ export function StatusBar({ state }: StatusBarProps) {
         <button
           type="button"
           ref={triggerRef}
-          className={issues.length ? 'status-preflight-btn' : 'status-preflight-ok'}
+          className={!issues || issueCount ? 'status-preflight-btn' : 'status-preflight-ok'}
           onClick={() => setDrawerOpen(open => !open)}
           aria-expanded={drawerOpen}
-          title={issues.length ? 'Click to view and resolve print preflight issues' : 'Print Preflight: All print criteria passed. Click to view audit.'}
+          aria-busy={!issues}
+          title={!issues ? 'Checking print preflight' : issueCount ? 'Click to view and resolve print preflight issues' : 'Print Preflight: All print criteria passed. Click to view audit.'}
         >
           <span aria-hidden="true" className="status-preflight-dot" />
-          {issues.length ? `Preflight: ${issues.length} to review` : 'Preflight: No errors'}
+          {!issues ? 'Preflight: Checking…' : issueCount ? `Preflight: ${issueCount} to review` : 'Preflight: No errors'}
         </button>
 
         <span className="status-item status-mode" title={state.settings.facingPages ? 'Facing Pages' : 'Single-page layout'}>{pagesDesc}</span>
@@ -118,7 +139,9 @@ export function StatusBar({ state }: StatusBarProps) {
         <span className="status-item status-version" title={`Recto Studio v${version}`}>v{version}</span>
       </div>
 
-      {drawerOpen && <Suspense fallback={null}><PreflightDrawer issues={issues} drawerRef={drawerRef} onClose={() => setDrawerOpen(false)} /></Suspense>}
+      {drawerOpen && (issues
+        ? <Suspense fallback={null}><PreflightDrawer issues={issues} drawerRef={drawerRef} onClose={() => setDrawerOpen(false)} /></Suspense>
+        : <div className="preflight-drawer" ref={drawerRef} role="region" aria-label="Print Preflight Audit" aria-busy="true">Checking document…</div>)}
     </footer>
   );
 }

@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { StateManager } from '../src/state/stateManager';
 import { storyText } from '../src/engine/storyContent';
-import { layoutFrameNotes, publicationHeadings } from '../src/engine/publicationReferences';
+import { layoutFrameNotes, publicationHeadings, reflowStoryState } from '../src/engine/publicationReferences';
 import { parseProject } from '../src/state/projectValidation';
+import { composeStoryInBackground, compositionFontSamples, prepareStoryComposition } from '../src/engine/storyComposition';
 import type { TextElement } from '../src/types';
 
 function addFrame(manager: StateManager, id: string, text = '', height = 220): TextElement {
@@ -17,6 +18,76 @@ function addFrame(manager: StateManager, id: string, text = '', height = 220): T
 describe('live publication references', () => {
   let manager: StateManager;
   beforeEach(() => { manager = new StateManager(); manager.createBlankProject('A4', 'Reference test', false); });
+
+  it('scopes dimension and type changes to their story and matches a complete reflow', () => {
+    const copy = Array.from({ length: 15 }, (_, index) => ({
+      runs: [{ text: `Section ${index}. ` + 'Copy can flow across frames with different measures. '.repeat(12) }],
+      formatting: { keepWithNext: index % 2 === 0 },
+    }));
+    const ids = ['head', 'second', 'third', 'fourth', 'tail'];
+    for (const id of ids) addFrame(manager, id, '', 55);
+    for (let index = 1; index < ids.length; index++) manager.linkTextFrames(ids[index - 1], ids[index]);
+    manager.setStoryContent('head', { version: 1, paragraphs: copy });
+    addFrame(manager, 'unrelated', 'Independent story');
+    manager.setStoryContent('unrelated', { version: 1, paragraphs: [{ runs: [{ text: 'Independent story' }] }] });
+    const frame = (id: string) => manager.getElementById(id) as TextElement;
+    const first = frame('head').textContent;
+    const reflow = vi.spyOn(manager, 'reflowStory');
+
+    for (const updates of [{ width: 135, columns: 2 }, { columnGutterMm: 7 }, { height: 65 }, { fontSizePt: 14 }]) {
+      reflow.mockClear();
+      manager.updateElement('fourth', updates);
+      expect(reflow).toHaveBeenCalledTimes(1);
+      expect(frame('head').textContent).toBe(first);
+      const full = structuredClone(manager.getState());
+      const recomposed = reflowStoryState(full, 'head')!;
+      expect(recomposed.map(item => [item.storyStart, item.storyEnd, item.textContent]))
+        .toEqual(ids.map(id => [frame(id).storyStart, frame(id).storyEnd, frame(id).textContent]));
+    }
+    manager.undo();
+    expect(frame('fourth').fontSizePt).toBe(11);
+  });
+
+  it.each([{ fontSizePt: 14 }, { height: 5 }, { width: 95, columns: 2, columnGutterMm: 7 }])(
+    'returns the same story slices as the editor for a background frame edit %j', async updates => {
+      const ids = ['first', 'middle', 'edited', 'last'];
+      ids.forEach(id => addFrame(manager, id, '', 55));
+      for (let index = 1; index < ids.length; index++) manager.linkTextFrames(ids[index - 1], ids[index]);
+      manager.setStoryContent('first', { version: 1, paragraphs: Array.from({ length: 80 }, () => ({
+        runs: [{ text: 'A linked story can keep its formatting when the type size changes. '.repeat(3) }],
+      })) });
+      const head = manager.getElementById('first') as TextElement;
+      const cancelled = new AbortController();
+      cancelled.abort();
+      await expect(prepareStoryComposition(manager.getState(), head, { frameId: 'edited', updates }, cancelled.signal)).resolves.toBeNull();
+      const request = await prepareStoryComposition(manager.getState(), head, { frameId: 'edited', updates });
+      expect(request).not.toBeNull();
+      const before = new Map(ids.map(id => [id, structuredClone(manager.getElementById(id)) as TextElement]));
+      for (const frame of before.values()) expect(storyText(frame.textContent!)).toBe(frame.text);
+      const composed = await composeStoryInBackground(structuredClone(request!));
+      expect(composed).not.toBeNull();
+      expect(composed?.frames.some(frame => frame.id === 'edited')).toBe(true);
+      if (updates.height) expect(composed?.frames.find(frame => frame.id === 'edited')?.text).toBe('');
+      for (const frame of composed!.frames) expect(storyText(frame.textContent!)).toBe(frame.text);
+      manager.updateElement('edited', updates);
+      expect(composed?.content).toEqual(manager.getStoryContent('first'));
+      for (const id of ids) {
+        const expected = manager.getElementById(id) as TextElement;
+        const actual = composed?.frames.find(frame => frame.id === id) || before.get(id)!;
+        expect([actual.text, actual.storyStart, actual.storyEnd, actual.textContent])
+          .toEqual([expected.text, expected.storyStart, expected.storyEnd, expected.textContent]);
+      }
+      const mismatched = structuredClone(request!);
+      mismatched.probes[0].widths[0] += 1;
+      await expect(composeStoryInBackground(mismatched)).resolves.toBeNull();
+    });
+
+  it('samples additional scripts only when they occur in existing or incoming text', () => {
+    const latin = compositionFontSamples('English “quotes” and café.');
+    expect(latin.slice(1).join('')).toContain('é');
+    expect(latin.slice(1).join('')).not.toMatch(/[漢😀Я]/u);
+    expect(compositionFontSamples('English text', '漢字とひらがな 😀 Пример').slice(1).join('')).toMatch(/漢.*😀.*П/u);
+  });
 
   it('renumbers identified notes without rewriting scientific superscripts', () => {
     addFrame(manager, 'body', 'Energy x². A citation.');

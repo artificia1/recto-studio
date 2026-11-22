@@ -96,6 +96,43 @@ describe('Autosave scheduling and recovery', () => {
     expect(vi.mocked(RectoDB.saveProject).mock.calls[1][0].settings.title).toBe('Two');
   });
 
+  it('waits for a slow write before taking another timer-driven snapshot', async () => {
+    const manager = new StateManager();
+    let finish!: () => void;
+    vi.mocked(RectoDB.saveProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    manager.updateSettings({ title: 'One' });
+    await vi.advanceTimersByTimeAsync(500);
+
+    for (const title of ['Two', 'Three', 'Four']) {
+      manager.updateSettings({ title });
+      await vi.advanceTimersByTimeAsync(700);
+      expect(JSON.parse(storage.get(AUTOSAVE_KEY)!).settings.title).toBe('One');
+    }
+
+    finish();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(JSON.parse(storage.get(AUTOSAVE_KEY)!).settings.title).toBe('Four');
+    expect(vi.mocked(RectoDB.saveProject).mock.calls.map(([state]) => state.settings.title)).toEqual(['One', 'Four']);
+  });
+
+  it('keeps the unload backup current and replaces snapshots still in the queue', async () => {
+    const manager = new StateManager();
+    let finish!: () => void;
+    vi.mocked(RectoDB.saveProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    manager.updateSettings({ title: 'In progress' });
+    void manager.autosave.flush();
+    await Promise.resolve();
+
+    manager.updateSettings({ title: 'Superseded' });
+    const queued = manager.autosave.flush();
+    manager.updateSettings({ title: 'Latest' });
+    const latest = manager.autosave.flush();
+    expect(JSON.parse(storage.get(AUTOSAVE_KEY)!).settings.title).toBe('Latest');
+    finish();
+    await Promise.all([queued, latest]);
+    expect(vi.mocked(RectoDB.saveProject).mock.calls.map(([state]) => state.settings.title)).toEqual(['In progress', 'Latest']);
+  });
+
   it('retries a failed save on the next flush without requiring another edit', async () => {
     vi.stubGlobal('localStorage', { setItem: () => { throw new Error('Quota'); } });
     vi.mocked(RectoDB.saveProject).mockRejectedValueOnce(new Error('Database unavailable'));

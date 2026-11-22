@@ -1,9 +1,9 @@
 import { stateManager } from '../../state';
-import { ProjectState } from '../../types';
-import { useMemo, useState } from 'preact/hooks';
+import type { MasterSpread, ProjectState, Spread } from '../../types';
+import { useCallback, useMemo, useState } from 'preact/hooks';
 import { PublicationPanel } from './PublicationPanel';
 import { pageLabel } from '../../engine/pageLabels';
-import { lazy, Suspense } from 'preact/compat';
+import { lazy, memo, Suspense } from 'preact/compat';
 const ReferencesPanel = lazy(() => import('./ReferencesPanel'));
 const EditorialPanel = lazy(() => import('./EditorialPanel'));
 const PrintReadinessPanel = lazy(() => import('./PrintReadinessPanel'));
@@ -17,23 +17,16 @@ interface PagesTabProps {
 export function PagesTab({ state }: PagesTabProps) {
   const [moveError, setMoveError] = useState('');
   const [newParent, setNewParent] = useState('');
-  const moveSpread = (from: number, to: number) => {
+  const moveSpread = useCallback((from: number, to: number) => {
     try { stateManager.moveSpread(from, to); setMoveError(''); }
     catch (error) { setMoveError(error instanceof Error ? error.message : String(error)); }
-  };
+  }, []);
   const spreads = state.spreads;
   const masterSpreads = state.masterSpreads || [];
   const labels = useMemo(() => {
     const pages = state.spreads.flatMap(spread => spread.pages);
     return new Map(pages.map(page => [page.id, pageLabel(pages, page.id).label]));
   }, [stateManager.getDocumentRevision()]);
-
-  const handleDeleteSpread = (e: MouseEvent, idx: number) => {
-    e.stopPropagation();
-    if (confirm(`Delete Spread ${idx + 1}?`)) {
-      stateManager.deleteSpread(idx);
-    }
-  };
 
   const handleCreateMaster = () => {
     const nextPrefix = String.fromCharCode(65 + masterSpreads.length); // A, B, C...
@@ -150,81 +143,98 @@ export function PagesTab({ state }: PagesTabProps) {
       </div>
 
       <div className="spread-list">
-        {spreads.map((spread, idx) => {
-          const isCurrent = idx === state.activeSpreadIndex;
-          const pageNames = spread.pages.map(p => `p.${labels.get(p.id)}`).join(' - ');
-          const elementCount = spread.elements.length;
-          const assignedMaster = masterSpreads.find((m) => m.id === spread.masterSpreadId);
-
-          return (
-            <div
-              key={spread.id}
-              className={`spread-card ${isCurrent ? 'active' : ''}`}
-              onClick={() => stateManager.setActiveSpread(idx)}
-            >
-              <div className="spread-preview-mini">
-                {spread.pages.map((p) => (
-                  <div key={p.id} className="mini-page">
-                    {labels.get(p.id)}
-                  </div>
-                ))}
-              </div>
-              <div className="spread-info">
-                <div className="spread-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span>Spread {idx + 1} ({pageNames})</span>
-                  {assignedMaster && (
-                    <span style={{ fontSize: '9px', color: 'var(--accent-cyan)', fontWeight: 700 }}>
-                      [{assignedMaster.prefix}]
-                    </span>
-                  )}
-                </div>
-                <div className="spread-meta">{elementCount} elements on spread</div>
-                <div className="publication-actions" onClick={event => event.stopPropagation()}>
-                  <button className="sm-btn" disabled={idx === 0} aria-label={`Move spread ${idx + 1} earlier`} onClick={() => moveSpread(idx, idx - 1)}>↑ Earlier</button>
-                  <button className="sm-btn" disabled={idx === spreads.length - 1} aria-label={`Move spread ${idx + 1} later`} onClick={() => moveSpread(idx, idx + 1)}>↓ Later</button>
-                </div>
-
-                <div style={{ marginTop: '5px' }} onClick={(e) => e.stopPropagation()}>
-                  <label style={{ fontSize: '10px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    Master:
-                    <select
-                      value={spread.masterSpreadId || ''}
-                      style={{
-                        fontSize: '10px',
-                        padding: '2px 4px',
-                        backgroundColor: 'var(--bg-panel)',
-                        color: 'var(--text-primary)',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: '3px',
-                      }}
-                      onChange={(e) => {
-                        const val = (e.target as HTMLSelectElement).value || null;
-                        stateManager.assignMasterSpread(idx, val);
-                      }}
-                    >
-                      <option value="">None (Blank)</option>
-                      {masterSpreads.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          [{m.prefix}] {m.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-              </div>
-              {spreads.length > 1 && (
-                <button
-                  className="btn-del-spread"
-                  onClick={(e) => handleDeleteSpread(e, idx)}
-                  title="Delete Spread"
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-          );
-        })}
+        {spreads.map((spread, index) => <SpreadCard key={spread.id} spread={spread} idx={index}
+          isCurrent={state.activeSpreadIndex === index} count={spreads.length} labels={labels}
+          masterSpreads={masterSpreads} moveSpread={moveSpread} />)}
       </div>
     </div>
   );
 }
+
+const SpreadCard = memo(function SpreadCard({ spread, idx, isCurrent, count, labels, masterSpreads, moveSpread }: {
+  spread: Spread;
+  idx: number;
+  isCurrent: boolean;
+  count: number;
+  labels: ReadonlyMap<string, string>;
+  masterSpreads: MasterSpread[];
+  moveSpread(from: number, to: number): void;
+}) {
+  const handleDeleteSpread = (e: MouseEvent, idx: number) => {
+    e.stopPropagation();
+    if (confirm(`Delete Spread ${idx + 1}?`)) {
+      stateManager.deleteSpread(idx);
+    }
+  };
+
+  const pageNames = spread.pages.map(p => `p.${labels.get(p.id)}`).join(' - ');
+  const elementCount = spread.elements.length;
+  const assignedMaster = masterSpreads.find((m) => m.id === spread.masterSpreadId);
+
+  return (
+    <div
+      className={`spread-card ${isCurrent ? 'active' : ''}`}
+      onClick={() => stateManager.setActiveSpread(idx)}
+    >
+      <div className="spread-preview-mini">
+        {spread.pages.map((p) => (
+          <div key={p.id} className="mini-page">
+            {labels.get(p.id)}
+          </div>
+        ))}
+      </div>
+      <div className="spread-info">
+        <div className="spread-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>Spread {idx + 1} ({pageNames})</span>
+          {assignedMaster && (
+            <span style={{ fontSize: '9px', color: 'var(--accent-cyan)', fontWeight: 700 }}>
+              [{assignedMaster.prefix}]
+            </span>
+          )}
+        </div>
+        <div className="spread-meta">{elementCount} elements on spread</div>
+        <div className="publication-actions" onClick={event => event.stopPropagation()}>
+          <button className="sm-btn" disabled={idx === 0} aria-label={`Move spread ${idx + 1} earlier`} onClick={() => moveSpread(idx, idx - 1)}>↑ Earlier</button>
+          <button className="sm-btn" disabled={idx === count - 1} aria-label={`Move spread ${idx + 1} later`} onClick={() => moveSpread(idx, idx + 1)}>↓ Later</button>
+        </div>
+
+        <div style={{ marginTop: '5px' }} onClick={(e) => e.stopPropagation()}>
+          <label style={{ fontSize: '10px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            Master:
+            <select
+              value={spread.masterSpreadId || ''}
+              style={{
+                fontSize: '10px',
+                padding: '2px 4px',
+                backgroundColor: 'var(--bg-panel)',
+                color: 'var(--text-primary)',
+                border: '1px solid var(--border-color)',
+                borderRadius: '3px',
+              }}
+              onChange={(e) => {
+                const val = (e.target as HTMLSelectElement).value || null;
+                stateManager.assignMasterSpread(idx, val);
+              }}
+            >
+              <option value="">None (Blank)</option>
+              {masterSpreads.map((m) => (
+                <option key={m.id} value={m.id}>
+                  [{m.prefix}] {m.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </div>
+      {count > 1 && (
+        <button
+          className="btn-del-spread"
+          onClick={(e) => handleDeleteSpread(e, idx)}
+          title="Delete Spread"
+        >
+          ✕
+        </button>
+      )}
+    </div>
+  );
+});

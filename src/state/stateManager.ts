@@ -43,7 +43,8 @@ import {
   TextFormatting,
   CharacterStyle,
 } from '../types/index';
-import { editStory, formatStory, plainStory, sliceStory, storyText, styleStoryParagraphs } from '../engine/storyContent';
+import { editStory, formatFrameParagraphs, formatStory, plainStory, sliceStory, storyText, styleStoryParagraphs, type FrameLayoutEdit } from '../engine/storyContent';
+import type { StoryComposition } from '../engine/storyComposition';
 import { layoutStory } from '../engine/storyLayout';
 import { calculateTacPercentage, runEditorPreflight } from '../engine/editorPreflight';
 import { instantiateMasterItem, resolveMaster } from '../engine/masterInheritance';
@@ -51,7 +52,7 @@ import { arrangeSelection, lockedArtworkIds, restorePlacedPasteboard, selectionU
 import { elementUsesFont, primaryFont, visitDocumentFonts } from '../engine/documentFonts';
 import { prepareSpreadTemplate } from '../engine/spreadTemplate';
 import { validateBinding, type DataRefreshChange } from '../engine/dataRefresh';
-import { contentOf, insertRun, layoutFrameNotes, migrateLegacyNotes, noteMarker, notesForFrame, publicationHeadings, reflowStoryState, refreshPublication, storyHeads, textFrames } from '../engine/publicationReferences';
+import { contentOf, insertRun, layoutFrameNotes, migrateLegacyNotes, noteMarker, notesForFrame, publicationHeadings, reflowStoryState, refreshPublication, storyHeads, textFrames, type StoryReflowRange } from '../engine/publicationReferences';
 import { reconcileFrameStoryEdits } from './frameStoryEdits';
 import { generateEan13DataUrl } from '../engine/barcodeEngine';
 import { RectoDB } from './persistence';
@@ -69,7 +70,6 @@ import { parseProject } from './projectValidation';
 import { fontManager } from '../fontManager';
 import { parseMergeData, generateMergedSpreads, substituteElementTokens } from '../dataMerge';
 import { KnuthPlassComposer, ComposerOptions } from '../engine/knuthPlass';
-import { psdEngine } from '../engine/psdParser';
 import { colorEngine, GamutAuditResult, IccProfileName } from '../engine/colorEngine';
 
 // Preserve imports used by existing exporters, UI components, and integrations.
@@ -144,8 +144,22 @@ export interface FindResult {
 // Local-first persistent storage keys
 const STORAGE_KEY = 'recto_project_autosave';
 const SNAPSHOTS_STORAGE_KEY = 'recto_version_snapshots';
+// Paint and output metadata do not change line geometry.
+const layoutNeutralElementFields = new Set([
+  'opacity', 'blendMode', 'shadow', 'backgroundColor', 'fillColor', 'fillGradient', 'strokeColor',
+  'spotColor', 'strokeSpotColor', 'decorative', 'altText', 'textOnPath', 'adjustments',
+]);
+const layoutNeutralSettings = new Set<keyof ProjectState['settings']>([
+  'title', 'author', 'language', 'identifier', 'bleedMm', 'columnCount', 'columnGutterMm',
+  'colorMode', 'iccProfile', 'colorManagement', 'overprintBlack',
+]);
+const frameLayoutFields = new Set([
+  'x', 'y', 'width', 'height', 'rotation', 'columns', 'columnGutterMm', 'paddingMm',
+  'fontFamily', 'fontSizePt', 'letterSpacingPt', 'lineHeight', 'alignment',
+  'spanColumns', 'splitColumns', 'balanceColumns', 'snapToBaseline',
+]);
 
-export type StateListener = (state: ProjectState) => void;
+export type StateListener = (state: ProjectState, panOnly: boolean) => void;
 
 export class StateManager {
   private documentRevision = 0;
@@ -175,7 +189,7 @@ export class StateManager {
   }
   private state: ProjectState;
   private listeners: Set<StateListener> = new Set();
-  private readonly history = new StateHistory<ProjectState>(30);
+  private readonly history = new StateHistory<ProjectState>(30, 'spreads');
   private snapshots: VersionSnapshot[] = [];
   public onMutation?: (mutation: { type: 'add' | 'update' | 'delete'; elementId: string; element?: CanvasElement; updates?: Partial<CanvasElement> }) => void;
 
@@ -285,13 +299,13 @@ export class StateManager {
     return () => this.listeners.delete(fn);
   }
 
-  private notify(persist = true) {
+  private notify(persist = true, panOnly = false) {
     if (persist) {
       this.documentRevision++;
       this.autosave.schedule();
     }
     for (const listener of this.listeners) {
-      listener(this.state);
+      listener(this.state, panOnly);
     }
   }
 
@@ -334,9 +348,17 @@ export class StateManager {
   }
 
   public updateSettings(partial: Partial<ProjectState['settings']>) {
+    const changed = (Object.keys(partial) as (keyof ProjectState['settings'])[])
+      .filter(key => !Object.is(partial[key], this.state.settings[key]));
+    if (!changed.length) return;
     const prevH = this.state.settings.heightMm;
     const prevW = this.state.settings.widthMm;
     this.state.settings = { ...this.state.settings, ...partial };
+    if (changed.every(key => layoutNeutralSettings.has(key))) {
+      this.history.push(this.state);
+      this.notify();
+      return;
+    }
     const newH = this.state.settings.heightMm;
     const newW = this.state.settings.widthMm;
 
@@ -416,14 +438,16 @@ export class StateManager {
   public setPan(x: number, y: number) {
     this.state.panX = x;
     this.state.panY = y;
-    this.notify(false);
+    this.notify(false, true);
   }
 
   public setZoomAndPan(zoom: number, panX: number, panY: number) {
-    this.state.zoom = Math.max(0.2, Math.min(3.0, zoom));
+    const nextZoom = Math.max(0.2, Math.min(3.0, zoom));
+    const panOnly = nextZoom === this.state.zoom;
+    this.state.zoom = nextZoom;
     this.state.panX = panX;
     this.state.panY = panY;
-    this.notify(false);
+    this.notify(false, panOnly);
   }
 
   public toggleGuides() {
@@ -806,7 +830,10 @@ export class StateManager {
   }
 
   public updateElement(id: string, updates: Partial<CanvasElement>, recordHistory: boolean = true) {
-    const spread = this.getActiveSpread();
+    this.updateElementOnSpread(this.getActiveSpread(), id, updates, recordHistory);
+  }
+
+  private updateElementOnSpread(spread: Spread, id: string, updates: Partial<CanvasElement>, recordHistory: boolean) {
     const idx = spread.elements.findIndex(el => el.id === id);
     if (idx !== -1) {
       if (spread.elements[idx].locked && updates.locked === undefined) return;
@@ -814,13 +841,14 @@ export class StateManager {
       if (current.type === 'text' && 'text' in updates && this.getStoryHead(current.id)?.generated) throw new Error('Make this generated list static in Pages before editing its text.');
       spread.elements[idx] = { ...spread.elements[idx], ...updates } as CanvasElement;
       const el = spread.elements[idx];
-      if (Object.keys(updates).every(key => key === 'opacity' || key === 'blendMode')) {
+      if (Object.keys(updates).every(key => layoutNeutralElementFields.has(key))) {
         if (recordHistory) this.history.push(this.state);
         this.notify();
         this.onMutation?.({ type: 'update', elementId: id, updates });
         return;
       }
       let editedStoryId: string | undefined;
+      let scopedFrameLayout = false;
       const textOnly = Object.keys(updates).every(key => key === 'text') &&
         !spread.elements.some(element => element.anchor?.parentTextId === id);
       if ('x' in updates || 'y' in updates) restorePlacedPasteboard(this.state, el);
@@ -830,22 +858,27 @@ export class StateManager {
         for (const key of ['alphaContour', 'originalWidth', 'originalHeight', 'actualDpi', 'assetId', 'proxySrc'] as const) if (!(key in updates)) delete el[key];
       }
       if (el.type === 'text') {
-        const textEl = el as TextElement;
         const textUpdates = updates as Partial<TextElement>;
-        if (textUpdates.text !== undefined && (textEl.textContent || textEl.storyContent)) {
-          editedStoryId = this.editFrameStory(textEl, textUpdates.text);
-        } else if (textUpdates.text !== undefined && !textEl.prevFrameId) {
-          textEl.rawStoryText = textEl.text;
+        if (textUpdates.text !== undefined && (el.textContent || el.storyContent)) {
+          editedStoryId = this.editFrameStory(el, textUpdates.text);
+        } else if (textUpdates.text !== undefined && !el.prevFrameId) {
+          el.rawStoryText = el.text;
         }
-        this.updateStoryFrameFormatting(textEl, textUpdates);
-        if (!(textOnly && editedStoryId) && (textEl.nextFrameId || textEl.prevFrameId)) {
-          this.reflowStory(id);
+        scopedFrameLayout = current.type === 'text' && current.pasteboard === el.pasteboard &&
+          (!el.textWrap?.mode || el.textWrap.mode === 'none') &&
+          Object.keys(updates).every(key => frameLayoutFields.has(key)) &&
+          !this.state.spreads.some(spread => spread.elements.some(element => element.anchor?.parentTextId === id));
+        const formatting = this.updateStoryFrameFormatting(el, textUpdates);
+        if (formatting || (!(textOnly && editedStoryId) &&
+          (el.nextFrameId || el.prevFrameId || (scopedFrameLayout && el.storyContent)))) {
+          const resume = scopedFrameLayout ? { frameId: id, ...formatting?.range } : undefined;
+          this.reflowStory(formatting?.headId ?? id, resume);
         }
         this.updateAnchoredPositions(id);
       }
       if (recordHistory) {
         const composedStory = textOnly ? editedStoryId : undefined;
-        this.pushHistory(composedStory, Boolean(composedStory));
+        this.pushHistory(composedStory, Boolean(composedStory) || scopedFrameLayout);
       }
       this.notify();
       this.onMutation?.({ type: 'update', elementId: id, updates });
@@ -876,8 +909,10 @@ export class StateManager {
           } else if (textPartial.text !== undefined && !textEl.prevFrameId) {
             textEl.rawStoryText = textEl.text;
           }
-          this.updateStoryFrameFormatting(textEl, textPartial);
-          if (!recordHistory && (textEl.nextFrameId || textEl.prevFrameId)) {
+          const formatting = this.updateStoryFrameFormatting(textEl, textPartial);
+          if (formatting) {
+            this.reflowStory(formatting.headId);
+          } else if (!recordHistory && (textEl.nextFrameId || textEl.prevFrameId)) {
             this.reflowStory(id);
           }
         }
@@ -1236,7 +1271,9 @@ export class StateManager {
     return Math.max(15, Math.floor(singleColWidthMm / avgCharWidthMm));
   }
 
-  public reflowStory(frameId: string) { reflowStoryState(this.state, frameId); }
+  public reflowStory(frameId: string, resume?: StoryReflowRange) {
+    reflowStoryState(this.state, frameId, undefined, undefined, resume);
+  }
 
   /** Append publication pages for overflow, preserving one undo boundary. */
   public setStoryAutoExtend(frameId: string, enabled: boolean) {
@@ -1375,7 +1412,7 @@ export class StateManager {
   private editFrameStory(frame: TextElement, text: string) {
     const head = this.getStoryHead(frame.id);
     if (!head) return;
-    const content = this.getStoryContent(frame.id);
+    const content = head.storyContent ?? this.getStoryContent(head.id);
     const full = storyText(content);
     const start = frame.storyStart ?? 0;
     const end = frame.storyEnd ?? full.length;
@@ -1386,21 +1423,14 @@ export class StateManager {
   }
 
   private updateStoryFrameFormatting(frame: TextElement, updates: Partial<TextElement>) {
-    if (!frame.textContent) return;
-    const keys = ['fontFamily', 'fontSizePt', 'color', 'alignment', 'lineHeight', 'letterSpacingPt'] as const;
-    const formatting = Object.fromEntries(keys.filter(key => updates[key] !== undefined).map(key => [key, updates[key]]));
-    if (!Object.keys(formatting).length) return;
-    const head = this.getStoryHead(frame.id)!;
-    const content = this.getStoryContent(frame.id);
-    const start = frame.storyStart ?? 0, end = frame.storyEnd ?? storyText(content).length;
-    let offset = 0;
-    head.storyContent = { version: 1, paragraphs: content.paragraphs.map(paragraph => {
-      const length = paragraph.runs.reduce((n, r) => n + r.text.length, 0);
-      const selected = offset < end && offset + length >= start;
-      offset += length + 1;
-      return selected ? { ...paragraph, formatting: { ...paragraph.formatting, ...formatting } } : paragraph;
-    }) };
-    this.reflowStory(head.id);
+    if (!frame.textContent || !('fontFamily' in updates || 'fontSizePt' in updates || 'color' in updates ||
+      'alignment' in updates || 'lineHeight' in updates || 'letterSpacingPt' in updates)) return;
+    const head = this.getStoryHead(frame.id);
+    if (!head) return;
+    const formatted = formatFrameParagraphs(head.storyContent ?? this.getStoryContent(head.id), frame, updates);
+    if (!formatted) return;
+    head.storyContent = formatted.content;
+    return { headId: head.id, range: formatted.range };
   }
 
   public placeManuscript(target: string | TextElement, content: StoryContent, notes: { id: string; kind: 'footnote' | 'endnote'; text: string }[] = []) {
@@ -1532,18 +1562,25 @@ export class StateManager {
     };
     const { prepareStoryComposition, fontMeasurementsMatch } = await import('../engine/storyComposition');
     if (!stillCurrent()) return;
-    const request = prepareStoryComposition(source, head, text);
+    const request = await prepareStoryComposition(source, head, text, signal);
+    if (!stillCurrent()) return;
     if (!request) { this.setStoryText(frameId, text); return; }
     const { requestStoryComposition } = await import('../engine/storyCompositionClient');
     if (!stillCurrent()) return;
     const result = await requestStoryComposition(request, signal);
     if (!stillCurrent()) return;
-    if (!result || !fontMeasurementsMatch(request.probes) ||
+    if (!result || !fontMeasurementsMatch(request) ||
       request.fonts.some(asset => fontManager.getFontAsset(asset.family) !== asset)) {
       this.setStoryText(frameId, text);
       return;
     }
     this.assertStoryEditable(frameId);
+    this.applyStoryComposition(head, result);
+    this.pushHistory(head.id, true);
+    this.notify();
+  }
+
+  private applyStoryComposition(head: TextElement, result: StoryComposition) {
     const frames = new Map(textFrames(this.state).map(frame => [frame.id, frame]));
     if (result.frames.some(composition => !frames.has(composition.id))) throw new Error('A linked story frame changed during layout.');
     head.storyContent = result.content;
@@ -1553,8 +1590,51 @@ export class StateManager {
       Object.assign(frame, composition);
       if (frame !== head) { delete frame.storyContent; delete frame.rawStoryText; }
     }
-    this.pushHistory(head.id);
-    this.notify();
+  }
+
+  private frameLayoutBusy = false;
+
+  public setFrameLayout(frameId: string, updates: FrameLayoutEdit): void | Promise<void> {
+    const source = this.state, spread = this.getActiveSpread();
+    const frame = spread.elements.find(item => item.id === frameId);
+    if (frame?.type !== 'text' || frame.locked) return;
+    const head = (frame.nextFrameId || frame.prevFrameId) && source.spreads.length >= 24 ? this.getStoryHead(frameId) : null;
+    if (!head?.rawStoryText || head.rawStoryText.length < 8000 || head.generated || head.autoExtendStory ||
+      source.settings.footnotes?.length || frame.textWrap && frame.textWrap.mode !== 'none' ||
+      source.spreads.some(item => item.elements.some(element => element.anchor?.parentTextId === frameId))) {
+      return this.updateElement(frameId, updates);
+    }
+    return this.composeFrameLayout(source, spread, head, frame, updates);
+  }
+
+  private async composeFrameLayout(source: ProjectState, spread: Spread, head: TextElement, frame: TextElement, updates: FrameLayoutEdit) {
+    if (this.frameLayoutBusy) throw new Error('A text frame is still being laid out. Try again when it finishes.');
+    this.frameLayoutBusy = true;
+    const revision = this.documentRevision;
+    const controller = new AbortController();
+    const current = () => this.state === source && this.documentRevision === revision;
+    const unsubscribe = this.subscribe(() => { if (!current()) controller.abort(); });
+    try {
+      const { prepareStoryComposition, fontMeasurementsMatch } = await import('../engine/storyComposition');
+      if (!current()) throw new Error('The document changed during layout. Apply the frame change again.');
+      const request = await prepareStoryComposition(source, head, { frameId: frame.id, updates }, controller.signal);
+      if (!current()) throw new Error('The document changed during layout. Apply the frame change again.');
+      const result = request && await (await import('../engine/storyCompositionClient')).requestStoryComposition(request, controller.signal);
+      if (!current()) throw new Error('The document changed during layout. Apply the frame change again.');
+      if (!result?.frames.some(item => item.id === frame.id) || !request || !fontMeasurementsMatch(request) ||
+        request.fonts.some(asset => fontManager.getFontAsset(asset.family) !== asset)) {
+        this.updateElementOnSpread(spread, frame.id, updates, true);
+        return;
+      }
+      this.applyStoryComposition(head, result);
+      Object.assign(frame, updates);
+      this.pushHistory(head.id, true);
+      this.notify();
+      this.onMutation?.({ type: 'update', elementId: frame.id, updates });
+    } finally {
+      unsubscribe();
+      this.frameLayoutBusy = false;
+    }
   }
 
   public formatStoryRange(frameId: string, start: number, end: number, formatting: TextFormatting & { characterStyleId?: string }) {
@@ -1997,7 +2077,7 @@ export class StateManager {
     if (typeof data !== 'string' && !(data instanceof ArrayBuffer) && /\.ps[db]$/i.test(data.name)) {
       if (data.size > 64 * 1024 * 1024) throw new Error('Choose an image smaller than 64 MB.');
       const buffer = await data.arrayBuffer();
-      return isCurrent() && this.loadPsdForElement(elementId, buffer, data.name);
+      return isCurrent() && this.loadPsdForElement(elementId, buffer, data.name, isCurrent);
     }
     const { readPlacedImage } = await import('../engine/placedImage');
     const { src, originalWidth, originalHeight, ...metadata } = await readPlacedImage(data, name);
@@ -2284,11 +2364,13 @@ export class StateManager {
     const all = this.state.spreads.flatMap(spread => spread.elements.map(element => ({ spread, element })));
     const anchor = all.find(item => item.element.id === ids[0]);
     if (!anchor) throw new Error('The artwork no longer exists.');
-    const groups = new Set(all.filter(item => ids.includes(item.element.id)).map(item => item.element.groupId).filter(Boolean));
-    const moved = all.filter(item => ids.includes(item.element.id) || (item.element.groupId && groups.has(item.element.groupId)));
-    if (ids.some(id => !moved.some(item => item.element.id === id))) throw new Error('Some selected artwork no longer exists.');
+    const requested = new Set(ids);
+    const groups = new Set(all.filter(item => requested.has(item.element.id)).map(item => item.element.groupId).filter(Boolean));
+    const moved = all.filter(item => requested.has(item.element.id) || (item.element.groupId && groups.has(item.element.groupId)));
+    const keys = new Set(moved.map(item => item.element.id));
+    if (ids.some(id => !keys.has(id))) throw new Error('Some selected artwork no longer exists.');
     if (moved.some(item => item.spread !== anchor.spread)) throw new Error('Move artwork from one source spread at a time.');
-    if (all.some(item => item.element.anchor && moved.some(moving => moving.element.id === item.element.anchor!.parentTextId))) throw new Error('Unanchor attached objects before moving their parent text through the artwork workspace.');
+    if (all.some(item => item.element.anchor && keys.has(item.element.anchor.parentTextId))) throw new Error('Unanchor attached objects before moving their parent text through the artwork workspace.');
     for (const { element } of moved) {
       if (element.locked || element.editorialOnly || this.state.layers.find(layer => layer.id === element.layerId)?.locked) throw new Error('Unlock the artwork and its layer first.');
       if (element.anchor || element.masterSourceId || ((element.type === 'text' || element.type === 'table') && (element.nextFrameId || element.prevFrameId))) throw new Error('Move independent artwork; threaded, anchored and master-override objects need their dedicated editing tools.');
@@ -2298,9 +2380,12 @@ export class StateManager {
     const origin = anchor.spread.pages.findIndex(page => page.id === anchor.element.pageId) * this.state.settings.widthMm + anchor.element.x;
     const originY = anchor.element.y;
     const positions = moved.map(({ spread, element }) => ({ element, x: x + spread.pages.findIndex(page => page.id === element.pageId) * this.state.settings.widthMm + element.x - origin, y: y + element.y - originY }));
-    const keys = new Set(moved.map(item => item.element.id));
-    this.state.spreads.forEach(spread => { spread.elements = spread.elements.filter(element => !keys.has(element.id)); });
-    let z = Math.max(0, ...target.elements.map(element => element.zIndex));
+    const layoutIsCurrent = !this.state.settings.baselineGrid?.enabled && !this.state.settings.footnotes?.length &&
+      !moved.some(({ element }) => element.type === 'text' && Boolean(element.pasteboard) !== pasteboard) &&
+      ![anchor.spread, target, ...this.state.masterSpreads].some(spread =>
+        spread.elements.some(element => element.textWrap?.mode && element.textWrap.mode !== 'none'));
+    anchor.spread.elements = anchor.spread.elements.filter(element => !keys.has(element.id));
+    let z = target.elements.reduce((highest, element) => Math.max(highest, element.zIndex), 0);
     positions.sort((a, b) => a.element.zIndex - b.element.zIndex).forEach(item => {
       const width = this.state.settings.widthMm;
       const globalX = target.pages.findIndex(page => page.id === pageId) * width + item.x;
@@ -2312,7 +2397,7 @@ export class StateManager {
     const pixels = 96 / 25.4 * this.state.zoom;
     this.state.panX = (target.pages.length * this.state.settings.widthMm / 2 - (target.pages.findIndex(page => page.id === anchor.element.pageId) * this.state.settings.widthMm + anchor.element.x + anchor.element.width / 2)) * pixels;
     this.state.panY = (this.state.settings.heightMm / 2 - anchor.element.y - anchor.element.height / 2) * pixels;
-    this.pushHistory(); this.notify();
+    this.pushHistory(undefined, layoutIsCurrent); this.notify();
   }
 
   public changeElementOrder(id: string, direction: 'front' | 'back' | 'forward' | 'backward') {
@@ -3841,11 +3926,15 @@ export class StateManager {
   /**
    * Loads a binary Adobe Photoshop PSD buffer into an ImageElement without flattening.
    */
-  public loadPsdForElement(elementId: string, psdBuffer: ArrayBuffer | Uint8Array, fileName?: string): boolean {
+  public async loadPsdForElement(elementId: string, psdBuffer: ArrayBuffer | Uint8Array, fileName?: string,
+    isCurrent = () => true): Promise<boolean> {
     const el = this.getElementById(elementId);
     if (!el || el.type !== 'image' || el.locked || this.state.layers.find(layer => layer.id === el.layerId)?.locked) return false;
     const img = el as ImageElement;
 
+    const { psdEngine } = await import('../engine/psdParser');
+    if (!isCurrent() || this.getElementById(elementId) !== img || img.locked ||
+      this.state.layers.find(layer => layer.id === img.layerId)?.locked) return false;
     const psdData = psdEngine.parse(psdBuffer);
     this.pendingImageReplacements.delete(img);
     delete img.assetId;

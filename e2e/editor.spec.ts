@@ -630,6 +630,65 @@ test('recovers from IndexedDB when localStorage writes fail', async ({ page }) =
   await expect(page.locator('.inspector-panel textarea').first()).toHaveValue('Recovered from database backup');
 });
 
+function largeAutosaveProject() {
+  return { ...projectFixture(), comments: Array.from({ length: 100 }, (_, index) => ({
+    id: `note-${index}`, spreadIndex: 0, text: 'Review annotation. '.repeat(300),
+    author: 'Proofreader', x: 0, y: 0, timestamp: index, resolved: true,
+  })) };
+}
+
+for (const allowWorker of [true, false]) {
+  test(`restores a large autosave without localStorage ${allowWorker ? 'using a worker' : 'when workers are unavailable'}`, async ({ page }) => {
+    await page.addInitScript(allow => {
+      Storage.prototype.setItem = () => { throw new DOMException('Storage quota exceeded', 'QuotaExceededError'); };
+      const NativeWorker = window.Worker;
+      window.Worker = class extends NativeWorker {
+        constructor(url: string | URL, options?: WorkerOptions) {
+          const autosave = String(url).includes('autosaveWorker');
+          if (autosave && !allow) {
+            document.documentElement.dataset.autosaveWorker = 'blocked';
+            throw new DOMException('Workers unavailable', 'NotSupportedError');
+          }
+          super(url, options);
+          if (autosave) this.addEventListener('message', event => {
+            document.documentElement.dataset.autosaveWorker = event.data === true ? 'saved' : 'failed';
+          });
+        }
+      };
+    }, allowWorker);
+    await page.goto('/');
+    await importProject(page, largeAutosaveProject());
+    await page.locator('.inspector-panel textarea').first().fill('Recovered large database backup');
+    await expect(page.locator('html')).toHaveAttribute('data-autosave-worker', allowWorker ? 'saved' : 'blocked');
+    await expect(page.locator('.status-left [role="status"]')).toHaveText('Saved locally');
+    await page.reload();
+    await expect(page.locator('.inspector-panel textarea').first()).toHaveValue('Recovered large database backup');
+    expect(await page.evaluate(() => localStorage.getItem('recto_project_autosave'))).toBeNull();
+  });
+}
+
+test('flushes the exact large snapshot on reload while its worker is still saving', async ({ page }) => {
+  await page.addInitScript(() => {
+    const NativeWorker = window.Worker;
+    window.Worker = class extends NativeWorker {
+      constructor(url: URL | string, options?: WorkerOptions) {
+        super(url, options);
+        if (String(url).includes('autosaveWorker')) this.postMessage = () => {
+          // Leave the first write in flight until the original page is closed.
+          document.documentElement.dataset.autosaveWorker = 'waiting';
+        };
+      }
+    };
+  });
+  await page.goto('/');
+  await importProject(page, largeAutosaveProject());
+  await expect(page.locator('html')).toHaveAttribute('data-autosave-worker', 'waiting');
+  expect(await page.evaluate(() => localStorage.getItem('recto_project_autosave'))).toBeNull();
+  await page.reload();
+  await expect(page.getByTitle('Click to rename document')).toHaveValue('Browser QA document');
+  await expect(page.locator('.inspector-panel textarea').first()).toHaveValue('Browser workflow sample');
+});
+
 test('imports an IDML package using the file picker', async ({ page }) => {
   const bytes = createZipArchive({
     'designmap.xml': '<Document/>',

@@ -85,22 +85,56 @@ test('preserves a Data Merge draft across closing and reopening the dialog', asy
 });
 
 test('saves editable image and vector effects through the inspector', async ({ page }) => {
-  const imageProject = projectFixture();
+  const imageProject = Object.assign(projectFixture(), { displayQuality: 'high' });
   const photo = imageProject.spreads[0].elements[0];
   const source = await page.evaluate(() => {
     const canvas = document.createElement('canvas');
-    canvas.width = canvas.height = 16;
+    canvas.width = canvas.height = 1200;
     const context = canvas.getContext('2d')!;
     context.fillStyle = '#ff0000';
-    context.fillRect(0, 0, 16, 16);
+    context.fillRect(0, 0, canvas.width, canvas.height);
     return canvas.toDataURL();
   });
   Object.assign(photo, { type: 'image', src: source, fitMode: 'fit' });
   await importProject(page, imageProject);
+  await page.evaluate(() => {
+    const BrowserWorker = window.Worker;
+    window.Worker = class extends BrowserWorker {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        if (String(url).includes('imageAdjustmentWorker')) this.addEventListener('message', event => {
+          if (event.data?.width) document.body.dataset.adjustmentWorker = String(event.data.width * event.data.height);
+        });
+      }
+    };
+  });
   await page.getByText('Image adjustments', { exact: true }).click();
   await page.getByLabel('Grayscale', { exact: true }).check();
+  await expect(page.locator('body')).toHaveAttribute('data-adjustment-worker', '1048576');
+  await expect.poll(() => page.evaluate(() => {
+    const { stateManager, spreadCanvas } = (window as any).recto;
+    const state = stateManager.getState();
+    const image = stateManager.getActiveSpread().elements[0];
+    const origin = spreadCanvas.getSpreadScreenOrigin(state);
+    const scale = state.zoom * 96 / 25.4;
+    const context = document.querySelector<HTMLCanvasElement>('#spread-canvas')!.getContext('2d')!;
+    const dpr = context.getTransform().a;
+    const x = Math.floor((origin.x + (image.x + image.width / 2) * scale) * dpr);
+    const y = Math.floor((origin.y + (image.y + image.height / 2) * scale) * dpr);
+    return Array.from(context.getImageData(x, y, 1, 1).data);
+  })).toEqual([54, 54, 54, 255]);
+
+  const revision = () => page.evaluate(() => (window as any).recto.stateManager.getDocumentRevision());
+  const before = await revision();
+  const gamma = page.getByRole('spinbutton', { name: 'Midtone gamma' });
+  await gamma.fill('1');
+  await gamma.fill('1.5');
+  expect(await revision()).toBe(before);
+  await gamma.press('Enter');
+  expect(await revision()).toBe(before + 1);
   const edited = (await savedProject(page)).spreads[0].elements[0];
   expect(edited.adjustments.grayscale).toBe(true);
+  expect(edited.adjustments.gamma).toBe(1.5);
   expect(edited.src).toBe(source);
 
   const shapeProject = projectFixture();

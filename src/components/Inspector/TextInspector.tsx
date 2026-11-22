@@ -3,6 +3,7 @@ import { stateManager, numberToSuperscript } from '../../state';
 import { fontManager } from '../../fontManager';
 import { getAllFreeToneColors } from '../../engine/spotColors';
 import type { ProjectState, TextElement, ParagraphStyle } from '../../types';
+import { CommitNumberInput } from '../common/CommitNumberInput';
 import { MathInput } from '../common/MathInput';
 import { lazy, Suspense } from 'preact/compat';
 import { FONT_FILES, useFontFileImport } from '../common/useFontFileImport';
@@ -225,30 +226,26 @@ export default function TextInspector({
       <div className="input-grid-2" style={{ marginTop: '8px' }}>
         <label>
           Size:
-          <input
-            type="number"
+          <CommitNumberInput key={element.id + '-fontSizePt'}
+            disabled={element.locked}
+            aria-label="Font size"
             value={element.fontSizePt}
             min={6}
             max={144}
-            onInput={(e) =>
-              stateManager.updateElement(element.id, {
-                fontSizePt: parseFloat((e.target as HTMLInputElement).value) || 12,
-              })}
+            onCommit={value => stateManager.setFrameLayout(element.id, { fontSizePt: value })}
           />
           pt
         </label>
         <label>
           Leading:
-          <input
-            type="number"
+          <CommitNumberInput key={element.id + '-lineHeight'}
+            disabled={element.locked}
+            aria-label="Leading"
             value={element.lineHeight}
             step={0.05}
             min={0.8}
             max={2.5}
-            onInput={(e) =>
-              stateManager.updateElement(element.id, {
-                lineHeight: parseFloat((e.target as HTMLInputElement).value) || 1.3,
-              })}
+            onCommit={value => stateManager.setFrameLayout(element.id, { lineHeight: value })}
           />
         </label>
       </div>
@@ -320,43 +317,37 @@ export default function TextInspector({
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '6px', marginTop: '10px' }}>
         <label>
           Columns:
-          <input
-            type="number"
+          <CommitNumberInput key={element.id + '-columns'}
+            disabled={element.locked}
+            aria-label="Columns"
             value={element.columns || 1}
             min={1}
             max={4}
-            onInput={(e) =>
-              stateManager.updateElement(element.id, {
-                columns: parseInt((e.target as HTMLInputElement).value, 10) || 1,
-              })}
+            onCommit={value => stateManager.setFrameLayout(element.id, { columns: Math.trunc(value) })}
           />
         </label>
         <label>
           Gutter:
-          <input
-            type="number"
-            value={element.columnGutterMm || 4}
+          <CommitNumberInput key={element.id + '-columnGutterMm'}
+            disabled={element.locked}
+            aria-label="Column gutter"
+            value={element.columnGutterMm ?? 4}
             min={1}
             max={20}
-            onInput={(e) =>
-              stateManager.updateElement(element.id, {
-                columnGutterMm: parseFloat((e.target as HTMLInputElement).value) || 4,
-              })}
+            onCommit={value => stateManager.setFrameLayout(element.id, { columnGutterMm: value })}
           />
           mm
         </label>
         <label>
           Inset:
-          <input
-            type="number"
+          <CommitNumberInput key={element.id + '-paddingMm'}
+            disabled={element.locked}
+            aria-label="Text inset"
             value={element.paddingMm ?? 2}
             min={0}
             max={40}
             step={0.5}
-            onInput={(e) =>
-              stateManager.updateElement(element.id, {
-                paddingMm: Math.max(0, parseFloat((e.target as HTMLInputElement).value) || 0),
-              })}
+            onCommit={value => stateManager.setFrameLayout(element.id, { paddingMm: value })}
           />
           mm
         </label>
@@ -521,16 +512,14 @@ export default function TextInspector({
         <div className="input-grid-2" style={{ marginBottom: '8px' }}>
           <label>
             Tracking:
-            <input
-              type="number"
+            <CommitNumberInput key={element.id + '-letterSpacingPt'}
+              disabled={element.locked}
+              aria-label="Tracking"
               value={element.letterSpacingPt || 0}
               step={0.1}
               min={-2}
               max={10}
-              onInput={(e) =>
-                stateManager.updateElement(element.id, {
-                  letterSpacingPt: parseFloat((e.target as HTMLInputElement).value) || 0,
-                })}
+              onCommit={value => stateManager.setFrameLayout(element.id, { letterSpacingPt: value })}
             />
             pt
           </label>

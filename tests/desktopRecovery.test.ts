@@ -72,6 +72,32 @@ describe('Desktop project recovery', () => {
     });
   });
 
+  it('keeps the latest queued snapshot for each desktop document', async () => {
+    let release!: () => void;
+    vi.mocked(recovery.saveRecoveryCheckpoint).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    state.settings.title = 'In progress';
+    autosave.schedule();
+    void autosave.flush();
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+
+    state.settings.title = 'Superseded';
+    autosave.schedule();
+    void autosave.flush();
+    state.settings.title = 'Latest outgoing edits';
+    autosave.schedule();
+    autosave.beginDesktopDocument('new.recto');
+    state = structuredClone(INITIAL_STATE);
+    state.settings.title = 'New project';
+    autosave.schedule();
+    const saved = autosave.flush();
+    release();
+    await saved;
+
+    expect(vi.mocked(recovery.saveRecoveryCheckpoint).mock.calls.map(([, snapshot]) => snapshot.settings.title))
+      .toEqual(['In progress', 'Latest outgoing edits', 'New project']);
+    expect([...checkpoints.values()].map(entry => entry.state.settings.title)).toEqual(['Latest outgoing edits', 'New project']);
+  });
+
   it('reuses the resumed checkpoint on later edits without duplicating it', async () => {
     const resumed = structuredClone(INITIAL_STATE);
     resumed.settings.title = 'Resumed manuscript';

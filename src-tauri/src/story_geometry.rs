@@ -24,6 +24,33 @@ pub struct Band {
     pub width: f64,
 }
 
+pub type Point = (f64, f64);
+
+pub fn flatten_cubic(
+    a: Point, b: Point, c: Point, d: Point, depth: u8,
+    emit: &mut impl FnMut(Point) -> bool,
+) -> bool {
+    let dx = d.0 - a.0;
+    let dy = d.1 - a.1;
+    let length = dx.hypot(dy);
+    let distance = |p: Point| {
+        if length == 0.0 {
+            (p.0 - a.0).hypot(p.1 - a.1)
+        } else {
+            (dy * p.0 - dx * p.1 + d.0 * a.1 - d.1 * a.0).abs() / length
+        }
+    };
+    if depth == 9 || (distance(b) <= 0.05 && distance(c) <= 0.05) {
+        return emit(d);
+    }
+    let mid = |p: Point, q: Point| ((p.0 + q.0) / 2.0, (p.1 + q.1) / 2.0);
+    let (ab, bc, cd) = (mid(a, b), mid(b, c), mid(c, d));
+    let (abc, bcd) = (mid(ab, bc), mid(bc, cd));
+    let centre = mid(abc, bcd);
+    flatten_cubic(a, ab, abc, centre, depth + 1, emit)
+        && flatten_cubic(centre, bcd, cd, d, depth + 1, emit)
+}
+
 pub fn place_line(cursor: &mut LineCursor, frame: Frame, height: f64, grid: Grid,
     mut free_band: impl FnMut(f64, f64, f64, f64) -> Band) -> Option<(f64, f64)> {
     for _ in 0..4096 {

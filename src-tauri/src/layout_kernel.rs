@@ -31,6 +31,14 @@ pub fn optimal_breaks(items: &[Item], widths: &[f64], tolerance: f64, hyphen_cos
         item: usize::MAX, previous: 0, line: 0, fitness: 1,
         cost: 0.0, ratio: 0.0, metrics: Metrics::default(),
     }];
+    let mut eligible = vec![0];
+    // With nonnegative advances and shrink no greater than the glue's width,
+    // the minimum possible line width only grows as tokens are appended.
+    let can_prune = items.iter().all(|item| match item.kind {
+        0 | 2 => item.width.is_finite() && item.width >= 0.0,
+        1 => item.width.is_finite() && item.shrink >= 0.0 && item.width >= item.shrink,
+        _ => false,
+    });
     let mut terminal = None;
     for (index, item) in items.iter().enumerate() {
         let legal = (item.kind == 2 && item.penalty < 10_000.0)
@@ -38,11 +46,13 @@ pub fn optimal_breaks(items: &[Item], widths: &[f64], tolerance: f64, hyphen_cos
         let mut candidates: [Option<Break>; 4] = Default::default();
         let mut order = [0; 4];
         let mut count = 0;
-        for (previous, node) in active.iter_mut().enumerate() {
+        eligible.retain(|&previous| {
+            let node = &mut active[previous];
+            let target = widths[node.line.min(widths.len() - 1)];
             if legal {
                 let penalty = if item.kind == 2 { item.penalty } else { 0.0 };
                 let end_width = if penalty > 0.0 { item.width } else { 0.0 };
-                let diff = widths[node.line.min(widths.len() - 1)] - (node.metrics.width + end_width);
+                let diff = target - (node.metrics.width + end_width);
                 let ratio = if diff > 0.0 && node.metrics.stretch > 0.0 {
                     diff / node.metrics.stretch
                 } else if diff < 0.0 {
@@ -73,12 +83,15 @@ pub fn optimal_breaks(items: &[Item], widths: &[f64], tolerance: f64, hyphen_cos
                 node.metrics.stretch += item.stretch;
                 node.metrics.shrink += item.shrink;
             }
-        }
+            let slack = (node.metrics.width + target.abs() + 1.0) * 1e-10;
+            !can_prune || !slack.is_finite() || node.metrics.width - node.metrics.shrink <= target + slack
+        });
         for &fitness in &order[..count] {
             let candidate = candidates[fitness].take()?;
             if index + 1 == items.len() && terminal.is_none_or(|best: usize| candidate.cost < active[best].cost) {
                 terminal = Some(active.len());
             }
+            eligible.push(active.len());
             active.push(candidate);
         }
     }

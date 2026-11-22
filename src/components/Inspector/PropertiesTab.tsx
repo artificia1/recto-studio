@@ -29,7 +29,8 @@ export function PropertiesTab({ state, onOpenPageSetup }: PropertiesTabProps) {
   const selectedIds = state.selectedElementIds && state.selectedElementIds.length > 0
     ? state.selectedElementIds
     : (state.selectedElementId ? [state.selectedElementId] : []);
-  const selectedElements = spread.elements.filter((el) => selectedIds.includes(el.id));
+  const selectedIdSet = new Set(selectedIds);
+  const selectedElements = spread.elements.filter(el => selectedIdSet.has(el.id));
   if (selectedElements.length === 0) {
     return <DocumentOverview state={state} onOpenPageSetup={onOpenPageSetup} />;
   }
@@ -204,6 +205,9 @@ export function PropertiesTab({ state, onOpenPageSetup }: PropertiesTabProps) {
           <label>
             X:
             <MathInput
+              key={selectedEl.id + '-x'}
+              aria-label="Frame X"
+              deferSteps
               value={selectedEl.x}
               disabled={selectedEl.locked}
               step={1}
@@ -214,6 +218,9 @@ export function PropertiesTab({ state, onOpenPageSetup }: PropertiesTabProps) {
           <label>
             Y:
             <MathInput
+              key={selectedEl.id + '-y'}
+              aria-label="Frame Y"
+              deferSteps
               value={selectedEl.y}
               disabled={selectedEl.locked}
               step={1}
@@ -224,22 +231,32 @@ export function PropertiesTab({ state, onOpenPageSetup }: PropertiesTabProps) {
           <label>
             W:
             <MathInput
+              key={selectedEl.id + '-width'}
+              aria-label="Frame width"
+              deferSteps
               value={selectedEl.width}
               disabled={selectedEl.locked}
               step={1}
               min={5}
-              onChange={(val) => stateManager.updateElement(selectedEl.id, { width: Math.max(5, val) })}
+              onChange={width => selectedEl.type === 'text'
+                ? stateManager.setFrameLayout(selectedEl.id, { width })
+                : stateManager.updateElement(selectedEl.id, { width })}
             />
             mm
           </label>
           <label>
             H:
             <MathInput
+              key={selectedEl.id + '-height'}
+              aria-label="Frame height"
+              deferSteps
               value={selectedEl.height}
               disabled={selectedEl.locked}
               step={1}
               min={5}
-              onChange={(val) => stateManager.updateElement(selectedEl.id, { height: Math.max(5, val) })}
+              onChange={height => selectedEl.type === 'text'
+                ? stateManager.setFrameLayout(selectedEl.id, { height })
+                : stateManager.updateElement(selectedEl.id, { height })}
             />
             mm
           </label>

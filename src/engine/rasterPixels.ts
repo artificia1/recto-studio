@@ -41,15 +41,20 @@ export async function decodeSrgbRaster(src: string, maxEdge?: number, allowCmyk 
   const width = Math.max(1, Math.round(original.width * scale)), height = Math.max(1, Math.round(original.height * scale));
   if (typeof createImageBitmap === 'function') {
     const image = await createImageBitmap(new Blob([new Uint8Array(asset.bytes)], { type: asset.mediaType }), { resizeWidth: width, resizeHeight: height, resizeQuality: 'high' });
+    let canvas: OffscreenCanvas | undefined;
     try {
       if (image.width !== width || image.height !== height) throw new Error('Image dimensions changed during decoding.');
-      const context = new OffscreenCanvas(width, height).getContext('2d', { colorSpace: 'srgb', willReadFrequently: true });
+      canvas = new OffscreenCanvas(width, height);
+      const context = canvas.getContext('2d', { colorSpace: 'srgb', willReadFrequently: true });
       if (!context) throw new Error('Could not create an sRGB image surface.');
       context.drawImage(image, 0, 0);
       const pixels = context.getImageData(0, 0, width, height).data;
       const data = new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength);
       return { width, height, originalWidth: original.width, originalHeight: original.height, data };
-    } finally { image.close(); }
+    } finally {
+      image.close();
+      if (canvas) canvas.width = canvas.height = 0;
+    }
   }
   const { Resvg } = await import('@resvg/resvg-js');
   const safeSource = src.replace(/&/g, '&amp;').replace(/"/g, '&quot;');

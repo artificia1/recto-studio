@@ -55,7 +55,10 @@ export function embeddedAsset(source: string): PublicationAsset {
     }
     mediaType = 'image/svg+xml'; extension = 'svg';
   } else throw new Error('Unsupported image data. Use PNG, JPEG, GIF, WebP or a self-contained SVG.');
-  return { bytes, mediaType, extension, dataUrl: `data:${mediaType};base64,${uint8ArrayToBase64(bytes)}` };
+  let dataUrl: string | undefined;
+  return { bytes, mediaType, extension, get dataUrl() {
+    return dataUrl ??= `data:${mediaType};base64,${uint8ArrayToBase64(bytes)}`;
+  } };
 }
 
 export function fullImageSource(image: ImageElement): string {
