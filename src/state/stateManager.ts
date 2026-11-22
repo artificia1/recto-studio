@@ -811,9 +811,18 @@ export class StateManager {
     if (idx !== -1) {
       if (spread.elements[idx].locked && updates.locked === undefined) return;
       const current = spread.elements[idx];
-      if (current.type === 'text' && this.getStoryHead(current.id)?.generated && 'text' in updates) throw new Error('Make this generated list static in Pages before editing its text.');
+      if (current.type === 'text' && 'text' in updates && this.getStoryHead(current.id)?.generated) throw new Error('Make this generated list static in Pages before editing its text.');
       spread.elements[idx] = { ...spread.elements[idx], ...updates } as CanvasElement;
       const el = spread.elements[idx];
+      if (Object.keys(updates).every(key => key === 'opacity' || key === 'blendMode')) {
+        if (recordHistory) this.history.push(this.state);
+        this.notify();
+        this.onMutation?.({ type: 'update', elementId: id, updates });
+        return;
+      }
+      let editedStoryId: string | undefined;
+      const textOnly = Object.keys(updates).every(key => key === 'text') &&
+        !spread.elements.some(element => element.anchor?.parentTextId === id);
       if ('x' in updates || 'y' in updates) restorePlacedPasteboard(this.state, el);
       // Replacing artwork turns an equation frame into a regular image frame.
       if (el.type === 'image' && 'src' in updates && !('equation' in updates)) el.equation = undefined;
@@ -824,18 +833,19 @@ export class StateManager {
         const textEl = el as TextElement;
         const textUpdates = updates as Partial<TextElement>;
         if (textUpdates.text !== undefined && (textEl.textContent || textEl.storyContent)) {
-          this.editFrameStory(textEl, textUpdates.text);
+          editedStoryId = this.editFrameStory(textEl, textUpdates.text);
         } else if (textUpdates.text !== undefined && !textEl.prevFrameId) {
           textEl.rawStoryText = textEl.text;
         }
         this.updateStoryFrameFormatting(textEl, textUpdates);
-        if (textEl.nextFrameId || textEl.prevFrameId) {
+        if (!(textOnly && editedStoryId) && (textEl.nextFrameId || textEl.prevFrameId)) {
           this.reflowStory(id);
         }
         this.updateAnchoredPositions(id);
       }
       if (recordHistory) {
-        this.pushHistory();
+        const composedStory = textOnly ? editedStoryId : undefined;
+        this.pushHistory(composedStory, Boolean(composedStory));
       }
       this.notify();
       this.onMutation?.({ type: 'update', elementId: id, updates });
@@ -1372,6 +1382,7 @@ export class StateManager {
     head.storyContent = editStory(content, full.slice(0, start) + text + full.slice(end));
     head.rawStoryText = storyText(head.storyContent);
     this.reflowStory(head.id);
+    return head.id;
   }
 
   private updateStoryFrameFormatting(frame: TextElement, updates: Partial<TextElement>) {

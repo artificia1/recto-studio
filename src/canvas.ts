@@ -268,7 +268,13 @@ export class SpreadCanvas {
   private formattedLayoutKernels = layoutKernels;
 
   // Active in-place canvas overlay editor (WordPad/Figma style)
-  private activeInlineEditor: { elementId: string; el: HTMLElement } | null = null;
+  private activeInlineEditor: { elementId: string; el: HTMLElement; finish?: (commit: boolean) => void } | null = null;
+  private opacityPreview?: { id: string; value: number; revision: number };
+
+  public previewOpacity(id: string, value?: number): void {
+    this.opacityPreview = value === undefined ? undefined : { id, value, revision: stateManager.getDocumentRevision() };
+    this.scheduleRender();
+  }
 
   // High-performance requestAnimationFrame render coalescing loop
   private renderRafId: number | null = null;
@@ -1517,7 +1523,8 @@ export class SpreadCanvas {
 
     const textarea = document.createElement('textarea');
     textarea.className = 'canvas-inline-editor';
-    textarea.value = textEl.text || '';
+    const originalText = textEl.text || '';
+    textarea.value = originalText;
     textarea.placeholder = 'Type text here...';
     textarea.spellcheck = false;
 
@@ -1560,10 +1567,11 @@ export class SpreadCanvas {
       const updatedText = textarea.value;
       textarea.remove();
       this.activeInlineEditor = null;
-      if (commit && updatedText !== textEl.text) {
+      const current = stateManager.getActiveSpread() === spread ? spread.elements.find(item => item.id === elementId) : undefined;
+      if (commit && current?.type === 'text' && current.text === originalText && updatedText !== current.text) {
         stateManager.updateElement(textEl.id, { text: updatedText });
       }
-      this.render();
+      this.scheduleRender();
     };
 
     textarea.addEventListener('keydown', (ke: KeyboardEvent) => {
@@ -1587,16 +1595,18 @@ export class SpreadCanvas {
     this.activeInlineEditor = {
       elementId: textEl.id,
       el: textarea,
+      finish,
     };
 
-    textarea.focus();
+    textarea.focus({ preventScroll: true });
     textarea.select();
-    this.render();
+    this.scheduleRender();
   }
 
   public closeInlineTextEditor(commit: boolean = true): void {
     if (!this.activeInlineEditor) return;
-    const { elementId, el } = this.activeInlineEditor;
+    const { elementId, el, finish } = this.activeInlineEditor;
+    if (finish) { finish(commit); return; }
     this.activeInlineEditor = null;
     const text = (el as HTMLTextAreaElement | HTMLInputElement).value;
     el.remove();
@@ -1607,7 +1617,7 @@ export class SpreadCanvas {
         stateManager.updateElement(elementId, { text });
       }
     }
-    this.render();
+    this.scheduleRender();
   }
 
   public openInlineTableCellEditor(tableId: string, e?: MouseEvent): void {
@@ -2878,7 +2888,9 @@ export class SpreadCanvas {
       const isSelected = state.selectedElementIds ? state.selectedElementIds.includes(el.id) : state.selectedElementId === el.id;
 
       ctx.save();
-      ctx.globalAlpha = el.opacity;
+      const opacity = this.opacityPreview;
+      ctx.globalAlpha = !proof && !state.previewMode && opacity?.id === el.id &&
+        opacity.revision === stateManager.getDocumentRevision() ? opacity.value : el.opacity;
       ctx.globalCompositeOperation = el.blendMode === 'normal' || !el.blendMode ? 'source-over' : el.blendMode;
 
       if (el.shadow && el.shadow.color) {

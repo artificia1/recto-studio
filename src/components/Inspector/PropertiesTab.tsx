@@ -257,10 +257,14 @@ export function PropertiesTab({ state, onOpenPageSetup }: PropertiesTabProps) {
               step={0.05}
               disabled={selectedEl.locked}
               value={selectedEl.opacity}
-              onInput={(e) =>
-                stateManager.updateElement(selectedEl.id, {
-                  opacity: Number((e.target as HTMLInputElement).value),
-                })}
+              onInput={event => window.recto?.spreadCanvas.previewOpacity(selectedEl.id, event.currentTarget.valueAsNumber)}
+              onBlur={() => window.recto?.spreadCanvas.previewOpacity(selectedEl.id)}
+              onChangeCapture={event => {
+                window.recto?.spreadCanvas.previewOpacity(selectedEl.id);
+                if (event.currentTarget.valueAsNumber !== selectedEl.opacity) {
+                  stateManager.updateElement(selectedEl.id, { opacity: event.currentTarget.valueAsNumber });
+                }
+              }}
             />
           </label>
           <div className="btn-group-sm">

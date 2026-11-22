@@ -194,3 +194,35 @@ test('moves a selected group together, leaves locked artwork fixed, and undoes o
   await page.keyboard.press('Control+z');
   expect(await positions()).toEqual(before);
 });
+
+test('opens a linked frame and adjusts opacity without recomposing the book', async ({ page }) => {
+  test.setTimeout(120000);
+  const point = await openBook(page);
+  const before = await snapshot(page);
+  await page.evaluate(() => {
+    const app = (window as unknown as DragTestWindow);
+    app.dragCounts = { reflow: 0, preflight: 0, autosave: 0, mutations: 0 };
+    const manager = app.recto.stateManager;
+    const reflow = manager.reflowStory.bind(manager);
+    manager.reflowStory = id => { app.dragCounts.reflow++; reflow(id); };
+  });
+  await page.mouse.dblclick(point.x, point.y);
+  await expect(page.locator('.canvas-inline-editor')).toBeFocused();
+  const slider = page.getByRole('slider', { name: /Opacity/ });
+  await slider.evaluate(element => {
+    const input = element as HTMLInputElement;
+    for (const value of ['0.9', '0.8', '0.7', '0.6']) {
+      input.value = value;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  });
+  expect(await snapshot(page)).toEqual(before);
+  await slider.dispatchEvent('change');
+  const opacity = () => page.evaluate(() => (window as unknown as DragTestWindow).recto.stateManager.getElementById('drag-25')!.opacity);
+  expect(await opacity()).toBe(0.6);
+  expect(await snapshot(page)).toEqual({ ...before, revision: before.revision + 1 });
+  expect(await page.evaluate(() => (window as unknown as DragTestWindow).dragCounts.reflow)).toBe(0);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Control+z');
+  expect(await opacity()).toBe(1);
+});

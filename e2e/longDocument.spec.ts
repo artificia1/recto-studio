@@ -21,15 +21,18 @@ test('keeps a 256-page overview bounded and preserves editable text', async ({ p
   await expect(page.getByTitle('Click to rename document')).toHaveValue(project.settings.title);
   await page.getByRole('button', { name: 'All spreads', exact: true }).click();
   const workspace = page.getByRole('dialog', { name: 'Multi-spread workspace' });
-  const firstImage = workspace.locator('[data-workspace-object="text-0"] canvas');
-  await expect(firstImage).toBeVisible();
-  const source = await firstImage.evaluate((element: HTMLCanvasElement) => element.toDataURL());
-  expect(source).toMatch(/^data:image\/png;base64,/);
+  const firstPreview = workspace.locator('[data-workspace-object="text-0"] [data-text-preview]');
+  await expect(firstPreview).toBeVisible();
+  const path = await firstPreview.getAttribute('d');
+  expect(path).toMatch(/^M/);
   const scroll = workspace.locator('.spatial-scroll');
   for (const top of [20, 40, 60]) {
     await scroll.evaluate((element, top) => { element.scrollTop = top; element.dispatchEvent(new Event('scroll')); }, top);
-    await expect.poll(() => firstImage.evaluate((element: HTMLCanvasElement) => element.toDataURL())).toBe(source);
+    await expect(firstPreview).toHaveAttribute('d', path!);
   }
+  await workspace.getByLabel('Workspace zoom').selectOption('1');
+  await expect(workspace.locator('[data-workspace-object] canvas, [data-workspace-object] text').first()).toHaveCount(0);
+  await workspace.getByLabel('Workspace zoom').selectOption('0.15');
   expect(await workspace.locator('[data-workspace-object]').count()).toBeLessThan(128);
   expect(await workspace.locator('svg *').count()).toBeLessThan(3000);
   await scroll.evaluate(element => { element.scrollTop = element.scrollHeight; element.dispatchEvent(new Event('scroll')); });

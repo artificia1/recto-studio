@@ -1,3 +1,11 @@
+# Recto Studio 1.4.9
+
+- Open a text frame for editing before scheduling the canvas redraw. Editing existing copy reflows its linked story and refreshes any publication references affected by the edit.
+- Preview opacity on the canvas while moving the slider and save the final value as one undoable edit. Opacity and blend mode changes skip text reflow.
+- Show text as simplified line previews in All Spreads at every zoom level. Double-click a page to see and edit its composed text.
+
+---
+
 # Recto Studio 1.4.8
 
 Fixes text-frame dragging in long, threaded publications.

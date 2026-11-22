@@ -1,52 +1,31 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { memo } from 'preact/compat';
 import type { CanvasElement, ProjectState } from '../types';
 import { stateManager } from '../state';
 import { spreadGrid, visibleSpreadCells, workspaceDrop } from '../engine/spatialWorkspace';
 import { instantiateMasterItem, resolveMaster } from '../engine/masterInheritance';
-import { publicationText } from '../engine/publicationReferences';
 import { masterTargetPage } from '../engine/pageLabels';
-import { canvasRunFont, layoutStory } from '../engine/storyLayout';
-import { fontManager } from '../fontManager';
-import { layoutKernels } from '../engine/layoutRuntime';
-import { plainStory } from '../engine/storyContent';
 import { bezierNodesToSvgPath } from '../engine/vectorPath';
 import { useModalFocus } from '../hooks/useModalFocus';
 import { calculateImageFitting } from '../canvas';
 
-interface PreviewProps {
-  element: CanvasElement;
-  state: ProjectState;
-  revision: number;
-  fontGeneration: number;
-  kernels: typeof layoutKernels;
-  scale: number;
-}
-
-const WorkspacePreview = memo(function WorkspacePreview({ element, state, scale, revision, fontGeneration, kernels }: PreviewProps) {
-  const bitmap = useRef<HTMLCanvasElement>(null);
-  useLayoutEffect(() => {
-    if (element.type !== 'text' || !bitmap.current) return;
-    const layout = layoutStory(element.textContent || plainStory(element.text, element.paragraphStyleId),
-      element, state.paragraphStyles, state.characterStyles || []);
-    const pixelsPerMm = Math.min(Math.max(0.6, Math.min(2, scale)), 1024 / Math.max(element.width, element.height));
-    bitmap.current.width = Math.max(1, Math.ceil(element.width * pixelsPerMm));
-    bitmap.current.height = Math.max(1, Math.ceil(element.height * pixelsPerMm));
-    const context = bitmap.current.getContext('2d')!;
-    for (const line of layout.lines) for (const segment of line.segments) {
-      context.font = canvasRunFont(segment.style, pixelsPerMm);
-      context.fillStyle = segment.style.color;
-      context.letterSpacing = `${segment.style.letterSpacingPt * 25.4 / 72 * pixelsPerMm}px`;
-      const x = segment.x * pixelsPerMm;
-      const y = (line.y + segment.style.fontSizePt * 25.4 / 72) * pixelsPerMm;
-      context.fillText(segment.text, x, y);
-      if (segment.style.underline) context.fillRect(x, y + 1, segment.width * pixelsPerMm, 0.6);
-    }
-  }, [element, state, scale, revision, fontGeneration, kernels]);
+const WorkspacePreview = memo(function WorkspacePreview({ element }: { element: CanvasElement }) {
   if (element.type === 'text') {
-    return <foreignObject width={element.width} height={element.height}>
-      <canvas ref={bitmap} aria-label="Text frame preview" style={{ width: '100%', height: '100%', display: 'block' }}/>
-    </foreignObject>;
+    if (!element.text) return null;
+    const padding = Math.max(0, element.paddingMm ?? 2);
+    const width = element.width - 2 * padding;
+    const height = element.height - 2 * padding;
+    if (width <= 0 || height <= 0) return null;
+    const leading = Math.max(2, element.fontSizePt * 25.4 / 72 * element.lineHeight);
+    const charactersPerLine = Math.max(1, width / Math.max(1, element.fontSizePt * 0.17));
+    const lines = Math.min(24, Math.floor(height / leading), Math.ceil(element.text.length / charactersPerLine));
+    const path = Array.from({ length: lines }, (_, index) => {
+      const remaining = element.text.length - index * charactersPerLine;
+      const length = Math.min(1, remaining / charactersPerLine) * width * (index % 5 === 4 ? 0.72 : 0.95);
+      return `M${padding} ${padding + (index + 0.7) * leading}h${length}`;
+    }).join(' ');
+    return <path data-text-preview="" d={path} fill="none" stroke={element.color} opacity={0.5}
+      stroke-width={Math.max(0.45, leading * 0.24)}/>;
   }
   if (element.type === 'image') {
     const fit = calculateImageFitting(0, 0, element.width, element.height, element.originalWidth || element.width,
@@ -63,8 +42,7 @@ const WorkspacePreview = memo(function WorkspacePreview({ element, state, scale,
     stroke={element.strokeColor} stroke-width={element.strokeWidthMm}/>;
   return <><rect width={element.width} height={element.height} fill="#eee" stroke="#777" stroke-width={0.3}/>
     <text x={2} y={5} font-size={3}>Table {element.rows} × {element.cols}</text></>;
-}, (before, after) => before.element === after.element && before.revision === after.revision &&
-  before.fontGeneration === after.fontGeneration && before.kernels === after.kernels && before.scale === after.scale);
+});
 
 export default function SpatialWorkspace({ state, onClose }: { state: ProjectState; onClose: () => void }) {
   const [zoom, setZoom] = useState(0.15), [columns, setColumns] = useState(4), [message, setMessage] = useState('');
@@ -116,7 +94,7 @@ export default function SpatialWorkspace({ state, onClose }: { state: ProjectSta
       <label>Columns<select aria-label="Workspace columns" value={columns} onChange={event => setColumns(Number(event.currentTarget.value))}>{[1,2,3,4,6,8].map(value => <option value={value}>{value}</option>)}</select></label>
       <button type="button" className="sm-btn" onClick={onClose}>Return to spread editor</button>
     </div>
-    <p>Drag artwork across pages or onto the pasteboard. Pasteboard items are saved but excluded from publication output. Double-click a page to edit it. Layout previews simplify tables, clipping and colour. Use the spread editor and exported proof for final inspection.</p>
+    <p>Drag artwork across pages or onto the pasteboard. Pasteboard items are saved but excluded from publication output. Double-click a page to edit it. Text appears as line previews. Use the spread editor and exported proof for final inspection.</p>
     {message && <p role="status">{message}</p>}
     <div className="spatial-scroll" ref={scroll} onScroll={updateViewport}>
       <svg ref={svg} width={grid.width * scale} height={grid.height * scale} viewBox={`0 0 ${grid.width} ${grid.height}`} onPointerMove={event => { pointer.current = { x: event.clientX, y: event.clientY }; if (drag) { const p = point(event); setDrag({ ...drag, dx: p.x - drag.x, dy: p.y - drag.y }); } }}
@@ -131,7 +109,7 @@ export default function SpatialWorkspace({ state, onClose }: { state: ProjectSta
         }}>
         {visibleCells.map(cell => {
           const master = resolveMaster(state.masterSpreads, cell.spread.masterSpreadId);
-          const inherited = (master?.elements || []).filter(element => !cell.spread.detachedMasterElementIds?.includes(element.id) && !cell.spread.elements.some(local => local.masterSourceId === element.id)).flatMap(element => { const page = masterTargetPage(master!.pages, cell.spread.pages, element.pageId); return page ? [instantiateMasterItem(element, page.id, text => publicationText(state, text, page.pageNumber))] : []; });
+          const inherited = (master?.elements || []).filter(element => !cell.spread.detachedMasterElementIds?.includes(element.id) && !cell.spread.elements.some(local => local.masterSourceId === element.id)).flatMap(element => { const page = masterTargetPage(master!.pages, cell.spread.pages, element.pageId); return page ? [instantiateMasterItem(element, page.id, text => text)] : []; });
           const order = (a: CanvasElement, b: CanvasElement) => (state.layers.find(layer => layer.id === a.layerId)?.order || 0) - (state.layers.find(layer => layer.id === b.layerId)?.order || 0) || a.zIndex - b.zIndex;
           const objects = [...inherited.sort(order), ...[...cell.spread.elements].sort(order)].filter(element => state.layers.find(layer => layer.id === element.layerId)?.visible !== false);
           return <g key={cell.spread.id} transform={`translate(${cell.x} ${cell.y})`}>
@@ -149,8 +127,7 @@ export default function SpatialWorkspace({ state, onClose }: { state: ProjectSta
                 setDrag({ id: element.id, ids, x: p.x, y: p.y, dx: 0, dy: 0, grabX: p.x - cell.x - pageIndex * state.settings.widthMm - element.x, grabY: p.y - cell.y - element.y });
               }}>
                 <rect width={element.width} height={element.height} fill="transparent" stroke={state.selectedElementIds.includes(element.id) ? 'var(--accent-cyan)' : 'none'} stroke-width={0.5}/>
-                <g pointer-events="none"><WorkspacePreview element={element} state={state} revision={revision}
-                  fontGeneration={fontManager.generation} kernels={layoutKernels} scale={scale}/></g>
+                <g pointer-events="none"><WorkspacePreview element={element}/></g>
               </g>;
             })}
           </g>;
