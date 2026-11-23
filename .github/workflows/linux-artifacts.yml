@@ -49,12 +49,12 @@ jobs:
       - name: Prepare AppImage helpers
         run: node scripts/prepare-bundler-tools.mjs
       - name: Build Linux packages
+        shell: bash
         run: node scripts/build-linux.mjs 2>&1 | tee linux-build.log
       - name: Test native file operations
         working-directory: src-tauri
         run: cargo test --locked
-      - name: Upload Linux packages to draft release
-        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+      - name: Package downloadable files
         shell: bash
         run: |
           set -euo pipefail
@@ -70,10 +70,16 @@ jobs:
           cp -- "${debs[0]}" "release-artifacts/Recto-Studio-$version-Linux-x64.deb"
           cp -- "${appimages[0]}" "release-artifacts/Recto-Studio-$version-Linux-x64.AppImage"
           (cd release-artifacts && sha256sum *.deb *.AppImage > SHA256SUMS-linux.txt)
-          tag="v$version"
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Upload Linux packages to draft release
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v$RELEASE_VERSION"
           if ! draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft'); then
             # Windows may have created the shared draft after our initial lookup.
-            if ! gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --title "Recto Studio $version" --notes-file RELEASE_NOTES.md; then
+            if ! gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --title "Recto Studio $RELEASE_VERSION" --notes-file RELEASE_NOTES.md; then
               echo 'Checking whether Windows created the draft concurrently.'
             fi
             draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')
@@ -93,6 +99,9 @@ jobs:
             linux-build.log
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/appimage/*.AppImage
+            release-artifacts/*.deb
+            release-artifacts/*.AppImage
+            release-artifacts/SHA256SUMS-linux.txt
       - name: Retain native cache after packaging failures
         if: failure() && steps.native-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
