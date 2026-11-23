@@ -65,9 +65,12 @@ const array = (validate: Validator): Validator => (value, path) => {
   if (!Array.isArray(value)) fail(path, 'expected a list');
   for (let index = 0; index < value.length; index++) validate(value[index], `${path}[${index}]`);
 };
-const object = (schema: Schema): Validator => (value, path) => {
-  const data = record(value, path);
-  for (const [key, validate] of Object.entries(schema)) validate(data[key], `${path}.${key}`);
+const object = (schema: Schema): Validator => {
+  const fields = Object.entries(schema);
+  return (value, path) => {
+    const data = record(value, path);
+    for (const [key, validate] of fields) validate(data[key], `${path}.${key}`);
+  };
 };
 const point = object({ x: number, y: number });
 const alignment = choice('left', 'center', 'right', 'justify');
@@ -109,18 +112,25 @@ const textFormatting = {
   bold: optional(boolean), italic: optional(boolean), underline: optional(boolean),
   fontFamily: optional(text), fontSizePt: optional(positive), color: optional(text),
 };
+const storyShape = object({
+  version: (v, p) => { if (v !== 1) fail(p, 'unsupported story version'); },
+  paragraphs: array(object({
+    id: optional(identifier), styleId: optional(identifier), sourceStyle: optional(text), conditionId: optional(identifier),
+    language: optional(text),
+    formatting: optional(object({
+      ...textFormatting, alignment: optional(alignment), lineHeight: optional(positive), letterSpacingPt: optional(number),
+      language: optional(choice('en-US', 'de', 'fr', 'ja', 'zh', 'ko')), cjkLineBreak: optional(boolean), hyphenate: optional(boolean),
+      widowLines: optional(count), orphanLines: optional(count), keepTogether: optional(boolean), keepWithNext: optional(boolean),
+    })),
+    runs: array(object({
+      text, characterStyleId: optional(identifier), ...textFormatting, noteId: optional(identifier), indexId: optional(identifier),
+      reference: optional(object({ targetElementId: identifier, targetParagraphId: optional(identifier), format: choice('page', 'title', 'caption') })),
+    })),
+  })),
+});
+
 const storyContent: Validator = (value, path) => {
-  object({ version: (v, p) => { if (v !== 1) fail(p, 'unsupported story version'); },
-    paragraphs: array(object({ id: optional(identifier), styleId: optional(identifier), sourceStyle: optional(text), conditionId: optional(identifier),
-      language: optional(text),
-      formatting: optional(object({ ...textFormatting, alignment: optional(alignment), lineHeight: optional(positive), letterSpacingPt: optional(number),
-        language: optional(choice('en-US', 'de', 'fr', 'ja', 'zh', 'ko')), cjkLineBreak: optional(boolean), hyphenate: optional(boolean),
-        widowLines: optional(count), orphanLines: optional(count), keepTogether: optional(boolean), keepWithNext: optional(boolean) })),
-      runs: array(object({ text, characterStyleId: optional(identifier), ...textFormatting,
-        noteId: optional(identifier), indexId: optional(identifier),
-        reference: optional(object({ targetElementId: identifier, targetParagraphId: optional(identifier), format: choice('page', 'title', 'caption') })),
-      })) })),
-  })(value, path);
+  storyShape(value, path);
   if (!(value as { paragraphs: unknown[] }).paragraphs.length) fail(path, 'a story requires at least one paragraph');
 };
 const elementSchemas: Record<string, Schema> = {
@@ -262,6 +272,28 @@ export function parseProject(json: string, defaults: ProjectState): ProjectState
 }
 
 export function validateProjectValue(value: unknown, defaults: ProjectState): ProjectState {
+  const validation = validateProjectSteps(value, defaults);
+  for (let step = validation.next(); ; step = validation.next()) {
+    if (step.done) return step.value;
+  }
+}
+
+/** File opens can pause between checks without publishing a partially validated document. */
+export async function validateProjectForOpen(value: unknown, defaults: ProjectState, signal?: AbortSignal): Promise<ProjectState> {
+  const validation = validateProjectSteps(value, defaults);
+  let deadline = performance.now() + 8;
+  signal?.throwIfAborted();
+  for (let step = validation.next(); ; step = validation.next()) {
+    if (step.done) return step.value;
+    if (performance.now() >= deadline) {
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
+      signal?.throwIfAborted();
+      deadline = performance.now() + 8;
+    }
+  }
+}
+
+function* validateProjectSteps(value: unknown, defaults: ProjectState): Generator<void, ProjectState, void> {
   const data = record(value, 'Project');
   const settings = record(data.settings, 'Project.settings');
   // Never turn a missing document or missing page dimensions into a default document.
@@ -272,7 +304,7 @@ export function validateProjectValue(value: unknown, defaults: ProjectState): Pr
     ...data,
     settings: { ...structuredClone(defaults.settings), ...settings },
   };
-  object({
+  const fields: Schema = {
     settings: object({
       title: text, widthMm: positive, heightMm: positive,
       preset: choice('A4', 'US-Letter', 'Book-Trade-6x9', 'Digest-5.5x8.5', 'Zine-A5', 'Custom'),
@@ -324,7 +356,22 @@ export function validateProjectValue(value: unknown, defaults: ProjectState): Pr
     activeTool: choice('select', 'text', 'frame', 'table', 'pen', 'pencil', 'shape-rect', 'shape-ellipse', 'shape-line', 'measure', 'hand', 'zoom'),
     zoom: positive, panX: number, panY: number, showGuides: boolean, showBleed: boolean,
     showBaselineGrid: boolean, snapToGuides: boolean, displayQuality: choice('fast', 'typical', 'high'),
-  })(migrated, 'Project');
+  };
+  const candidate: Record<string, unknown> = migrated;
+  for (const [key, validate] of Object.entries(fields)) {
+    const path = `Project.${key}`;
+    const field = candidate[key];
+    if (Array.isArray(field) && (key === 'spreads' || key === 'masterSpreads')) {
+      const validateSpread = key === 'spreads' ? spread : master;
+      for (let index = 0; index < field.length; index++) {
+        validateSpread(field[index], `${path}[${index}]`);
+        yield;
+      }
+    } else {
+      validate(field, path);
+      yield;
+    }
+  }
 
   const project = migrated as ProjectState;
   project.paragraphStyles = cascadeStyles(project.paragraphStyles);
@@ -335,6 +382,7 @@ export function validateProjectValue(value: unknown, defaults: ProjectState): Pr
   const spreadIds = new Set<string>();
   const elementIds = new Set<string>();
   for (const [index, current] of [...project.spreads, ...project.masterSpreads].entries()) {
+    yield;
     const location = `Project spreads/masters[${index}]`;
     if (spreadIds.has(current.id)) fail(location, 'duplicate spread ID');
     spreadIds.add(current.id);
@@ -356,6 +404,7 @@ export function validateProjectValue(value: unknown, defaults: ProjectState): Pr
   const frames = new Map(project.spreads.flatMap(s => s.elements).filter(e => e.type === 'text').map(e => [e.id, e]));
   const validatedPaths = new Set<string>();
   for (const frame of frames.values()) {
+    yield;
     if (!frame.storyContent && !frame.textContent) continue;
     for (const [pointer, reciprocal] of [['nextFrameId', 'prevFrameId'], ['prevFrameId', 'nextFrameId']] as const) {
       const id = frame[pointer];

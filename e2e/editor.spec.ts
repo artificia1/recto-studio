@@ -6,40 +6,89 @@ import { fontCollectionFixture } from '../tests/fixtures/fontCollection';
 import type { ProjectState, TextElement } from '../src/types';
 const runtimeErrors = new WeakMap<Page, string[]>();
 
-test('panning and zooming reuse preflight while edits refresh it', async ({ page }) => {
+test('panning and zooming update the viewport without refreshing the document', async ({ page }) => {
+  await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.abort());
   await page.goto('/');
   await importProject(page);
   await expect(page.getByText('Preflight: No errors')).toBeVisible();
+  await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
   const counts = await page.evaluate(async () => {
     const app = (window as Window & { recto?: { stateManager: {
       runPreflightCheck(): unknown;
+      getState(): ProjectState;
       setZoomAndPan(zoom: number, x: number, y: number): void;
       updateElement(id: string, update: Partial<TextElement>): void;
     } } }).recto;
     if (!app) throw new Error('The editor is not initialized.');
     const { stateManager } = app;
     const original = stateManager.runPreflightCheck;
+    const settings = stateManager.getState().settings;
+    const title = settings.title;
     let checks = 0;
+    let titleReads = 0;
     stateManager.runPreflightCheck = () => {
       checks++;
       return original.call(stateManager);
     };
     const nextFrame = () => new Promise(resolve => requestAnimationFrame(resolve));
+    Object.defineProperty(settings, 'title', {
+      configurable: true, enumerable: true, get: () => { titleReads++; return title; },
+    });
     try {
       for (let step = 1; step <= 4; step++) {
         stateManager.setZoomAndPan(1 + step / 10, step, 0);
         await nextFrame();
       }
       const viewport = checks;
+      const viewportTitleReads = titleReads;
+      Object.defineProperty(settings, 'title', { value: title, writable: true, enumerable: true, configurable: true });
       stateManager.updateElement('text-qa', { text: 'A straight quote: "test".' });
       await nextFrame();
-      return { viewport, edit: checks - viewport };
+      return { viewport, viewportTitleReads, edit: checks - viewport };
     } finally {
+      Object.defineProperty(settings, 'title', { value: title, writable: true, enumerable: true, configurable: true });
       stateManager.runPreflightCheck = original;
     }
   });
-  expect(counts).toEqual({ viewport: 0, edit: 1 });
+  expect(counts).toEqual({ viewport: 0, viewportTitleReads: 0, edit: 1 });
   await expect(page.getByText('Preflight: 1 to review')).toBeVisible();
+  const zoom = page.getByTitle('Canvas Zoom', { exact: true });
+  await expect(zoom.locator('option:checked')).toHaveText('140%');
+  await expect(page.locator('.mobile-zoom-label')).toHaveText('140%');
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await zoom.selectOption('fit');
+    await expect(zoom.locator('option:checked')).toHaveText('85%');
+  }
+});
+
+test('large-document preflight reports changes on the last spread', async ({ page }) => {
+  const project = projectFixture();
+  const spread = project.spreads[0];
+  const frame = spread.elements[0];
+  project.spreads = Array.from({ length: 48 }, (_, index) => {
+    const id = `audit-page-${index}`;
+    return { ...spread, id: `audit-spread-${index}`, spreadIndex: index,
+      pages: [{ ...spread.pages[0], id, pageNumber: index + 1 }],
+      elements: [{ ...frame, id: `audit-frame-${index}`, pageId: id }] };
+  });
+  await page.goto('/');
+  await importProject(page, project);
+  const preflight = page.getByRole('button', { name: /^Preflight: / });
+  await expect(preflight).toHaveText('Preflight: No errors');
+
+  const update = (text: string) => page.evaluate(text => {
+    const { stateManager } = (window as Window & { recto?: { stateManager: {
+      setActiveSpread(index: number): void;
+      updateElement(id: string, update: Partial<TextElement>): void;
+    } } }).recto!;
+    stateManager.setActiveSpread(47);
+    stateManager.updateElement('audit-frame-47', { text });
+    stateManager.setActiveSpread(0);
+  }, text);
+  await update('A "straight quote".');
+  await expect(preflight).toHaveText('Preflight: 1 to review');
+  await update('A “curly quote”.');
+  await expect(preflight).toHaveText('Preflight: No errors');
 });
 
 test('reflows once when two document fonts finish loading together after importing a project', async ({ page }) => {
@@ -693,8 +742,8 @@ function largeAutosaveProject() {
   })) };
 }
 
-for (const allowWorker of [true, false]) {
-  test(`restores a large autosave without localStorage ${allowWorker ? 'using a worker' : 'when workers are unavailable'}`, async ({ page }) => {
+for (const mode of ['using a worker', 'when workers are unavailable', 'from staged spreads'] as const) {
+  test(`restores a large autosave without localStorage ${mode}`, async ({ page }) => {
     await page.addInitScript(allow => {
       Storage.prototype.setItem = () => { throw new DOMException('Storage quota exceeded', 'QuotaExceededError'); };
       const NativeWorker = window.Worker;
@@ -706,20 +755,40 @@ for (const allowWorker of [true, false]) {
             throw new DOMException('Workers unavailable', 'NotSupportedError');
           }
           super(url, options);
-          if (autosave) this.addEventListener('message', event => {
-            document.documentElement.dataset.autosaveWorker = event.data === true ? 'saved' : 'failed';
-          });
+          if (autosave) {
+            const post = this.postMessage.bind(this);
+            this.postMessage = (message: { json?: unknown }) => {
+              document.documentElement.dataset.autosavePayload = Array.isArray(message.json) ? 'staged' : 'single';
+              post(message);
+            };
+            this.addEventListener('message', event => {
+              document.documentElement.dataset.autosaveWorker = event.data === true ? 'saved' : 'failed';
+            });
+          }
         }
       };
-    }, allowWorker);
+    }, mode !== 'when workers are unavailable');
     await page.goto('/');
-    await importProject(page, largeAutosaveProject());
+    const project = largeAutosaveProject();
+    if (mode === 'from staged spreads') {
+      const first = project.spreads[0];
+      project.spreads = [first, ...Array.from({ length: 23 }, (_, index) => ({
+        id: `autosave-spread-${index}`, spreadIndex: index + 1,
+        pages: [{ id: `autosave-page-${index}`, pageNumber: index + 2, side: 'single' }],
+        elements: [],
+      }))];
+    }
+    await importProject(page, project);
     await page.locator('.inspector-panel textarea').first().fill('Recovered large database backup');
-    await expect(page.locator('html')).toHaveAttribute('data-autosave-worker', allowWorker ? 'saved' : 'blocked');
+    await expect(page.locator('html')).toHaveAttribute('data-autosave-worker', mode === 'when workers are unavailable' ? 'blocked' : 'saved');
+    if (mode === 'from staged spreads') await expect(page.locator('html')).toHaveAttribute('data-autosave-payload', 'staged');
     await expect(page.locator('.status-left [role="status"]')).toHaveText('Saved locally');
     await page.reload();
     await expect(page.locator('.inspector-panel textarea').first()).toHaveValue('Recovered large database backup');
     expect(await page.evaluate(() => localStorage.getItem('recto_project_autosave'))).toBeNull();
+    const restoredSpreadCount = await page.evaluate(() =>
+      (window as Window & { recto?: { stateManager: { getState(): ProjectState } } }).recto!.stateManager.getState().spreads.length);
+    expect(restoredSpreadCount).toBe(project.spreads.length);
   });
 }
 

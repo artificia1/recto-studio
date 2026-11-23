@@ -7,6 +7,7 @@ import { documentUsesFontFamilies, visitDocumentFonts } from '../engine/document
 import { useProjectState } from '../hooks/useProjectState';
 import { TopBar } from './TopBar';
 import { Toolbar } from './Toolbar';
+import { MobileCanvasZoom } from './CanvasZoomControls';
 import { BookletImpositionModal, CoverSpineModal, SpreadOverviewDialog } from './LazyPrintDialogs';
 import { SpreadCanvas } from '../canvas';
 import { stateManager } from '../state';
@@ -409,33 +410,7 @@ export function App() {
           Inspector
         </button>
 
-        <div className="mobile-canvas-zoom-pill">
-          <button
-            className="mobile-zoom-btn"
-            onClick={() => stateManager.setZoom(Math.max(0.2, Math.round((state.zoom - 0.15) * 100) / 100))}
-            title="Zoom Out"
-            aria-label="Zoom Out"
-          >
-            −
-          </button>
-          <button
-            className="mobile-zoom-btn mobile-zoom-fit-btn"
-            onClick={() => stateManager.setZoomAndPan(0.85, 0, 0)}
-            title="Fit Spread to Screen"
-            aria-label="Fit Spread"
-          >
-            Fit
-          </button>
-          <span className="mobile-zoom-label">{Math.round(state.zoom * 100)}%</span>
-          <button
-            className="mobile-zoom-btn"
-            onClick={() => stateManager.setZoom(Math.min(3.0, Math.round((state.zoom + 0.15) * 100) / 100))}
-            title="Zoom In"
-            aria-label="Zoom In"
-          >
-            +
-          </button>
-        </div>
+        <MobileCanvasZoom />
 
         {/* Floating Touch Action Pill: only auto on touch devices, or when manually enabled in settings */}
         {((typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0) || state.showQuickActionsToolbar) && state.selectedElementId) && (

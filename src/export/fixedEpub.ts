@@ -9,7 +9,7 @@ import { explicitCmyk, rgbColor } from '../engine/inkColors';
 import { resolveMaster } from '../engine/masterInheritance';
 import { masterTargetPage } from '../engine/pageLabels';
 import { publicationPreflight } from '../engine/publicationPreflight';
-import { createPublicationTextResolver, layoutFrameNotes, publicationId, publicationSnapshot } from '../engine/publicationReferences';
+import { createFrameNoteLayoutLookup, createPublicationTextResolver, publicationId, publicationSnapshot } from '../engine/publicationReferences';
 import { publicationWrapObjects, wrappedPlainContent } from '../engine/publicationWrap';
 import { layoutStory, resolveParagraphStyle } from '../engine/storyLayout';
 import { bezierNodesToSvgPath, shapeToPath } from '../engine/vectorPath';
@@ -47,13 +47,13 @@ function unsupported(element: CanvasElement): string | undefined {
   if (element.type === 'image' && (!element.src || (!element.decorative && !element.altText?.trim()))) return 'images missing artwork or descriptions';
 }
 
-function positionedText(state: ProjectState, spread: Spread, page: Page, element: TextElement, resolveText: ReturnType<typeof createPublicationTextResolver>) {
+function positionedText(state: ProjectState, spread: Spread, page: Page, element: TextElement, resolveText: ReturnType<typeof createPublicationTextResolver>, layoutNotes: ReturnType<typeof createFrameNoteLayoutLookup>) {
   const original = element.textContent || element.storyContent || wrappedPlainContent(element, element.text);
   const content = { ...original, paragraphs: original.paragraphs.map(paragraph => ({
     ...paragraph, runs: paragraph.runs.map(run => /\{\{|\{xref:|\{cond:/.test(run.text)
       ? { ...run, text: resolveText(run.text, page.pageNumber) } : run),
   })) };
-  const notes = layoutFrameNotes(state, element);
+  const notes = layoutNotes(element);
   const lines = layoutStory(content, element, state.paragraphStyles, state.characterStyles, undefined, notes.height,
     { baselineGrid: state.settings.baselineGrid, obstacles: publicationWrapObjects(state, spread) }).lines;
   const paragraphs = content.paragraphs.map(() => [] as string[]);
@@ -107,6 +107,7 @@ function positionedTable(element: TableElement, layout: TableFrameLayout, positi
 export function generateFixedEpubPackage(source: ProjectState) {
   const state = publicationSnapshot(source);
   const resolveText = createPublicationTextResolver(state);
+  const layoutNotes = createFrameNoteLayoutLookup(state);
   const title = escapeXml(state.settings.title || 'Recto Publication');
   const language = state.settings.language || 'en';
   if (!/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(language)) throw new Error('Choose a valid publication language.');
@@ -150,7 +151,7 @@ export function generateFixedEpubPackage(source: ProjectState) {
       const caption = captions.get(element.id);
       const description = caption ? ` aria-describedby="${publicationId('frame', caption)}"` : '';
       const position = `position:absolute;left:${element.x}mm;top:${element.y}mm;width:${element.width}mm;height:${element.height}mm;opacity:${element.opacity};transform:rotate(${element.rotation}deg);z-index:${stacking.get(element)}`;
-      if (element.type === 'text') return `<div id="${publicationId('frame', element.id)}"${element.decorative ? ' aria-hidden="true"' : ''} style="${position};overflow:hidden;background:${color(element.backgroundColor)}">${positionedText(state, spread, page, element, resolveText)}</div>`;
+      if (element.type === 'text') return `<div id="${publicationId('frame', element.id)}"${element.decorative ? ' aria-hidden="true"' : ''} style="${position};overflow:hidden;background:${color(element.backgroundColor)}">${positionedText(state, spread, page, element, resolveText, layoutNotes)}</div>`;
       if (element.type === 'image') {
         if (!element.src) return '';
         let path = assets.get(element.src);

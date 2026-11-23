@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StateManager } from '../src/state/stateManager';
-import { parseProject, ProjectValidationError } from '../src/state/projectValidation';
+import { parseProject, ProjectValidationError, validateProjectForOpen } from '../src/state/projectValidation';
 import { RectoDB } from '../src/state/persistence';
 import type { ProjectState, TextElement } from '../src/types';
 import { TEMPLATES } from '../src/templates';
@@ -147,6 +147,40 @@ describe('Project import validation and legacy defaults', () => {
     await expect(manager.importProjectFile(file)).rejects.toThrow(ProjectValidationError);
     expect(manager.getState()).toEqual(original);
     await expect(RectoDB.importProjectFile(file, original)).rejects.toThrow(ProjectValidationError);
+  });
+
+  it('stops validation between batches when the open is canceled', async () => {
+    vi.useFakeTimers();
+    let now = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now += 9);
+    try {
+      const controller = new AbortController();
+      const opening = validateProjectForOpen(structuredClone(original), original, controller.signal);
+      const rejected = expect(opening).rejects.toMatchObject({ name: 'AbortError' });
+      expect(vi.getTimerCount()).toBe(1);
+      controller.abort();
+      await vi.runAllTimersAsync();
+      await rejected;
+    } finally {
+      clock.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels an older file read when a newer open starts', async () => {
+    const draft = structuredClone(original);
+    draft.settings.title = 'Newer project';
+    const reader = vi.spyOn(RectoDB, 'importProjectFile')
+      .mockImplementationOnce((_file, _defaults, signal) => new Promise((_, reject) => {
+        signal!.addEventListener('abort', () => reject(signal!.reason), { once: true });
+      }))
+      .mockResolvedValueOnce(draft);
+    const old = manager.importProjectFile(new File(['{}'], 'old.recto'));
+    const rejected = expect(old).rejects.toThrow('document changed while this file was opening');
+    await manager.importProjectFile(new File(['{}'], 'new.recto'));
+    await rejected;
+    expect(reader.mock.calls[0][2]?.aborted).toBe(true);
+    expect(manager.getState().settings.title).toBe('Newer project');
   });
 
   it('keeps intervening edits when a large project is staged across task boundaries', async () => {

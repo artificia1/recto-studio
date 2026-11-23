@@ -8,7 +8,7 @@ import { RectoDB } from './persistence';
 self.onmessage = async (event: MessageEvent<AutosaveJob>) => {
   try {
     const { json, updatedAt, checkpoint } = event.data;
-    const state = JSON.parse(json) as ProjectState;
+    const state = JSON.parse(typeof json === 'string' ? json : json.join('')) as ProjectState;
     if (checkpoint) {
       await saveRecoveryCheckpoint(checkpoint.id, state, updatedAt, checkpoint.fileName, checkpoint.recoverable);
     } else {

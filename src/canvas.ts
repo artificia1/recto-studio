@@ -6,7 +6,7 @@ import { formatOpenTypeText, segmentTextWithGrep } from './engine/legacyTypograp
 export { formatOpenTypeText, segmentTextWithGrep, type TextRunSegment } from './engine/legacyTypography';
 import { publicationWrapObjects, wrappedPlainContent } from './engine/publicationWrap';
 export { calculateImageFitting, type ImageFitTransform } from './engine/imageFitting';
-import { createPublicationTextResolver, layoutFrameNotes } from './engine/publicationReferences';
+import { createFrameNoteLayoutLookup, createPublicationTextResolver } from './engine/publicationReferences';
 import { reviewPinPosition } from './engine/reviewPins';
 import { calculateSpreadGeometry, getSpreadScreenOrigin, MM_TO_PX, screenToSpreadMm } from './engine/viewport';
 import { bindCanvasInput, type CanvasMouseDown, type CanvasMouseMove, type CanvasMouseUp } from './engine/interaction/canvasInput';
@@ -57,6 +57,31 @@ interface CanvasTextLayout {
   dropCapChar: string;
   dropCapWidth: number;
   dropCapFontSize: number;
+}
+
+type FormattedStoryLayout = ReturnType<typeof layoutStory>;
+const DRAG_TEXT_PIXEL_BUDGET = 2_000_000;
+
+function drawFormattedStory(ctx: CanvasRenderingContext2D, layout: FormattedStoryLayout,
+  x: number, y: number, pxPerMm: number, zoom: number) {
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  let previousStyle: typeof layout.lines[number]['segments'][number]['style'] | undefined;
+  for (const line of layout.lines) for (const segment of line.segments) {
+    const { style } = segment;
+    if (style !== previousStyle) {
+      ctx.font = canvasRunFont(style, pxPerMm);
+      ctx.fillStyle = style.color;
+      ctx.letterSpacing = `${style.letterSpacingPt * 25.4 / 72 * pxPerMm}px`;
+      previousStyle = style;
+    }
+    const left = x + segment.x * pxPerMm;
+    const baseline = y + (line.y + style.fontSizePt * 25.4 / 72) * pxPerMm;
+    if (segment.text.trim()) ctx.fillText(segment.text, left, baseline);
+    if (style.underline) {
+      ctx.fillRect(left, baseline + zoom, segment.width * pxPerMm, Math.max(0.6, zoom));
+    }
+  }
 }
 
 const LEADING_HANG_CHARS = new Set(['“', '‘', '"', "'", '«', '‹', '(', '[']);
@@ -221,6 +246,53 @@ export class SpreadCanvas {
   ];
   private dragPreview = new Map<string, CanvasElement>();
   private dragDocument?: { state: ProjectState; spread: Spread; revision: number; tool: ProjectState['activeTool'] };
+  private dragTextBitmaps = new Map<FormattedStoryLayout, HTMLCanvasElement>();
+  private dragTextScale = 0;
+  private dragTextDpr = 0;
+  private dragTextPixels = 0;
+
+  private clearDragTextBitmaps() {
+    for (const bitmap of this.dragTextBitmaps.values()) bitmap.width = bitmap.height = 0;
+    this.dragTextBitmaps.clear();
+    this.dragTextPixels = 0;
+  }
+
+  private drawDragText(ctx: CanvasRenderingContext2D, layout: FormattedStoryLayout,
+    x: number, y: number, width: number, height: number, bleed: number, pxPerMm: number, zoom: number) {
+    const scale = ctx.getTransform().a;
+    if (scale <= 0) return false;
+    if (scale !== this.dragTextDpr || pxPerMm !== this.dragTextScale) {
+      this.clearDragTextBitmaps();
+      this.dragTextDpr = scale;
+      this.dragTextScale = pxPerMm;
+    }
+    let bitmap = this.dragTextBitmaps.get(layout);
+    if (!bitmap) {
+      const w = Math.ceil((width + bleed * 2) * scale);
+      const h = Math.ceil(height * scale);
+      const pixels = w * h;
+      if (w < 1 || h < 1 || w > 4096 || h > 4096 || this.dragTextPixels + pixels > DRAG_TEXT_PIXEL_BUDGET) return false;
+      bitmap = document.createElement('canvas');
+      bitmap.width = w;
+      bitmap.height = h;
+      const target = bitmap.getContext('2d');
+      if (!target) return false;
+      target.scale(scale, scale);
+      target.direction = ctx.direction === 'inherit'
+        ? getComputedStyle(this.canvas).direction as 'ltr' | 'rtl' : ctx.direction;
+      if (target.fontVariantCaps !== undefined) target.fontVariantCaps = ctx.fontVariantCaps;
+      drawFormattedStory(target, layout, bleed, 0, pxPerMm, zoom);
+      this.dragTextBitmaps.set(layout, bitmap);
+      this.dragTextPixels += pixels;
+    }
+    ctx.drawImage(bitmap, x - bleed, y, bitmap.width / scale, bitmap.height / scale);
+    return true;
+  }
+
+  private beginDrag(state: ProjectState, spread = stateManager.getActiveSpread()) {
+    this.dragDocument = { state, spread, revision: stateManager.getDocumentRevision(), tool: state.activeTool };
+    stateManager.autosave.setCanvasDragActive(true);
+  }
 
   private cancelDrag() {
     this.isDragging = false;
@@ -228,6 +300,8 @@ export class SpreadCanvas {
     this.activeHandle = null;
     this.activeNodeDrag = null;
     this.dragPreview.clear();
+    this.clearDragTextBitmaps();
+    if (this.dragDocument) stateManager.autosave.setCanvasDragActive(false);
     this.dragDocument = undefined;
     this.snapDuringDrag = undefined;
     this.dragInitialPositions.clear();
@@ -702,7 +776,7 @@ export class SpreadCanvas {
         const handle = this.hitTestHandles(screenX, screenY, state);
         if (handle) {
           this.isResizing = true;
-          this.dragDocument = { state, spread, revision: stateManager.getDocumentRevision(), tool: state.activeTool };
+          this.beginDrag(state, spread);
           this.activeHandle = handle;
           this.dragStartX = screenX;
           this.dragStartY = screenY;
@@ -758,7 +832,7 @@ export class SpreadCanvas {
   private prepareGroupDrag(screenX: number, screenY: number, state: ProjectState) {
     this.cancelDrag();
     this.isDragging = true;
-    this.dragDocument = { state, spread: stateManager.getActiveSpread(), revision: stateManager.getDocumentRevision(), tool: state.activeTool };
+    this.beginDrag(state);
     this.dragStartX = screenX;
     this.dragStartY = screenY;
     const spread = stateManager.getActiveSpread();
@@ -1651,6 +1725,7 @@ export class SpreadCanvas {
     let hitOrder: CanvasElement[] | undefined;
     return {
       state, spread, revision, layerMap, layerOf, pageIndexes, elements, master, inherited, artwork, paragraphStyles,
+      layoutNotes: createFrameNoteLayoutLookup(state, 32),
       adjustedImages: artwork.reduce((count, element) => count + Number(element.type === 'image' && Boolean(element.adjustments)), 0),
       hitOrder: () => hitOrder ??= spread.elements.filter(element => visible(element) && !layerOf(element)?.locked)
         .sort((a, b) => paintOrder(b, a)),
@@ -1766,7 +1841,7 @@ export class SpreadCanvas {
   private startNodeDrag(path: VectorPathElement, nodeIndex: number, part: NonNullable<SpreadCanvas['activeNodeDrag']>['part'], startDragX: number, startDragY: number) {
     this.cancelDrag();
     const state = stateManager.getState();
-    this.dragDocument = { state, spread: stateManager.getActiveSpread(), revision: stateManager.getDocumentRevision(), tool: state.activeTool };
+    this.beginDrag(state);
     this.activeNodeDrag = { path, nodeIndex, part, startDragX, startDragY };
   }
 
@@ -2573,6 +2648,8 @@ export class SpreadCanvas {
     const revision = `${stateManager.getDocumentRevision()}:${fontManager.generation}`;
     if (revision !== this.formattedLayoutRevision || layoutKernels !== this.formattedLayoutKernels) {
       this.formattedLayouts.clear();
+      this.clearDragTextBitmaps();
+      this.spreadScene = undefined;
       this.tableThreads = undefined;
       this.tableLayouts = createContentTableLayoutLookup();
       this.formattedLayoutRevision = revision;
@@ -2652,6 +2729,7 @@ export class SpreadCanvas {
       const elScreenY = origin.y + (el.y * pxPerMm);
       const elScreenW = el.width * pxPerMm;
       const elScreenH = el.height * pxPerMm;
+      const isSelected = selected.has(el.id);
       if (!proof && !state.previewMode && el.type === 'image') {
         const shadow = el.shadow;
         const reach = shadow ? ((shadow.blurMm || 3) * 3 +
@@ -2660,7 +2738,12 @@ export class SpreadCanvas {
         if (elScreenX + elScreenW < -padding || elScreenY + elScreenH < -padding ||
           elScreenX > canvasW + padding || elScreenY > canvasH + padding) continue;
       }
-      const isSelected = selected.has(el.id);
+      if (!proof && !state.previewMode && el.type === 'text' && !isSelected && !el.shadow) {
+        // Text and paragraph decorations are clipped to the frame. Allow room for the border and overset port.
+        const padding = 32 + (el.borderWidthMm || 0) * pxPerMm;
+        if (elScreenX + elScreenW < -padding || elScreenY + elScreenH < -padding ||
+          elScreenX > canvasW + padding || elScreenY > canvasH + padding) continue;
+      }
 
       ctx.save();
       const opacity = this.opacityPreview;
@@ -2914,7 +2997,7 @@ export class SpreadCanvas {
         const fnFontSizePx = (fnFontSizePt * (96 / 72)) * state.zoom;
         const fnLineSpacingPx = fnFontSizePx * 1.35;
         const fnRuleGapPx = 6 * state.zoom;
-        const noteLayout = layoutFrameNotes(original, layoutFrame);
+        const noteLayout = scene.layoutNotes(layoutFrame);
         const totalFootnoteHeightPx = noteLayout.height * pxPerMm;
 
         let isOverflowing = false;
@@ -2941,22 +3024,11 @@ export class SpreadCanvas {
           if (cached?.layout !== layout && (cached || this.formattedLayouts.size < 64)) {
             this.formattedLayouts.set(layoutFrame, { content: flowContent, source: text.textContent ? undefined : processedText, reserve: noteLayout.height, layout });
           }
-          ctx.textAlign = 'left';
-          ctx.textBaseline = 'alphabetic';
-          let previousStyle: typeof layout.lines[number]['segments'][number]['style'] | undefined;
-          for (const line of layout.lines) for (const segment of line.segments) {
-            if (segment.style !== previousStyle) {
-              ctx.font = canvasRunFont(segment.style, pxPerMm);
-              ctx.fillStyle = segment.style.color;
-              ctx.letterSpacing = `${segment.style.letterSpacingPt * 25.4 / 72 * pxPerMm}px`;
-              previousStyle = segment.style;
-            }
-            const x = elScreenX + segment.x * pxPerMm;
-            const y = elScreenY + (line.y + segment.style.fontSizePt * 25.4 / 72) * pxPerMm;
-            if (segment.text.trim()) ctx.fillText(segment.text, x, y);
-            if (segment.style.underline) {
-              ctx.fillRect(x, y + state.zoom, segment.width * pxPerMm, Math.max(0.6, state.zoom));
-            }
+          const canReuseText = !proof && !state.previewMode && this.isDragging && layout.lines.length >= 8 &&
+            !text.shadow && ctx.globalAlpha === 1 && ctx.globalCompositeOperation === 'source-over';
+          if (!canReuseText || !this.drawDragText(ctx, layout, elScreenX, elScreenY,
+            elScreenW, elScreenH, clipBleed, pxPerMm, state.zoom)) {
+            drawFormattedStory(ctx, layout, elScreenX, elScreenY, pxPerMm, state.zoom);
           }
           isOverflowing = layout.overset;
         } else {

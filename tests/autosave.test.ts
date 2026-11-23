@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AUTOSAVE_KEY } from '../src/state/autosave';
+import { AUTOSAVE_KEY, Autosave } from '../src/state/autosave';
+import type { AutosaveJob } from '../src/state/autosaveWorkerClient';
 import { RectoDB } from '../src/state/persistence';
 import { StateManager } from '../src/state/stateManager';
 
@@ -43,6 +44,119 @@ describe('Autosave scheduling and recovery', () => {
     manager.selectElements([]);
     await vi.advanceTimersByTimeAsync(1000);
     expect(RectoDB.saveProject).not.toHaveBeenCalled();
+  });
+
+  it('defers an already scheduled save during a canvas drag and writes after release', async () => {
+    const manager = new StateManager();
+    manager.updateSettings({ title: 'Before the drag' });
+    manager.autosave.setCanvasDragActive(true);
+    await vi.advanceTimersByTimeAsync(800);
+    expect(RectoDB.saveProject).not.toHaveBeenCalled();
+
+    manager.autosave.setCanvasDragActive(false);
+    manager.updateSettings({ title: 'Released' });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(vi.mocked(RectoDB.saveProject).mock.lastCall?.[0].settings.title).toBe('Released');
+  });
+
+  it('bounds drag deferral and still flushes immediately when requested', async () => {
+    const manager = new StateManager();
+    manager.autosave.setCanvasDragActive(true);
+    manager.updateSettings({ title: 'Wait for release' });
+    await vi.advanceTimersByTimeAsync(2499);
+    expect(RectoDB.saveProject).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(RectoDB.saveProject).toHaveBeenCalledTimes(1);
+
+    manager.updateSettings({ title: 'Leaving the editor' });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(RectoDB.saveProject).toHaveBeenCalledTimes(1);
+    await manager.autosave.flush();
+    expect(JSON.parse(storage.get(AUTOSAVE_KEY)!).settings.title).toBe('Leaving the editor');
+    expect(vi.mocked(RectoDB.saveProject).mock.lastCall?.[0].settings.title).toBe('Leaving the editor');
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(RectoDB.saveProject).toHaveBeenCalledTimes(2);
+  });
+
+  async function prepareBookSave() {
+    await import('../src/state/autosaveWorkerClient');
+    const state = structuredClone(new StateManager().getState());
+    const spread = state.spreads[0];
+    state.spreads = Array.from({ length: 24 }, (_, index) => ({ ...spread, id: `spread-${index}` }));
+    const jobs: { payload: AutosaveJob; complete(saved: boolean): void }[] = [];
+    vi.stubGlobal('Worker', class {
+      onmessage?: (event: { data: boolean }) => void;
+      terminate() {}
+      postMessage(payload: AutosaveJob) {
+        jobs.push({ payload, complete: data => this.onmessage?.({ data }) });
+      }
+    });
+    let layout = 0;
+    const autosave = new Autosave(() => state, () => layout);
+    // Force the staged serializer to yield before moving to the next spread.
+    let time = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => time += 9);
+    return { state, autosave, jobs, refreshLayout: () => { layout++; } };
+  }
+
+  it('discards a partial snapshot when edits or font layout change during capture', async () => {
+    const { state, autosave, jobs, refreshLayout } = await prepareBookSave();
+    autosave.schedule();
+    await vi.advanceTimersByTimeAsync(502);
+    expect(jobs).toHaveLength(0);
+    state.settings.title = 'Latest manuscript';
+    state.spreads[0].id = 'revised-spread';
+    autosave.schedule();
+    await vi.advanceTimersByTimeAsync(5);
+    state.spreads[1].id = 'recomposed-spread';
+    refreshLayout();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(jobs).toHaveLength(1);
+    const { json } = jobs[0].payload;
+    expect(Array.isArray(json)).toBe(true);
+    expect(JSON.parse(Array.isArray(json) ? json.join('') : json)).toEqual(JSON.parse(JSON.stringify(state)));
+    jobs[0].complete(true);
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  it('flushes immediately during staged capture and ignores the abandoned snapshot', async () => {
+    const { state, autosave, jobs } = await prepareBookSave();
+    autosave.schedule();
+    await vi.advanceTimersByTimeAsync(503);
+    expect(jobs).toHaveLength(0);
+    state.settings.title = 'Closing document';
+    autosave.schedule();
+    await autosave.flush();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(jobs).toHaveLength(0);
+    expect(JSON.parse(storage.get(AUTOSAVE_KEY)!)).toEqual(JSON.parse(JSON.stringify(state)));
+    expect(RectoDB.saveProject).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to storing the staged snapshot when its worker fails', async () => {
+    const { state, autosave, jobs } = await prepareBookSave();
+    autosave.schedule();
+    await vi.advanceTimersByTimeAsync(650);
+    expect(jobs).toHaveLength(1);
+    jobs[0].complete(false);
+    await vi.advanceTimersByTimeAsync(0);
+    const saved = JSON.parse(JSON.stringify(state));
+    expect(JSON.parse(storage.get(AUTOSAVE_KEY)!)).toEqual(saved);
+    expect(vi.mocked(RectoDB.saveProject).mock.lastCall?.[0]).toEqual(saved);
+  });
+
+  it('honors the save deadline even when an edit invalidates staging', async () => {
+    const { state, autosave, jobs } = await prepareBookSave();
+    autosave.schedule();
+    await vi.advanceTimersByTimeAsync(503);
+    expect(jobs).toHaveLength(0);
+
+    vi.setSystemTime(Date.now() + 2100);
+    state.settings.title = 'Edits at the save deadline';
+    autosave.schedule();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(jobs).toHaveLength(0);
+    expect(JSON.parse(storage.get(AUTOSAVE_KEY)!).settings.title).toBe(state.settings.title);
   });
 
   it('flushes pending edits immediately and preserves undo/redo saves', async () => {

@@ -6,6 +6,7 @@ import type { SaveStatus } from '../state/autosave';
 import { version } from '../../package.json';
 import { fontManager } from '../fontManager';
 import { layoutKernels, warmLayout } from '../engine/layoutRuntime';
+import { scanEditorPreflight } from '../engine/editorPreflight';
 
 const PreflightDrawer = lazy(() => import('./PreflightDrawer'));
 
@@ -40,16 +41,37 @@ export function StatusBar({ state }: StatusBarProps) {
   const pages = currentSpread?.pages.map(page => page.pageNumber) ?? [];
   const pagesDesc = pages.length > 1 ? `Pages ${pages.join('–')}` : pages.length === 1 ? `Page ${pages[0]}` : 'Spread';
 
-  // Coalesce large-document audits after the editor has painted the change.
+  // Coalesce edits, then give the editor a chance to paint between audit batches.
   const deferAudit = state.spreads.length >= 24;
-  const revision = useMemo(() => ({}),
-    [stateManager.getDocumentRevision(), fontGeneration, layoutReady]);
+  const documentRevision = stateManager.getDocumentRevision();
+  const revision = useMemo(() => ({ documentRevision, fontGeneration, layoutReady }),
+    [documentRevision, fontGeneration, layoutReady]);
   const [audit, setAudit] = useState<{ revision: object; issues: ReturnType<typeof stateManager.runPreflightCheck> }>();
   const immediate = useMemo(() => deferAudit || !layoutReady ? undefined : stateManager.runPreflightCheck(), [revision, deferAudit]);
   useEffect(() => {
-    if (!deferAudit || !layoutReady) return;
-    const timer = setTimeout(() => setAudit({ revision, issues: stateManager.runPreflightCheck() }), 120);
-    return () => clearTimeout(timer);
+    if (!deferAudit || !revision.layoutReady) return;
+    const scan = scanEditorPreflight(state);
+    const runBatch = () => {
+      if (stateManager.getDocumentRevision() !== revision.documentRevision ||
+          fontManager.generation !== revision.fontGeneration) {
+        scan.return([]);
+        return;
+      }
+      const deadline = performance.now() + 5;
+      do {
+        const step = scan.next();
+        if (step.done) {
+          setAudit({ revision, issues: step.value });
+          return;
+        }
+      } while (performance.now() < deadline);
+      timer = setTimeout(runBatch, 0);
+    };
+    let timer = setTimeout(runBatch, 120);
+    return () => {
+      clearTimeout(timer);
+      scan.return([]);
+    };
   }, [revision, deferAudit]);
   const issues = immediate ?? (audit?.revision === revision ? audit.issues : undefined);
   const issueCount = issues?.length ?? 0;

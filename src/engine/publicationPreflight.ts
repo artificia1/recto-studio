@@ -1,11 +1,21 @@
 import type { CanvasElement, PreflightIssue, ProjectState, StoryRun } from '../types';
-import { layoutFrameNotes, publicationHeadings, textFrames } from './publicationReferences';
+import { createFrameNoteLayoutLookup, publicationHeadings, textFrames } from './publicationReferences';
 import { printReadiness } from './printReadiness';
 import { createTableThreadLookup } from './tableCells';
 import { layoutContentTables } from './tableLayout';
 import { publicationCaptions } from './publicationCaptions';
 
 export function publicationPreflight(state: ProjectState, target: 'editor' | 'epub' | 'print' = 'editor'): PreflightIssue[] {
+  const scan = scanPublicationPreflight(state, target);
+  for (let step = scan.next(); ; step = scan.next()) {
+    if (step.done) return step.value;
+  }
+}
+
+export function* scanPublicationPreflight(
+  state: ProjectState,
+  target: 'editor' | 'epub' | 'print' = 'editor',
+): Generator<void, PreflightIssue[], void> {
   const issues: PreflightIssue[] = [];
   const hiddenLayers = new Set(state.layers?.filter(layer => !layer.visible || layer.printable === false).map(layer => layer.id));
   const excluded = (element: CanvasElement) => element.pasteboard || element.editorialOnly || element.nonprinting || hiddenLayers.has(element.layerId || 'layer-1');
@@ -15,17 +25,22 @@ export function publicationPreflight(state: ProjectState, target: 'editor' | 'ep
   const hasCaption = (id: string) => (captionIds ??= new Set(publicationCaptions(state).map(caption => caption.id))).has(id);
   const frameIds = new Set(frames.map(frame => frame.id));
   const notes = state.settings.footnotes || [];
+  const layoutNotes = createFrameNoteLayoutLookup(state);
   const noteIds = new Set(notes.map(note => note.id));
   const anchorCounts = new Map<string, number>();
   const indexAnchors = new Set<string>();
   const referenceRuns: { headId: string; noteId?: string; reference?: StoryRun['reference'] }[] = [];
   for (const head of frames) {
+    yield;
     if (head.prevFrameId || !head.storyContent) continue;
-    for (const paragraph of head.storyContent.paragraphs) for (const run of paragraph.runs) {
-      if (run.noteId) anchorCounts.set(run.noteId, (anchorCounts.get(run.noteId) || 0) + 1);
-      if (run.indexId) indexAnchors.add(run.indexId);
-      if (run.reference || (run.noteId && !noteIds.has(run.noteId))) {
-        referenceRuns.push({ headId: head.id, noteId: run.noteId, reference: run.reference });
+    for (const paragraph of head.storyContent.paragraphs) {
+      yield;
+      for (const run of paragraph.runs) {
+        if (run.noteId) anchorCounts.set(run.noteId, (anchorCounts.get(run.noteId) || 0) + 1);
+        if (run.indexId) indexAnchors.add(run.indexId);
+        if (run.reference || (run.noteId && !noteIds.has(run.noteId))) {
+          referenceRuns.push({ headId: head.id, noteId: run.noteId, reference: run.reference });
+        }
       }
     }
   }
@@ -47,11 +62,13 @@ export function publicationPreflight(state: ProjectState, target: 'editor' | 'ep
     issues.push({ id: `publication-${code}-${elementId || issues.length}`, code, message, severity, elementId, spreadIndex, pageNumber });
   }
   for (const note of notes) {
+    yield;
     if (!note.text.trim()) issue('ORPHAN_NOTE', `Note ${note.number} has no body. Fill it in or delete the note before exporting.`, note.elementId);
     const anchors = anchorCounts.get(note.id);
     if (anchors !== 1) issue('ORPHAN_NOTE', `Note ${note.number} has ${anchors ? 'duplicated' : 'no surviving'} manuscript anchors. Reinsert or delete this note.`, note.elementId);
   }
   for (const { headId, noteId, reference: ref } of referenceRuns) {
+    yield;
     if (noteId && !noteIds.has(noteId)) issue('ORPHAN_NOTE', 'A note marker has no note body. Remove or replace the marker.', headId);
     if (ref) {
       const exists = ref.format === 'caption' ? hasCaption(ref.targetElementId) : ref.targetParagraphId
@@ -60,20 +77,24 @@ export function publicationPreflight(state: ProjectState, target: 'editor' | 'ep
       if (!exists) issue('MISSING_REFERENCE', 'A reference target was removed or is no longer a heading. Choose a new target in the Story Editor.', headId);
     }
   }
-  for (const entry of state.indexEntries || []) if (!entry.elementId || !frameIds.has(entry.elementId) || !indexAnchors.has(entry.id)) {
+  for (const entry of state.indexEntries || []) {
+    yield;
+    if (entry.elementId && frameIds.has(entry.elementId) && indexAnchors.has(entry.id)) continue;
     issue('MISSING_REFERENCE', `Index topic “${entry.topic}” has no live text anchor. Mark the text again or remove the entry.`, entry.elementId, 'warning');
   }
   for (const frame of frames) {
+    yield;
     if (frame.generated?.kind === 'caption' && !hasCaption(frame.id)) issue('MISSING_REFERENCE', 'This caption no longer has visible artwork. Move or remove the caption before export.', frame.id);
     if (target === 'epub') continue;
     const available = frame.height - 2 * (frame.paddingMm ?? 2) - frame.fontSizePt * 25.4 / 72;
-    const layout = notes.length ? layoutFrameNotes(state, frame) : undefined;
+    const layout = notes.length ? layoutNotes(frame) : undefined;
     if (layout?.unplacedAnchors || (!frame.nextFrameId && layout?.remaining) || (layout?.height ?? 0) > available) {
       issue('NOTE_OVERFLOW', 'Footnote text does not fit beside its anchor or at the end of its story. Add a continuation frame, enlarge the frame, or convert the note to an endnote.', frame.id);
     }
   }
-  for (const spread of state.spreads) for (const element of spread.elements) if (element.type === 'image') {
-    if (excluded(element)) continue;
+  for (const spread of state.spreads) for (const element of spread.elements) {
+    yield;
+    if (element.type !== 'image' || excluded(element)) continue;
     if (!element.src) issue('MISSING_ASSET', 'This image frame has no source. Place an image or remove the placeholder before production export.', element.id);
     else if (!element.src.startsWith('data:')) issue('EXTERNAL_ASSET', 'This image is not embedded. Relink it from a local file, or let export download it; unavailable links will block export.', element.id, 'warning');
     if (!element.decorative && !element.altText?.trim()) issue('MISSING_ALT_TEXT', 'Add an image description or mark this artwork as decorative before production EPUB export.', element.id, target === 'epub' ? 'error' : 'warning');
@@ -82,6 +103,7 @@ export function publicationPreflight(state: ProjectState, target: 'editor' | 'ep
     }
   }
   for (const spread of [...state.spreads, ...state.masterSpreads]) for (const artwork of spread.elements) {
+    yield;
     if ((artwork.type !== 'shape' && artwork.type !== 'path') || !artwork.decoration || excluded(artwork)) continue;
     if (artwork.spotColor) issue('PUBLICATION_FLOW', 'Mesh gradients and hatching require process or RGB colors.', artwork.id);
     if (artwork.decoration.kind === 'hatch' && Math.hypot(artwork.width, artwork.height) / (2 * artwork.decoration.spacing) > 2048) {
@@ -93,6 +115,7 @@ export function publicationPreflight(state: ProjectState, target: 'editor' | 'ep
   const reviewedTables = new Set<string>();
   const findTableThread = createTableThreadLookup(state.spreads);
   for (const spread of state.spreads) for (const table of spread.elements) {
+    yield;
     if (table.type !== 'table' || excluded(table) || reviewedTables.has(table.id)) continue;
     const thread = findTableThread(table), head = thread[0];
     for (const frame of thread) reviewedTables.add(frame.id);

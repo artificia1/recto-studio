@@ -1,5 +1,50 @@
 import { test, expect } from '@playwright/test';
 import { importProject, projectFileInput, projectFixture, savedProject } from './fixtures';
+import type { ProjectState } from '../src/types';
+
+test('paints offscreen text only when it enters the viewport', async ({ page }) => {
+  const project = projectFixture();
+  project.selectedElementId = '';
+  project.selectedElementIds = [];
+  const frame = project.spreads[0].elements[0];
+  frame.x = 650;
+  frame.text = 'Offscreen proof text';
+  await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.abort());
+  await page.goto('/');
+  await importProject(page, project);
+
+  const result = await page.evaluate(({ id, text }) => {
+    const { stateManager, spreadCanvas } = (window as Window & { recto?: {
+      stateManager: {
+        getState(): ProjectState;
+        getElementById(id: string): { x: number };
+        setZoomAndPan(zoom: number, x: number, y: number): void;
+      };
+      spreadCanvas: { render(): void };
+    } }).recto!;
+    const canvas = document.querySelector<HTMLCanvasElement>('#spread-canvas')!;
+    const ctx = canvas.getContext('2d')!;
+    const draw = ctx.fillText;
+    let paints = 0;
+    ctx.fillText = function (value, ...args) {
+      if (value === text) paints++;
+      draw.call(this, value, ...args);
+    };
+    try {
+      stateManager.setZoomAndPan(1, 0, 0);
+      spreadCanvas.render();
+      const offscreen = paints;
+      const frame = stateManager.getElementById(id);
+      const centerMm = stateManager.getState().settings.widthMm / 2;
+      stateManager.setZoomAndPan(1, (centerMm - frame.x) * 96 / 25.4 - 40, 0);
+      spreadCanvas.render();
+      return { offscreen, afterPan: paints - offscreen };
+    } finally {
+      ctx.fillText = draw;
+    }
+  }, { id: frame.id, text: frame.text });
+  expect(result).toEqual({ offscreen: 0, afterPan: 1 });
+});
 
 test('renders large spreads at 300 percent without allocating a spread-sized background', async ({ page }) => {
   await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.abort());

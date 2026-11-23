@@ -1,5 +1,7 @@
+export type RecoveryJson = string | string[];
+
 export interface AutosaveJob {
-  json: string;
+  json: RecoveryJson;
   updatedAt: number;
   checkpoint?: { id: string; fileName?: string; recoverable: boolean };
 }

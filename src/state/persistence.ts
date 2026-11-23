@@ -5,7 +5,7 @@
  */
 
 import { ProjectState } from '../types/index';
-import { validateProjectValue } from './projectValidation';
+import { validateProjectForOpen } from './projectValidation';
 
 const DB_NAME = 'RectoStudioDB';
 const DB_VERSION = 2;
@@ -116,9 +116,9 @@ export class RectoDB {
     URL.revokeObjectURL(url);
   }
 
-  public static async importProjectFile(file: File, defaults: ProjectState): Promise<ProjectState> {
+  public static async importProjectFile(file: File, defaults: ProjectState, signal?: AbortSignal): Promise<ProjectState> {
     const { readProjectJson } = await import('./projectJsonStream');
-    return validateProjectValue(await readProjectJson(file), defaults);
+    return validateProjectForOpen(await readProjectJson(file, signal), defaults, signal);
   }
 }
 

@@ -22,6 +22,7 @@ interface DragTestWindow extends Window {
     spreadCanvas: {
       getSpreadScreenOrigin(state: ProjectState): { x: number; y: number };
       dragPreview: Map<string, CanvasElement>;
+      dragTextBitmaps: Map<unknown, HTMLCanvasElement>;
       render(...args: unknown[]): void;
     };
   };
@@ -203,6 +204,12 @@ test('drags a linked frame without reflowing or saving the book until release, t
   await page.mouse.move(point.x, point.y);
   await page.mouse.down();
   await page.mouse.move(point.x + 80, point.y + 30, { steps: 16 });
+  const cachedTextPixels = () => page.evaluate(() => {
+    const { dragTextBitmaps } = (window as unknown as DragTestWindow).recto.spreadCanvas;
+    return [...dragTextBitmaps.values()].reduce((sum, bitmap) => sum + bitmap.width * bitmap.height, 0);
+  });
+  await expect.poll(cachedTextPixels).toBeGreaterThan(0);
+  expect(await cachedTextPixels()).toBeLessThanOrEqual(2_000_000);
   expect(await snapshot(page)).toEqual(before);
   expect(await page.evaluate(() => (window as unknown as DragTestWindow).dragCounts))
     .toEqual({ reflow: 0, preflight: 0, autosave: 0, mutations: 0 });
@@ -224,12 +231,14 @@ test('drags a linked frame without reflowing or saving the book until release, t
   }, { x: point.x + 80, y: point.y + 30 });
   expect(duplicatePaints).toBe(0);
   await page.mouse.up();
+  expect(await cachedTextPixels()).toBe(0);
   const after = await snapshot(page);
   expect(after.x).not.toBe(before.x);
   expect(after.story).toBe(before.story);
   expect(after.revision).toBe(before.revision + 1);
-  await expect.poll(() => page.evaluate(() => (window as unknown as DragTestWindow).dragCounts))
-    .toEqual({ reflow: 0, preflight: 1, autosave: 1, mutations: 1 });
+  await expect(page.getByRole('button', { name: /^Preflight: / })).toHaveAttribute('aria-busy', 'false');
+  expect(await page.evaluate(() => (window as unknown as DragTestWindow).dragCounts))
+    .toEqual({ reflow: 0, preflight: 0, autosave: 1, mutations: 1 });
   await page.keyboard.press('Control+z');
   const undone = await snapshot(page);
   expect([undone.x, undone.y, undone.story]).toEqual([before.x, before.y, before.story]);

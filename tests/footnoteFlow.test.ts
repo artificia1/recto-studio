@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { layoutFrameNotes, publicationSnapshot } from '../src/engine/publicationReferences';
+import { describe, expect, it, vi } from 'vitest';
+import { indexFrameNotes, layoutFrameNotes, notesForFrame, publicationSnapshot, reflowStoryState } from '../src/engine/publicationReferences';
 import { publicationPreflight } from '../src/engine/publicationPreflight';
 import { StateManager } from '../src/state/stateManager';
 import { layoutKernels, warmLayout } from '../src/engine/layoutRuntime';
@@ -22,6 +22,41 @@ function manuscript(columns = 1) {
 const citation = 'A detailed source citation with enough text to continue. '.repeat(22) + 'Final citation line.';
 
 describe('footnote continuation', () => {
+  it('matches snapshot note order and legacy anchors without including endnotes', () => {
+    const manager = manuscript();
+    const state = manager.getState();
+    const frame = state.spreads[0].elements[0] as TextElement;
+    frame.text = 'Citation¹²';
+    frame.textContent = { version: 1, paragraphs: [{ runs: [{ text: '²', noteId: 'modern' }, { text: '¹', noteId: 'legacy' }] }] };
+    state.settings.footnotes = [
+      { id: 'elsewhere', text: 'Other frame', number: 1, elementId: 'other' },
+      { id: 'legacy', text: 'Legacy copy', number: 1, elementId: frame.id },
+      { id: 'modern', text: 'Modern copy', number: 2, anchorVersion: 1 },
+      { id: 'modern', text: 'Endnote', number: 2, kind: 'endnote' },
+    ];
+    const indexed = indexFrameNotes(state).forFrame(frame);
+    expect(indexed).toEqual(notesForFrame(state, frame));
+    expect(indexed.map(note => note.id)).toEqual(['legacy', 'modern']);
+  });
+
+  it('skips measuring a terminal story when the only footnote belongs to another story', () => {
+    const manager = manuscript();
+    const state = manager.getState();
+    const head = state.spreads[0].elements[0] as TextElement;
+    const unrelated = { ...head, id: 'other', text: 'Unrelated manuscript. '.repeat(100) };
+    state.spreads[0].elements.push(unrelated);
+    state.settings.footnotes = [{ id: 'note', text: 'Body', number: 1, elementId: head.id, anchorVersion: 1 }];
+    head.storyContent = { version: 1, paragraphs: [{ runs: [{ text: 'Citation' }, { text: '¹', noteId: 'note' }] }] };
+    const measure = vi.fn((text: string) => text.length * 2);
+    reflowStoryState(state, unrelated.id, undefined, measure);
+    expect(measure).not.toHaveBeenCalled();
+    expect(unrelated.text).toContain('Unrelated manuscript');
+    expect(layoutFrameNotes(state, unrelated).lines).toHaveLength(0);
+    reflowStoryState(state, head.id, undefined, measure);
+    expect(measure).toHaveBeenCalled();
+    expect(layoutFrameNotes(state, head).lines.some(line => line.noteId === 'note')).toBe(true);
+  });
+
   it('matches the host column and overflow output when Rust takes over footnote allocation', async () => {
     const manager = manuscript(2);
     const note = manager.insertFootnote('head', citation, 2);

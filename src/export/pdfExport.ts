@@ -1,5 +1,5 @@
 import { instantiateMasterItem, resolveMaster } from '../engine/masterInheritance';
-import { createPublicationTextResolver, layoutFrameNotes, publicationSnapshot } from '../engine/publicationReferences';
+import { createFrameNoteLayoutLookup, createPublicationTextResolver, publicationSnapshot } from '../engine/publicationReferences';
 import { publicationPreflight } from '../engine/publicationPreflight';
 import { embeddedAsset, prepareExportAssets } from './publicationAssets';
 import { registerPdfFonts, usedPdfFonts } from './pdfFonts';
@@ -79,6 +79,7 @@ export async function exportDocumentToPdf(
   const state = publicationSnapshot(await prepareExportAssets(source, options.fetchExternalAssets ?? typeof window !== 'undefined', false, true,
     options.visualProof ? warning => options.onWarning?.(warning) : undefined), measure);
   const publicationText = createPublicationTextResolver(state);
+  const layoutNotes = createFrameNoteLayoutLookup(state);
   const publicationIssues = publicationPreflight(state, options.strict ? 'print' : 'editor');
   const tableErrors = publicationIssues.filter(issue => issue.code === 'TABLE_LAYOUT' && issue.severity === 'error');
   if (tableErrors.length && !options.visualProof) throw new Error(tableErrors.map(issue => `Page ${issue.pageNumber}: ${issue.message}`).join('\n'));
@@ -363,7 +364,7 @@ export async function exportDocumentToPdf(
         };
         const fnFontSizePt = fnSettings.fontSizePt || 8;
         const fnLineHeightMm = fnFontSizePt * 0.3527 * 1.35;
-        const noteLayout = layoutFrameNotes(state, text);
+        const noteLayout = layoutNotes(text);
         const totalFnHtMm = noteLayout.height;
         const availableHeight = Math.max(0, text.height - (padding * 2) - totalFnHtMm);
 

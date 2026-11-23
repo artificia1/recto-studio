@@ -1,6 +1,6 @@
 import type { PreflightIssue, ProjectState, Spread, TextElement } from '../types';
-import { layoutFrameNotes } from './publicationReferences';
-import { publicationPreflight } from './publicationPreflight';
+import { createFrameNoteLayoutLookup } from './publicationReferences';
+import { scanPublicationPreflight } from './publicationPreflight';
 import { layoutStory } from './storyLayout';
 
 export function calculateTacPercentage(colorStr?: string): number {
@@ -34,11 +34,11 @@ export function calculateTacPercentage(colorStr?: string): number {
   return 0;
 }
 
-function textOverflowMessage(state: ProjectState, spread: Spread, frame: TextElement): string | undefined {
+function textOverflowMessage(state: ProjectState, spread: Spread, frame: TextElement, layoutNotes: ReturnType<typeof createFrameNoteLayoutLookup>): string | undefined {
   const text = frame.text || '';
   if (!text.length || frame.nextFrameId) return;
   if (frame.textContent) {
-    const reserve = state.settings.footnotes?.length ? layoutFrameNotes(state, frame).height : 0;
+    const reserve = state.settings.footnotes?.length ? layoutNotes(frame).height : 0;
     const layout = layoutStory(frame.textContent, frame, state.paragraphStyles, state.characterStyles, undefined, reserve,
       { obstacles: spread.elements, baselineGrid: state.settings.baselineGrid, positionText: false });
     if (layout.overset) return 'Manuscript text exceeds the final frame. Link another frame or enlarge this frame.';
@@ -66,6 +66,14 @@ function textOverflowMessage(state: ProjectState, spread: Spread, frame: TextEle
 }
 
 export function runEditorPreflight(snapshot: ProjectState): PreflightIssue[] {
+  const scan = scanEditorPreflight(snapshot);
+  for (let step = scan.next(); ; step = scan.next()) {
+    if (step.done) return step.value;
+  }
+}
+
+export function* scanEditorPreflight(snapshot: ProjectState): Generator<void, PreflightIssue[], void> {
+  const layoutNotes = createFrameNoteLayoutLookup(snapshot);
   const issues: PreflightIssue[] = [];
   const settings = snapshot.settings;
   const pageWidthMm = settings.widthMm;
@@ -75,15 +83,17 @@ export function runEditorPreflight(snapshot: ProjectState): PreflightIssue[] {
   let hasSeenH1 = false;
   let lastHeadingLevel = 0;
 
-  snapshot.spreads.forEach((spread, spreadIdx) => {
+  for (const [spreadIdx, spread] of snapshot.spreads.entries()) {
+    yield;
     for (const el of spread.elements) {
+      yield;
       if (el.pasteboard) continue;
       const page = spread.pages.find((p) => p.id === el.pageId) || spread.pages[0];
       const pageNumber = page ? page.pageNumber : spreadIdx + 1;
 
       // 1. OVERSET_TEXT: Overflowing text frames without continuation nextFrameId
       if (el.type === 'text') {
-        const message = textOverflowMessage(snapshot, spread, el);
+        const message = textOverflowMessage(snapshot, spread, el, layoutNotes);
         if (message) issues.push({ id: `preflight-overset-${spreadIdx}-${el.id}`, severity: 'error',
           code: 'OVERSET_TEXT', message, spreadIndex: spreadIdx, pageNumber, elementId: el.id });
       }
@@ -303,11 +313,11 @@ export function runEditorPreflight(snapshot: ProjectState): PreflightIssue[] {
         }
       }
     }
-  });
+  }
 
   const errorElements = new Set(issues.filter(issue => issue.severity === 'error').map(issue => issue.elementId));
   const missingAlt = new Set(issues.filter(issue => issue.code === 'MISSING_ALT_TEXT').map(issue => issue.elementId));
-  for (const issue of publicationPreflight(snapshot)) {
+  for (const issue of yield* scanPublicationPreflight(snapshot)) {
     if (issue.code === 'MISSING_ASSET' && errorElements.has(issue.elementId)) continue;
     if (issue.code === 'MISSING_ALT_TEXT' && missingAlt.has(issue.elementId)) continue;
     issues.push(issue);

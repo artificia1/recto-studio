@@ -52,7 +52,7 @@ import { arrangeSelection, lockedArtworkIds, restorePlacedPasteboard, selectionU
 import { elementUsesFont, primaryFont, storyHeadsUsingFontFamilies, visitDocumentFonts } from '../engine/documentFonts';
 import { prepareSpreadTemplate } from '../engine/spreadTemplate';
 import { validateBinding, type DataRefreshChange } from '../engine/dataRefresh';
-import { contentOf, insertRun, layoutFrameNotes, migrateLegacyNotes, noteMarker, notesForFrame, publicationHeadings, reflowStoryFrames, reflowStoryState, refreshPublication, storyHeads, textFrames, type StoryReflowRange } from '../engine/publicationReferences';
+import { contentOf, indexStoryReflow, insertRun, layoutFrameNotes, migrateLegacyNotes, noteMarker, notesForFrame, publicationHeadings, reflowStoryFrames, reflowStoryState, refreshPublication, storyHeads, textFrames, type StoryReflowRange } from '../engine/publicationReferences';
 import { layoutKernels } from '../engine/layoutRuntime';
 import { reconcileFrameStoryEdits } from './frameStoryEdits';
 import { generateEan13DataUrl } from '../engine/barcodeEngine';
@@ -173,6 +173,7 @@ export class StateManager {
   private documentRevision = 0;
   private documentSession = 0;
   private openRequest = 0;
+  private projectOpenAbort?: AbortController;
   private readonly hasValidLocalSave: boolean;
 
   public getDocumentRevision(): number {
@@ -181,7 +182,7 @@ export class StateManager {
   public getDocumentSession(): number {
     return this.documentSession;
   }
-  public readonly autosave = new Autosave(() => this.state);
+  public readonly autosave = new Autosave(() => this.state, () => fontManager.generation);
 
   public async recoverAutosave(): Promise<void> {
     const revision = this.documentRevision, request = this.openRequest;
@@ -203,6 +204,7 @@ export class StateManager {
   }
   private state: ProjectState;
   private listeners: Set<StateListener> = new Set();
+  private nonViewportListeners: Set<StateListener> = new Set();
   private readonly history = new StateHistory<ProjectState>(30, 'spreads');
   private snapshots: VersionSnapshot[] = [];
   public onMutation?: (mutation: { type: 'add' | 'update' | 'delete'; elementId: string; element?: CanvasElement; updates?: Partial<CanvasElement> }) => void;
@@ -308,19 +310,21 @@ export class StateManager {
     return this.state;
   }
 
-  public subscribe(fn: StateListener): () => void {
-    this.listeners.add(fn);
-    return () => this.listeners.delete(fn);
+  public subscribe(fn: StateListener, includeViewport = true): () => void {
+    const listeners = includeViewport ? this.listeners : this.nonViewportListeners;
+    listeners.add(fn);
+    return () => listeners.delete(fn);
   }
 
-  private notify(persist = true, panOnly = false) {
+  private notify(persist = true, viewport?: 'pan' | 'zoom') {
     if (persist) {
       this.documentRevision++;
       this.autosave.schedule();
     }
     for (const listener of this.listeners) {
-      listener(this.state, panOnly);
+      listener(this.state, viewport === 'pan');
     }
+    if (!viewport) for (const listener of this.nonViewportListeners) listener(this.state, false);
   }
 
   private pushHistory(composedStoryId?: string, layoutIsCurrent = false) {
@@ -445,23 +449,22 @@ export class StateManager {
   }
 
   public setZoom(zoom: number) {
-    this.state.zoom = Math.max(0.2, Math.min(3.0, zoom));
-    this.notify(false);
+    this.setZoomAndPan(zoom, this.state.panX, this.state.panY);
   }
 
   public setPan(x: number, y: number) {
-    this.state.panX = x;
-    this.state.panY = y;
-    this.notify(false, true);
+    this.setZoomAndPan(this.state.zoom, x, y);
   }
 
   public setZoomAndPan(zoom: number, panX: number, panY: number) {
     const nextZoom = Math.max(0.2, Math.min(3.0, zoom));
     const panOnly = nextZoom === this.state.zoom;
+    if (!Number.isFinite(nextZoom) || !Number.isFinite(panX) || !Number.isFinite(panY)) return;
+    if (panOnly && panX === this.state.panX && panY === this.state.panY) return;
     this.state.zoom = nextZoom;
     this.state.panX = panX;
     this.state.panY = panY;
-    this.notify(false, panOnly);
+    this.notify(false, panOnly ? 'pan' : 'zoom');
   }
 
   public toggleGuides() {
@@ -1303,8 +1306,8 @@ export class StateManager {
     return Math.max(15, Math.floor(singleColWidthMm / avgCharWidthMm));
   }
 
-  public reflowStory(frameId: string, resume?: StoryReflowRange) {
-    reflowStoryState(this.state, frameId, undefined, undefined, resume);
+  public reflowStory(frameId: string, resume?: StoryReflowRange, lookup?: ReturnType<typeof indexStoryReflow>) {
+    reflowStoryState(this.state, frameId, undefined, undefined, resume, lookup);
   }
 
   /** Append publication pages for overflow, preserving one undo boundary. */
@@ -1687,8 +1690,11 @@ export class StateManager {
   }
 
   public reflowFormattedStories(excludedStoryId?: string) {
+    let lookup: ReturnType<typeof indexStoryReflow> | undefined;
     for (const spread of this.state.spreads) for (const frame of spread.elements) {
-      if (frame.type === 'text' && frame.storyContent && !frame.prevFrameId && frame.id !== excludedStoryId) this.reflowStory(frame.id);
+      if (frame.type === 'text' && frame.storyContent && !frame.prevFrameId && frame.id !== excludedStoryId) {
+        this.reflowStory(frame.id, undefined, lookup ??= indexStoryReflow(this.state));
+      }
     }
   }
 
@@ -2791,9 +2797,10 @@ export class StateManager {
     });
     let deadline = performance.now() + 8;
     try {
+      const lookup = indexStoryReflow(project);
       for (const head of storyHeads(project)) {
         if (!head.storyContent) continue;
-        for (const _frame of reflowStoryFrames(project, head.id)) {
+        for (const _frame of reflowStoryFrames(project, head.id, undefined, undefined, undefined, lookup)) {
           if (performance.now() >= deadline) {
             await nextTask();
             if (!current() || fontManager.generation !== fontGeneration || layoutKernels !== kernels) return false;
@@ -2827,7 +2834,9 @@ export class StateManager {
     this.notify(persist);
   }
 
-  private async openProject(read: () => Promise<ProjectState>, restoreFonts = false) {
+  private async openProject(read: (signal: AbortSignal) => Promise<ProjectState>, restoreFonts = false) {
+    this.projectOpenAbort?.abort();
+    const controller = this.projectOpenAbort = new AbortController();
     const request = ++this.openRequest, revision = this.documentRevision;
     const current = () => request === this.openRequest && revision === this.documentRevision;
     const check = () => {
@@ -2835,15 +2844,24 @@ export class StateManager {
         throw new Error('The document changed while this file was opening. Open the file again to replace the current document.');
       }
     };
-    const project = await read();
-    check();
-    const previousFonts = fontManager.generation;
-    if (restoreFonts) await fontManager.restoreFonts(project.embeddedFonts, check);
-    check();
-    // Keep the install in the same task when opening activated new font faces.
-    const prepared = previousFonts === fontManager.generation && await this.prepareProjectLayout(project, current);
-    check();
-    this.installProject(project, true, prepared);
+    const unsubscribe = this.subscribe(() => { if (!current()) controller.abort(); }, false);
+    try {
+      const project = await read(controller.signal).catch(error => {
+        check();
+        throw error;
+      });
+      check();
+      const previousFonts = fontManager.generation;
+      if (restoreFonts) await fontManager.restoreFonts(project.embeddedFonts, check);
+      check();
+      // Keep the install in the same task when opening activated new font faces.
+      const prepared = previousFonts === fontManager.generation && await this.prepareProjectLayout(project, current);
+      check();
+      this.installProject(project, true, prepared);
+    } finally {
+      unsubscribe();
+      if (this.projectOpenAbort === controller) this.projectOpenAbort = undefined;
+    }
   }
 
   private collaborativeHistory: { undo(): void; redo(): void; stopCapturing?(): void } | null = null;
@@ -3260,7 +3278,7 @@ export class StateManager {
     if (/\.rectoarchive$/i.test(file.name)) {
       return this.openProject(async () => (await import('../engine/projectArchive')).readProjectArchive(file), true);
     }
-    return this.openProject(() => RectoDB.importProjectFile(file, INITIAL_STATE), true);
+    return this.openProject(signal => RectoDB.importProjectFile(file, INITIAL_STATE, signal), true);
   }
 
   public async openMarkdownBook(file: File, artwork: readonly File[] = []) {

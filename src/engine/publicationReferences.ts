@@ -133,16 +133,59 @@ export function notesForFrame(state: Pick<StoryLayoutState, 'settings'>, frame: 
     (ids.has(note.id) || (!note.anchorVersion && note.elementId === frame.id && frame.text.includes(noteMarker(note.number)))));
 }
 
+/** Index a stable note list once for linked frames or repeated reads of a snapshot. */
+export function indexFrameNotes(state: Pick<StoryLayoutState, 'settings'>) {
+  type Entry = { note: Footnote; order: number };
+  const byId = new Map<string, Entry[]>(), legacyByFrame = new Map<string, Entry[]>();
+  const add = (index: Map<string, Entry[]>, key: string, entry: Entry) => {
+    const entries = index.get(key);
+    if (entries) entries.push(entry);
+    else index.set(key, [entry]);
+  };
+  for (const [order, note] of (state.settings.footnotes || []).entries()) {
+    if (note.kind === 'endnote') continue;
+    const entry = { note, order };
+    add(byId, note.id, entry);
+    if (!note.anchorVersion && note.elementId) add(legacyByFrame, note.elementId, entry);
+  }
+  return {
+    affectsStory: (content: StoryContent, chain: TextElement[]) => byId.size > 0 && (
+      chain.some(frame => legacyByFrame.has(frame.id)) ||
+      content.paragraphs.some(paragraph => paragraph.runs.some(run => !!run.noteId && byId.has(run.noteId)))),
+    forFrame(frame: TextElement): Footnote[] {
+      if (!byId.size) return [];
+      const candidates = new Set<Entry>();
+      for (const paragraph of (frame.textContent || frame.storyContent)?.paragraphs || []) for (const run of paragraph.runs) {
+        if (run.noteId) for (const entry of byId.get(run.noteId) || []) candidates.add(entry);
+      }
+      for (const entry of legacyByFrame.get(frame.id) || []) if (frame.text.includes(noteMarker(entry.note.number))) candidates.add(entry);
+      return [...candidates].sort((a, b) => a.order - b.order).map(entry => entry.note);
+    },
+  };
+}
+
 export interface StoryReflowRange {
   frameId: string;
   unchangedThrough?: number;
   changedThrough?: number;
 }
 
+/** A composition pass can reuse this until frames are added, removed or moved. */
+export function indexStoryReflow(state: StoryLayoutState) {
+  const byId = new Map<string, TextElement>();
+  const spreadsByFrame = new Map<string, ProjectState['spreads'][number]>();
+  for (const spread of state.spreads) for (const element of spread.elements) {
+    if (element.type !== 'text') continue;
+    byId.set(element.id, element);
+    spreadsByFrame.set(element.id, spread);
+  }
+  return { byId, spreadsByFrame, notes: state.settings.footnotes?.length ? indexFrameNotes(state) : undefined };
+}
+
 export function reflowStoryState(state: StoryLayoutState, frameId: string,
   getWrapObjects: typeof publicationWrapObjects = publicationWrapObjects, measure?: StoryMeasure,
-  resume?: StoryReflowRange) {
-  const steps = reflowStoryFrames(state, frameId, getWrapObjects, measure, resume);
+  resume?: StoryReflowRange, lookup?: ReturnType<typeof indexStoryReflow>) {
+  const steps = reflowStoryFrames(state, frameId, getWrapObjects, measure, resume, lookup);
   for (;;) {
     const step = steps.next();
     if (step.done) return step.value;
@@ -152,14 +195,8 @@ export function reflowStoryState(state: StoryLayoutState, frameId: string,
 /** Reflow a detached story in steps without publishing partially updated frames. */
 export function* reflowStoryFrames(state: StoryLayoutState, frameId: string,
   getWrapObjects: typeof publicationWrapObjects = publicationWrapObjects, measure?: StoryMeasure,
-  resume?: StoryReflowRange): Generator<void, TextElement[] | undefined> {
-  const byId = new Map<string, TextElement>();
-  const spreadsByFrame = new Map<string, ProjectState['spreads'][number]>();
-  for (const spread of state.spreads) for (const element of spread.elements) {
-    if (element.type !== 'text') continue;
-    byId.set(element.id, element);
-    spreadsByFrame.set(element.id, spread);
-  }
+  resume?: StoryReflowRange, lookup?: ReturnType<typeof indexStoryReflow>): Generator<void, TextElement[] | undefined> {
+  const { byId, spreadsByFrame, notes: noteIndex } = lookup ?? indexStoryReflow(state);
   let head = byId.get(frameId);
   const seen = new Set<string>();
   while (head?.prevFrameId && !seen.has(head.id)) { seen.add(head.id); head = byId.get(head.prevFrameId); }
@@ -174,11 +211,11 @@ export function* reflowStoryFrames(state: StoryLayoutState, frameId: string,
   const wrapBySpread = new Map<ProjectState['spreads'][number], ReturnType<typeof publicationWrapObjects>>();
   let offset = 0;
   let pending: NoteContinuation[] = [];
-  const documentHasNotes = !!state.settings.footnotes?.length;
+  const storyHasNotes = noteIndex?.affectsStory(content, chain) ?? false;
   let first = 0;
   let edited = -1;
   let reuseAfter = Infinity;
-  if (resume && !documentHasNotes && !head.generated && !head.autoExtendStory) {
+  if (resume && !state.settings.footnotes?.length && !head.generated && !head.autoExtendStory) {
     edited = chain.findIndex(frame => frame.id === resume.frameId);
     const unchanged = resume.unchangedThrough ?? head.rawStoryText.length;
     while (first < edited) {
@@ -201,7 +238,7 @@ export function* reflowStoryFrames(state: StoryLayoutState, frameId: string,
     let fragments: ReturnType<typeof composeFootnotes> | undefined;
     // A terminal frame owns the entire remaining manuscript, including overset
     // text. Only footnotes need its lines during reflow.
-    if (!lastFrame || documentHasNotes) {
+    if (!lastFrame || storyHasNotes) {
       const paragraphs = remaining?.paragraphs ?? indexed!.from(offset);
       const spread = spreadsByFrame.get(frame.id)!;
       let obstacles = wrapBySpread.get(spread);
@@ -209,13 +246,13 @@ export function* reflowStoryFrames(state: StoryLayoutState, frameId: string,
         obstacles = getWrapObjects(state, spread);
         wrapBySpread.set(spread, obstacles);
       }
-      const options = { obstacles, baselineGrid: state.settings.baselineGrid, positionText: documentHasNotes };
+      const options = { obstacles, baselineGrid: state.settings.baselineGrid, positionText: storyHasNotes };
       let layout = layoutStoryParagraphs(paragraphs, frame, state.paragraphStyles, state.characterStyles, measure, reserved, options);
-      if (documentHasNotes) {
-        const tailNotes = remaining ? notesForFrame(state, { ...frame, textContent: remaining }) : [];
+      if (storyHasNotes && noteIndex) {
+        const tailNotes = remaining ? noteIndex.forFrame({ ...frame, textContent: remaining }) : [];
         for (let pass = 0; pass <= 8; pass++) {
           const visible = slice(offset, offset + layout.consumed);
-          const notes = notesForFrame(state, { ...frame, textContent: visible });
+          const notes = noteIndex.forFrame({ ...frame, textContent: visible });
           if (!notes.length && !pending.length && !reserved && !tailNotes.length) { fragments = undefined; break; }
           fragments = composeFootnotes(state, frame, visible, layout.lines, notes, pending);
           fragments.unplacedAnchors += Math.max(0, tailNotes.length - notes.length);
@@ -253,7 +290,8 @@ export function publicationSnapshot(source: ProjectState, measure?: StoryMeasure
   for (let pass = 0; pass < 8; pass++) {
     const before = JSON.stringify(textFrames(state).map(frame => [frame.id, frame.storyStart, frame.storyEnd, frame.text]));
     const changed = refreshPublication(state);
-    for (const head of storyHeads(state)) if (head.storyContent) reflowStoryState(state, head.id, undefined, measure);
+    const lookup = indexStoryReflow(state);
+    for (const head of storyHeads(state)) if (head.storyContent) reflowStoryState(state, head.id, undefined, measure, undefined, lookup);
     const after = JSON.stringify(textFrames(state).map(frame => [frame.id, frame.storyStart, frame.storyEnd, frame.text]));
     if (!changed && before === after) return state;
   }
@@ -262,15 +300,17 @@ export function publicationSnapshot(source: ProjectState, measure?: StoryMeasure
 
 /** Migrate only an unambiguous marker in its recorded owner; never scan unrelated exponents. */
 export function migrateLegacyNotes(state: ProjectState) {
-  const frames = textFrames(state);
-  for (const note of state.settings.footnotes || []) {
-    if (note.anchorVersion) continue;
+  const legacy = state.settings.footnotes?.filter(note => !note.anchorVersion);
+  if (!legacy?.length) return;
+  const frames = new Map<string, TextElement>();
+  for (const frame of textFrames(state)) if (!frames.has(frame.id)) frames.set(frame.id, frame);
+  for (const note of legacy) {
     note.anchorVersion = 1;
-    const owner = frames.find(frame => frame.id === note.elementId);
+    const owner = note.elementId ? frames.get(note.elementId) : undefined;
     if (!owner) continue;
     let head = owner;
     const seen = new Set<string>();
-    while (head.prevFrameId && !seen.has(head.id)) { seen.add(head.id); const prev = frames.find(frame => frame.id === head.prevFrameId); if (!prev) break; head = prev; }
+    while (head.prevFrameId && !seen.has(head.id)) { seen.add(head.id); const prev = frames.get(head.prevFrameId); if (!prev) break; head = prev; }
     const marker = noteMarker(note.number);
     const matches = [...owner.text.matchAll(/[⁰¹²³⁴⁵⁶⁷⁸⁹]+/g)].filter(match => match[0] === marker);
     if (matches.length !== 1) continue;
@@ -284,7 +324,26 @@ export function migrateLegacyNotes(state: ProjectState) {
 export function layoutFrameNotes(state: ProjectState, frame: TextElement, notes?: Footnote[]) {
   const composed = composedFootnotes.get(frame);
   if (composed?.state === state) return composed.layout;
-  notes ??= notesForFrame(state, frame);
+  return layoutUncomposedNotes(state, frame, notes ?? notesForFrame(state, frame));
+}
+
+/** Reuse the note index for a stable render or export snapshot. */
+export function createFrameNoteLayoutLookup(state: ProjectState, cacheLimit = 0) {
+  let noteIndex: ReturnType<typeof indexFrameNotes> | undefined;
+  const fallback = cacheLimit > 0 ? new Map<TextElement, ReturnType<typeof layoutUncomposedNotes>>() : undefined;
+  return (frame: TextElement) => {
+    const composed = composedFootnotes.get(frame);
+    if (composed?.state === state) return composed.layout;
+    const cached = fallback?.get(frame);
+    if (cached) return cached;
+    const notes = state.settings.footnotes?.length ? (noteIndex ??= indexFrameNotes(state)).forFrame(frame) : [];
+    const layout = layoutUncomposedNotes(state, frame, notes);
+    if (fallback && fallback.size < cacheLimit) fallback.set(frame, layout);
+    return layout;
+  };
+}
+
+function layoutUncomposedNotes(state: ProjectState, frame: TextElement, notes: Footnote[]) {
   const { size, family, columns, gutter, columnWidth: width, lineHeight } = footnoteGeometry(state, frame);
   const lines: { text: string; noteId: string; column: number; x: number; y: number }[] = [];
   const base = { lines, size, family, lineHeight, columnWidth: width, remaining: 0, unplacedAnchors: 0 };
@@ -308,8 +367,14 @@ export function layoutFrameNotes(state: ProjectState, frame: TextElement, notes?
       const line = anchor === undefined ? undefined : layout.lines.find(line => anchor >= line.start && anchor < line.end);
       return [note.id, Math.min(columns - 1, line?.column ?? columns - 1)];
     }));
-    const counts = Array.from({ length: columns }, (_, column) => notes.filter(note => placements.get(note.id) === column).reduce((sum, note) => sum + wrapped.get(note.id)!.length, 0));
-    const required = Math.max(...counts) * lineHeight + 3;
+    const counts = new Array<number>(columns).fill(0);
+    let largest = 0;
+    for (const note of notes) {
+      const column = placements.get(note.id)!;
+      counts[column] += wrapped.get(note.id)!.length;
+      largest = Math.max(largest, counts[column]);
+    }
+    const required = largest * lineHeight + 3;
     if (required <= height + 0.0001) break;
     height = required;
   }

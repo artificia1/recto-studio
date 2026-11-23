@@ -15,6 +15,7 @@ import { BookletImpositionModal, CoverSpineModal } from './LazyPrintDialogs';
 import type { ExportAction } from './ExportMenu';
 
 import { lazy, Suspense } from 'preact/compat';
+import { CanvasZoomSelect } from './CanvasZoomControls';
 const AppUpdater = lazy(() => import('./AppUpdater').then(module => ({ default: module.AppUpdater })));
 const ScribusImportDialog = lazy(() => import('./ScribusImportDialog'));
 const NewProjectMenu = lazy(() => import('./NewProjectMenu'));
@@ -231,16 +232,6 @@ export function TopBar({
         widthMm: dim.widthMm,
         heightMm: dim.heightMm,
       });
-    }
-  };
-
-  const handleZoomChange = (e: Event) => {
-    const val = (e.target as HTMLSelectElement).value;
-    if (val === 'fit') {
-      stateManager.setZoom(0.85);
-      stateManager.setPan(0, 0);
-    } else if (val !== 'custom') {
-      stateManager.setZoom(parseFloat(val));
     }
   };
 
@@ -542,23 +533,7 @@ export function TopBar({
           <option value="Zine-A5">Zine A5</option>
         </select>
 
-        <select
-          className="styled-select"
-          value={!['0.5', '0.75', '1', '1.25', '1.5', '2'].includes((Math.round(state.zoom * 100) / 100).toString()) ? 'custom' : (Math.round(state.zoom * 100) / 100).toString()}
-          onChange={handleZoomChange}
-          title="Canvas Zoom"
-        >
-          {!['0.5', '0.75', '1', '1.25', '1.5', '2'].includes((Math.round(state.zoom * 100) / 100).toString()) && (
-            <option value="custom">{Math.round(state.zoom * 100)}%</option>
-          )}
-          <option value="fit">Fit Spread</option>
-          <option value="0.5">50%</option>
-          <option value="0.75">75%</option>
-          <option value="1">100%</option>
-          <option value="1.25">125%</option>
-          <option value="1.5">150%</option>
-          <option value="2">200%</option>
-        </select>
+        <CanvasZoomSelect />
 
         {hasSelection && <Suspense fallback={null}>
           <TopAlignmentControls count={selectedElements.length} selectedIds={selectedIds} allLocked={allLocked} />

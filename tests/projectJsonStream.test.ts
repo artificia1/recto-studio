@@ -16,3 +16,17 @@ it.each(['', '{"spreads":[', '{"done":true} {}', '{"done":true}' + ' '.repeat(70
     await expect(readProjectJson(new Blob([text]))).rejects.toThrow('not valid JSON');
   },
 );
+
+it('cancels a pending stream read and preserves the cancellation reason', async () => {
+  let cancelled = false;
+  const file = new Blob([]);
+  Object.defineProperty(file, 'stream', { value: () => new ReadableStream<Uint8Array>({
+    cancel: () => { cancelled = true; },
+  }) });
+  const controller = new AbortController();
+  const opening = readProjectJson(file, controller.signal);
+  const reason = new Error('Newer file selected');
+  controller.abort(reason);
+  await expect(opening).rejects.toBe(reason);
+  expect(cancelled).toBe(true);
+});

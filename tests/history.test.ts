@@ -83,4 +83,29 @@ describe('Document history', () => {
     expect(JSON.stringify(history.undo())).toBe(before);
     expect(history.redo()?.spreads[0].elements[1]).toEqual(image);
   });
+
+  it('keeps JSON property order, missing keys, and nonfinite values across snapshot reuse', () => {
+    const history = new StateHistory<{ spreads: unknown[] }>(30, 'spreads');
+    const first = { spreads: [{ a: [3, undefined], b: 2, z: Number.NaN }] };
+    const second = { spreads: [{ z: Number.POSITIVE_INFINITY, a: [3], optional: undefined }] };
+    history.push(first);
+    history.push(second);
+    expect(JSON.stringify(history.undo())).toBe(JSON.stringify(first));
+    expect(JSON.stringify(history.redo())).toBe(JSON.stringify(second));
+  });
+
+  it('restores repeated table data independently and still accepts native JSON values', () => {
+    const history = new StateHistory<{ spreads: unknown[] }>(30, 'spreads');
+    const cells = [[{ text: 'Shared table content' }]];
+    const first = { spreads: [{ elements: [{ cells }, { cells }] }, { created: new Date('2024-01-01') }] };
+    history.push(first);
+    history.push({ spreads: [] });
+    const restored = history.undo()! as typeof first;
+    const restoredTables = restored.spreads[0].elements!;
+    restoredTables[0].cells[0][0].text = 'Changed locally';
+    expect(restoredTables[1].cells[0][0].text).toBe('Shared table content');
+    expect(restored.spreads[1].created).toBe('2024-01-01T00:00:00.000Z');
+    history.redo();
+    expect(JSON.stringify(history.undo())).toBe(JSON.stringify(first));
+  });
 });

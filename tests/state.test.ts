@@ -7,17 +7,24 @@ describe('State Snapshot Stack & Mutation Engine', () => {
     stateManager.resetToDefault();
   });
 
-  it('identifies pan-only notifications while preserving zoom and document updates', () => {
+  it('isolates viewport notifications while preserving existing subscribers', () => {
     const notifications: boolean[] = [];
+    const documentUpdates: string[] = [];
     const unsubscribe = stateManager.subscribe((_state, panOnly) => notifications.push(panOnly));
+    const unsubscribeDocument = stateManager.subscribe(state => documentUpdates.push(state.settings.title), false);
     try {
       stateManager.setPan(40, 20);
       stateManager.setZoomAndPan(stateManager.getState().zoom, 50, 30);
       stateManager.setZoomAndPan(2.5, 60, 40);
+      stateManager.setZoomAndPan(2.5, 60, 40);
+      stateManager.setZoom(Number.NaN);
       stateManager.updateSettings({ title: 'Changed text' });
       expect(notifications).toEqual([true, true, false, false]);
+      expect(documentUpdates).toEqual(['Changed text']);
+      expect(stateManager.getState().zoom).toBe(2.5);
     } finally {
       unsubscribe();
+      unsubscribeDocument();
     }
   });
 

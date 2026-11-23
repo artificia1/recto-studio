@@ -1,73 +1,84 @@
-import type { CanvasElement, Spread, TableCell } from '../types';
-
-const payloadFields = ['src', 'proxySrc', 'text', 'rawStoryText', 'storyContent', 'textContent'] as const;
-type PayloadField = typeof payloadFields[number] | 'cells';
-type Payload = { index: number; field: PayloadField; data: string; encoded: boolean };
-type SpreadSnapshot = string | { shell: string; payloads: Payload[] };
+type HistoryValue = null | string | number | boolean | HistoryValue[] | HistoryRecord;
+type HistoryRecord = { [key: string]: HistoryValue };
+type SpreadSnapshot = { value: HistoryValue } | { json: string };
 type Snapshot = string | { document: string; spreads: SpreadSnapshot[] };
 
-function saveSpread(value: unknown, tablePayloads: WeakMap<TableCell[][], string>, previous?: SpreadSnapshot): SpreadSnapshot {
-  const spread = value as Partial<Spread> | null;
-  if (Array.isArray(spread?.elements)) {
-    let elements: CanvasElement[] | undefined;
-    const payloads: Payload[] = [];
-    spread.elements.forEach((element, index) => {
-      if (element?.type !== 'text' && element?.type !== 'image' && element?.type !== 'table') return;
-      const savePayload = (field: PayloadField, data: string, encoded: boolean) => {
-        const before = typeof previous === 'object' ? previous.payloads[payloads.length] : undefined;
-        payloads.push(before?.index === index && before.field === field && before.data === data && before.encoded === encoded
-          ? before : { index, field, data, encoded });
-        elements ??= spread.elements!.slice();
-        if (elements[index] === element) elements[index] = { ...element };
-        (elements[index] as unknown as Record<PayloadField, unknown>)[field] = null;
-      };
-      if (element?.type === 'table' && Array.isArray(element.cells) && (element.prevFrameId || element.nextFrameId)) {
-        let data = tablePayloads.get(element.cells);
-        if (data === undefined) {
-          data = JSON.stringify(element.cells);
-          tablePayloads.set(element.cells, data);
-        }
-        savePayload('cells', data, true);
-        return;
-      }
-      if (element?.type !== 'text' && element?.type !== 'image') return;
-      const fields = element as unknown as Partial<Record<PayloadField, unknown>>;
-      for (const field of payloadFields) {
-        const value = fields[field];
-        const length = typeof value === 'string' ? value.length : 0;
-        const largeStory = field === 'storyContent' && element.type === 'text' && element.storyContent &&
-          ((element.rawStoryText?.length || 0) >= 32_768 || (element.storyContent.paragraphs?.length || 0) >= 128);
-        const largeSlice = field === 'textContent' && element.type === 'text' && element.textContent &&
-          ((element.text?.length || 0) >= 32_768 || (element.textContent.paragraphs?.length || 0) >= 128);
-        if (length < 32_768 && !largeStory && !largeSlice) continue;
-        const encoded = typeof value !== 'string';
-        const data = encoded ? JSON.stringify(value) : value;
-        savePayload(field, data, encoded);
-      }
-    });
-    if (elements) {
-      const shell = JSON.stringify({ ...spread, elements });
-      if (typeof previous === 'object' && previous.shell === shell) {
-        if (payloads.length === previous.payloads.length && payloads.every((part, index) => part === previous.payloads[index])) return previous;
-        return { shell: previous.shell, payloads };
-      }
-      return { shell, payloads };
+const useJson = Symbol('Use native JSON serialization');
+
+function capture(value: unknown, previous: HistoryValue | undefined,
+  tableCells: WeakMap<unknown[], HistoryValue>, depth = 0): HistoryValue {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value || 0 : null;
+  if (typeof value !== 'object' || depth >= 64 || typeof (value as { toJSON?: unknown }).toJSON === 'function') throw useJson;
+
+  if (Array.isArray(value)) {
+    const prior = Array.isArray(previous) ? previous : undefined;
+    let next: HistoryValue[] | undefined;
+    for (let index = 0; index < value.length; index++) {
+      const item = capture(value[index] ?? null, prior?.[index], tableCells, depth + 1);
+      if (!next && (!prior || item !== prior[index])) next = prior?.slice(0, index) ?? [];
+      next?.push(item);
     }
+    return next ?? (prior?.length === value.length ? prior : prior?.slice(0, value.length) ?? []);
   }
-  const json = JSON.stringify(value) ?? 'null';
-  return json === previous ? previous : json;
+
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) throw useJson;
+  const record = value as Record<string, unknown>;
+  const prior = previous && typeof previous === 'object' && !Array.isArray(previous) ? previous : undefined;
+  const previousKeys = prior ? Object.keys(prior) : [];
+  let count = 0;
+  let next: HistoryRecord | undefined;
+  for (const key of Object.keys(record)) {
+    const child = record[key];
+    if (child === undefined) continue;
+    if (key === '__proto__') throw useJson;
+
+    let item: HistoryValue;
+    if (key === 'cells' && Array.isArray(child)) {
+      const shared = tableCells.get(child);
+      item = shared ?? capture(child, prior?.[key], tableCells, depth + 1);
+      if (!shared) tableCells.set(child, item);
+    } else {
+      item = capture(child, prior?.[key], tableCells, depth + 1);
+    }
+    if (!next && (key !== previousKeys[count] || item !== prior?.[key])) {
+      next = {};
+      for (let index = 0; index < count; index++) {
+        const name = previousKeys[index];
+        next[name] = prior![name];
+      }
+    }
+    if (next) next[key] = item;
+    count++;
+  }
+  if (next) return next;
+  if (!prior) return {};
+  if (count === previousKeys.length) return prior;
+  return Object.fromEntries(previousKeys.slice(0, count).map(key => [key, prior[key]]));
 }
 
-function readSpread(snapshot: SpreadSnapshot): unknown {
-  if (typeof snapshot === 'string') return JSON.parse(snapshot);
-  const spread = JSON.parse(snapshot.shell);
-  for (const { index, field, data, encoded } of snapshot.payloads) {
-    spread.elements[index][field] = encoded ? JSON.parse(data) : data;
+function saveSpread(value: unknown, tableCells: WeakMap<unknown[], HistoryValue>, previous?: SpreadSnapshot): SpreadSnapshot {
+  try {
+    const prior = previous && 'value' in previous ? previous : undefined;
+    const snapshot = capture(value, prior?.value, tableCells);
+    return prior && snapshot === prior.value ? prior : { value: snapshot };
+  } catch (error) {
+    if (error !== useJson) throw error;
+    const json = JSON.stringify(value) ?? 'null';
+    return previous && 'json' in previous && previous.json === json ? previous : { json };
   }
-  return spread;
 }
 
-/** Bounded JSON history. Only undo and redo materialize a document. */
+function copySnapshot(value: HistoryValue): HistoryValue {
+  if (!value || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(copySnapshot);
+  const copy: HistoryRecord = {};
+  for (const key of Object.keys(value)) copy[key] = copySnapshot(value[key]);
+  return copy;
+}
+
+/** Bounded document history. Unchanged JSON data is shared only inside history. */
 export class StateHistory<T> {
   private entries: Snapshot[] = [];
   private index = -1;
@@ -86,17 +97,18 @@ export class StateHistory<T> {
     const previous = this.entries[this.index];
     const prior = typeof previous === 'object' ? previous : undefined;
     const document = JSON.stringify({ ...value, [key]: null });
-    const tablePayloads = new WeakMap<TableCell[][], string>();
+    const tableCells = new WeakMap<unknown[], HistoryValue>();
     return {
       document: document === prior?.document ? prior.document : document,
-      spreads: Array.from(value[key] as unknown[], (spread, index) => saveSpread(spread, tablePayloads, prior?.spreads[index])),
+      spreads: Array.from(value[key] as unknown[], (spread, index) => saveSpread(spread, tableCells, prior?.spreads[index])),
     };
   }
 
   private restore(snapshot: Snapshot): T {
     if (typeof snapshot === 'string') return JSON.parse(snapshot);
     const document = JSON.parse(snapshot.document);
-    document[this.spreadKey!] = snapshot.spreads.map(readSpread);
+    // Copy each reference independently, including repeated table cell data.
+    document[this.spreadKey!] = snapshot.spreads.map(spread => 'json' in spread ? JSON.parse(spread.json) : copySnapshot(spread.value));
     return document;
   }
 
