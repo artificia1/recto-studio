@@ -1,8 +1,9 @@
 import type { IndexEntry, Page, StoryParagraph, StoryRun } from '../types';
-import { pageLabel } from './pageLabels';
+import { indexPageLabels } from './pageLabels';
 
 interface Node { name: string; children: Map<string, Node>; pages: Map<number, { label: string; elementId?: string }>; see: Set<string>; seeAlso: Set<string> }
-export function hierarchicalIndex(entries: IndexEntry[], pages: Page[]): StoryParagraph[] {
+export function hierarchicalIndex(entries: IndexEntry[], pages: Page[] | ReturnType<typeof indexPageLabels>): StoryParagraph[] {
+  const { byId, byNumber } = Array.isArray(pages) ? indexPageLabels(pages) : pages;
   const roots = new Map<string, Node>();
   for (const entry of entries) {
     let children = roots, node: Node | undefined;
@@ -14,8 +15,8 @@ export function hierarchicalIndex(entries: IndexEntry[], pages: Page[]): StoryPa
     if (!node) continue;
     if (entry.see) node.see.add(entry.see);
     for (const target of entry.seeAlso || []) node.seeAlso.add(target);
-    const page = pages.find(page => page.pageNumber === entry.pageNumber);
-    if (page && !entry.see) node.pages.set(page.pageNumber, { label: pageLabel(pages, page.id).label, elementId: entry.elementId });
+    const page = entry.pageNumber === undefined ? undefined : byNumber.get(entry.pageNumber);
+    if (page && !entry.see) node.pages.set(page.pageNumber, { label: byId.get(page.id)?.label ?? '', elementId: entry.elementId });
   }
   const paragraphs: StoryParagraph[] = [];
   const visit = (node: Node, depth: number) => {

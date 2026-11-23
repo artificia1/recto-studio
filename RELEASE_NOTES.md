@@ -1,3 +1,16 @@
+# Recto Studio 1.5.0
+
+- Keep long manuscripts responsive when moving and resizing frames, changing typography, or using Find/Change.
+- Preview Bézier node edits during dragging and save them as one undoable change when released.
+- Reuse page artwork, ruler marks, and snapping geometry while editing a spread. Skip redraws when a drag leaves the preview unchanged.
+- Edit large tables in the inspector one window at a time. Linked frames share table data in memory and reuse their composed layout in the editor and PDF export.
+- Refresh footnotes, headings, index entries, and cross-references with indexed page labels and a single pass through each linked story.
+- Batch autosaves and font activation, improve recovery of large desktop projects, and group preflight findings for easier review.
+
+Windows x64 packages include an installer and a portable ZIP. Linux x64 packages include a Debian package and an AppImage.
+
+---
+
 # Recto Studio 1.4.9
 
 - Open a text frame for editing before scheduling the canvas redraw. Editing existing copy reflows its linked story and refreshes any publication references affected by the edit.

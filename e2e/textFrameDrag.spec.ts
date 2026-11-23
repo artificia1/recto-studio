@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { projectFileInput, projectFixture } from './fixtures';
-import type { CanvasElement, ProjectState, TextElement } from '../src/types';
+import type { CanvasElement, ProjectState, TextElement, VectorPathElement } from '../src/types';
 
 interface DragTestWindow extends Window {
   recto: {
@@ -19,7 +19,11 @@ interface DragTestWindow extends Window {
       autosave: { schedule(): void };
       onMutation?: (...args: unknown[]) => void;
     };
-    spreadCanvas: { getSpreadScreenOrigin(state: ProjectState): { x: number; y: number } };
+    spreadCanvas: {
+      getSpreadScreenOrigin(state: ProjectState): { x: number; y: number };
+      dragPreview: Map<string, CanvasElement>;
+      render(...args: unknown[]): void;
+    };
   };
   dragCounts: { reflow: number; preflight: number; autosave: number; mutations: number };
 }
@@ -32,7 +36,23 @@ test.beforeEach(({ page }) => {
 });
 test.afterEach(({ page }) => { expect(runtimeErrors.get(page)).toEqual([]); });
 
-async function openBook(page: Page, baselineGrid = false) {
+test('moves ruler cursors independently of the marks and updates marks after panning', async ({ page }) => {
+  await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.abort());
+  await page.goto('/');
+  const cursor = page.locator('.ruler-cursor-top');
+  await expect(cursor).toBeVisible();
+  const initialTransform = await cursor.evaluate(element => (element as HTMLElement).style.transform);
+  const initialMarks = await page.locator('#ruler-top').evaluate(element => (element as HTMLCanvasElement).toDataURL());
+  const canvas = (await page.locator('#spread-canvas').boundingBox())!;
+  await page.mouse.move(canvas.x + canvas.width * 0.3, canvas.y + canvas.height * 0.3, { steps: 8 });
+  await expect.poll(() => cursor.evaluate(element => (element as HTMLElement).style.transform)).not.toBe(initialTransform);
+  expect(await page.locator('#ruler-top').evaluate(element => (element as HTMLCanvasElement).toDataURL())).toBe(initialMarks);
+
+  await page.evaluate(() => (window as unknown as DragTestWindow).recto.stateManager.setPan(43, 0));
+  await expect.poll(() => page.locator('#ruler-top').evaluate(element => (element as HTMLCanvasElement).toDataURL())).not.toBe(initialMarks);
+});
+
+async function openBook(page: Page, baselineGrid = false, includeVector = false) {
   await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.abort());
   const base = projectFixture();
   const frames: TextElement[] = Array.from({ length: 256 }, (_, index) => ({
@@ -43,10 +63,14 @@ async function openBook(page: Page, baselineGrid = false) {
   }));
   frames[0].storyContent = { version: 1, paragraphs: frames.map((_, index) => ({ id: `paragraph-${index}`,
     runs: [{ text: `Section ${index + 1}. ` + 'The long manuscript keeps its editable text while the frame is moved. '.repeat(20) }] })) };
+  const path: VectorPathElement = { id: 'drag-path', type: 'path', pageId: frames[25].pageId, x: 52, y: 76,
+    width: 42, height: 32, zIndex: 5, opacity: 1, rotation: 0, locked: false, closed: false,
+    nodes: [{ x: 0, y: 0 }, { x: 42, y: 32 }], fillColor: 'transparent', strokeColor: '#111111',
+    strokeWidthMm: 0.5, strokeCap: 'round', strokeJoin: 'round', strokeDash: 'solid' };
   const project = { ...base, settings: { ...base.settings, title: 'Linked book drag test',
     baselineGrid: { enabled: baselineGrid, incrementPt: 12, startMm: 25 } },
     spreads: frames.map((frame, index) => ({ id: `spread-${index}`, spreadIndex: index,
-      pages: [{ id: frame.pageId, pageNumber: index + 1, side: 'single' }], elements: [frame] })) };
+      pages: [{ id: frame.pageId, pageNumber: index + 1, side: 'single' }], elements: includeVector && index === 25 ? [frame, path] : [frame] })) };
   await page.goto('/');
   await projectFileInput(page).setInputFiles({ name: 'drag-book.recto', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)) });
   await expect(page.getByTitle('Click to rename document')).toHaveValue(project.settings.title);
@@ -182,6 +206,23 @@ test('drags a linked frame without reflowing or saving the book until release, t
   expect(await snapshot(page)).toEqual(before);
   expect(await page.evaluate(() => (window as unknown as DragTestWindow).dragCounts))
     .toEqual({ reflow: 0, preflight: 0, autosave: 0, mutations: 0 });
+  const duplicatePaints = await page.evaluate(async ({ x, y }) => {
+    const canvas = (window as unknown as DragTestWindow).recto.spreadCanvas;
+    const nextFrame = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    const repeat = () => window.dispatchEvent(new MouseEvent('mousemove', { clientX: x, clientY: y, buttons: 1 }));
+    repeat();
+    await nextFrame();
+    let paints = 0;
+    const render = canvas.render;
+    canvas.render = function (...args) { paints++; return render.apply(this, args); };
+    try {
+      for (let step = 0; step < 3; step++) { repeat(); await nextFrame(); }
+    } finally {
+      canvas.render = render;
+    }
+    return paints;
+  }, { x: point.x + 80, y: point.y + 30 });
+  expect(duplicatePaints).toBe(0);
   await page.mouse.up();
   const after = await snapshot(page);
   expect(after.x).not.toBe(before.x);
@@ -214,6 +255,73 @@ test('cancels a frame drag on Escape, pointer cancellation, focus loss, or a doc
     expect([after.x, after.y, after.story]).toEqual([before.x, before.y, before.story]);
     expect(after.revision).toBe(before.revision + (cancel === 'edit' ? 1 : 0));
   }
+});
+
+test('previews a vector node without revising a 256-page book and commits one undo step', async ({ page }) => {
+  await openBook(page, false, true);
+  const start = await page.evaluate(() => {
+    const browser = window as unknown as DragTestWindow;
+    const { stateManager: manager, spreadCanvas: canvas } = browser.recto;
+    manager.selectElement('drag-path');
+    browser.dragCounts = { reflow: 0, preflight: 0, autosave: 0, mutations: 0 };
+    const reflow = manager.reflowStory.bind(manager);
+    manager.reflowStory = (id, resume) => { browser.dragCounts.reflow++; reflow(id, resume); };
+    const path = manager.getElementById('drag-path') as VectorPathElement;
+    const origin = canvas.getSpreadScreenOrigin(manager.getState());
+    const box = document.querySelector('#spread-canvas')!.getBoundingClientRect();
+    return { x: box.left + origin.x + path.x * 96 / 25.4,
+      y: box.top + origin.y + path.y * 96 / 25.4, revision: manager.getDocumentRevision() };
+  });
+  const read = () => page.evaluate(() => {
+    const { stateManager: manager, spreadCanvas: canvas } = (window as unknown as DragTestWindow).recto;
+    const path = manager.getElementById('drag-path') as VectorPathElement;
+    const preview = canvas.dragPreview.get(path.id) as VectorPathElement | undefined;
+    return { revision: manager.getDocumentRevision(), current: path.nodes[0], draft: preview?.nodes[0] };
+  });
+  const drag = async () => {
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(start.x + 34, start.y + 20, { steps: 12 });
+  };
+
+  await drag();
+  await expect.poll(async () => (await read()).draft?.x ?? 0).toBeGreaterThan(7);
+  expect(await read()).toMatchObject({ revision: start.revision, current: { x: 0, y: 0 } });
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  expect(await read()).toEqual({ revision: start.revision, current: { x: 0, y: 0 }, draft: undefined });
+
+  await drag();
+  await page.mouse.up();
+  expect((await read()).current.x).toBeGreaterThan(7);
+  expect((await read()).revision).toBe(start.revision + 1);
+  expect(await page.evaluate(() => (window as unknown as DragTestWindow).dragCounts.reflow)).toBe(0);
+  await page.keyboard.press('Control+z');
+  expect((await read()).current).toEqual({ x: 0, y: 0 });
+});
+
+test('draws a pen handle as a preview before saving a mirrored pair', async ({ page }) => {
+  const start = await openBook(page);
+  await page.getByTitle('Pen Tool (P)').click();
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  const read = () => page.evaluate(() => {
+    const { stateManager: manager, spreadCanvas: canvas } = (window as unknown as DragTestWindow).recto;
+    const state = manager.getState();
+    const path = state.spreads[state.activeSpreadIndex].elements.find((element): element is VectorPathElement => element.type === 'path')!;
+    const preview = canvas.dragPreview.get(path.id) as VectorPathElement | undefined;
+    return { revision: manager.getDocumentRevision(), saved: path.nodes[0], draft: preview?.nodes[0] };
+  });
+  const created = await read();
+  await page.mouse.move(start.x + 32, start.y + 19, { steps: 8 });
+  await expect.poll(async () => (await read()).draft?.handleOut?.x ?? 0).toBeGreaterThan(7);
+  expect(await read()).toMatchObject({ revision: created.revision, saved: { x: 0, y: 0 } });
+  await page.mouse.up();
+  const after = await read();
+  expect(after.revision).toBe(created.revision + 1);
+  expect(after.saved.handleIn).toEqual({ x: -after.saved.handleOut!.x, y: -after.saved.handleOut!.y });
+  await page.keyboard.press('Control+z');
+  expect((await read()).saved).toEqual({ x: 0, y: 0 });
 });
 
 test('reflows a grid-dependent story once after a drag is released', async ({ page }) => {

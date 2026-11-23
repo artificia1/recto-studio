@@ -67,7 +67,7 @@ import {
   DEFAULT_CONDITIONS,
   INITIAL_STATE,
 } from './defaults';
-import { parseProject, validateProjectValue } from './projectValidation';
+import { parseProject, validateProjectValue, validateTableFrames } from './projectValidation';
 import { fontManager } from '../fontManager';
 import { parseMergeData, generateMergedSpreads, substituteElementTokens } from '../dataMerge';
 import { KnuthPlassComposer, ComposerOptions } from '../engine/knuthPlass';
@@ -161,6 +161,13 @@ const frameLayoutFields = new Set([
 ]);
 
 export type StateListener = (state: ProjectState, panOnly: boolean) => void;
+
+const tableSourceFields = [
+  'cells', 'rows', 'cols', 'rowSizing', 'allowRowSplit', 'headerRowCount', 'footerRowCount',
+  'headerFillColor', 'headerTextColor', 'footerFillColor', 'footerTextColor', 'alternateRowColor',
+  'fontFamily', 'fontSizePt', 'cellPaddingMm', 'borderColor', 'borderWidthMm', 'colWidthsMm', 'rowHeightsMm',
+] as const satisfies readonly (keyof TableElement)[];
+type TableSourceUpdates = Partial<Pick<TableElement, typeof tableSourceFields[number]>>;
 
 export class StateManager {
   private documentRevision = 0;
@@ -787,8 +794,12 @@ export class StateManager {
   }
 
   public selectElements(ids: string[]) {
-    const groups = new Set(this.getActiveSpread().elements.filter(element => ids.includes(element.id)).map(element => element.groupId).filter(Boolean));
-    this.state.selectedElementIds = [...new Set([...ids, ...this.getActiveSpread().elements.filter(element => element.groupId && groups.has(element.groupId)).map(element => element.id)])];
+    const selected = new Set(ids);
+    const elements = this.getActiveSpread().elements;
+    const groups = new Set<string>();
+    for (const element of elements) if (element.groupId && selected.has(element.id)) groups.add(element.groupId);
+    if (groups.size) for (const element of elements) if (element.groupId && groups.has(element.groupId)) selected.add(element.id);
+    this.state.selectedElementIds = [...selected];
     this.state.selectedElementId = ids.length > 0 ? ids[0] : null;
     this.notify(false);
   }
@@ -796,8 +807,10 @@ export class StateManager {
   public toggleElementSelection(id: string) {
     const member = this.getActiveSpread().elements.find(element => element.id === id);
     const ids = member?.groupId ? this.getActiveSpread().elements.filter(element => element.groupId === member.groupId).map(element => element.id) : [id];
-    const remove = ids.every(key => this.state.selectedElementIds.includes(key));
-    this.selectElements(remove ? this.state.selectedElementIds.filter(key => !ids.includes(key)) : [...this.state.selectedElementIds, ...ids]);
+    const current = new Set(this.state.selectedElementIds);
+    if (ids.every(key => current.has(key))) for (const key of ids) current.delete(key);
+    else for (const key of ids) current.add(key);
+    this.selectElements([...current]);
   }
 
   public getActiveSpread(): Spread {
@@ -854,7 +867,11 @@ export class StateManager {
       if (current.type === 'text' && 'text' in updates && this.getStoryHead(current.id)?.generated) throw new Error('Make this generated list static in Pages before editing its text.');
       spread.elements[idx] = { ...spread.elements[idx], ...updates } as CanvasElement;
       const el = spread.elements[idx];
-      if (Object.keys(updates).every(key => layoutNeutralElementFields.has(key))) {
+      const fields = Object.keys(updates);
+      const independentPathEdit = current.type === 'path' && !current.anchor && !current.pasteboard &&
+        (!current.textWrap?.mode || current.textWrap.mode === 'none') &&
+        fields.every(key => key === 'nodes' || key === 'width' || key === 'height');
+      if (independentPathEdit || fields.every(key => layoutNeutralElementFields.has(key))) {
         if (recordHistory) this.history.push(this.state);
         this.notify();
         this.onMutation?.({ type: 'update', elementId: id, updates });
@@ -902,13 +919,15 @@ export class StateManager {
     const spread = this.getActiveSpread();
     // Translation preserves line geometry when neither a grid nor wrap/anchor objects depend on page coordinates.
     const translationOnly = updates.every(({ partial }) => Object.keys(partial).every(key => key === 'x' || key === 'y'));
+    const indexes = translationOnly && updates.length > 1
+      ? new Map(spread.elements.map((element, index) => [element.id, index])) : undefined;
     const layoutIsCurrent = translationOnly && !this.state.settings.baselineGrid?.enabled &&
       !this.state.settings.footnotes?.length && ![...this.state.spreads, ...this.state.masterSpreads].some(spread =>
         spread.elements.some(element => element.anchor || element.pasteboard ||
           (element.textWrap?.mode && element.textWrap.mode !== 'none')));
     let changed = false;
     for (const { id, partial } of updates) {
-      const idx = spread.elements.findIndex(el => el.id === id);
+      const idx = indexes ? indexes.get(id) ?? -1 : spread.elements.findIndex(el => el.id === id);
       if (idx !== -1) {
         if (spread.elements[idx].locked && partial.locked === undefined) continue;
         spread.elements[idx] = { ...spread.elements[idx], ...partial } as CanvasElement;
@@ -1796,12 +1815,20 @@ export class StateManager {
     return frames;
   }
 
-  public updateTableSource(frameId: string, updates: Partial<Pick<TableElement, 'cells' | 'rows' | 'cols' | 'rowSizing' | 'allowRowSplit' | 'headerRowCount' | 'footerRowCount' | 'headerFillColor' | 'headerTextColor' | 'footerFillColor' | 'footerTextColor' | 'alternateRowColor' | 'fontFamily' | 'fontSizePt' | 'cellPaddingMm' | 'borderColor' | 'borderWidthMm' | 'colWidthsMm' | 'rowHeightsMm'>>) {
+  public updateTableSource(frameId: string, updates: TableSourceUpdates) {
     const frames = this.editableTableThread(frameId);
-    const candidate = structuredClone(this.state), ids = new Set(frames.map(frame => frame.id));
-    for (const spread of candidate.spreads) for (const frame of spread.elements) if (ids.has(frame.id)) Object.assign(frame, structuredClone(updates));
-    this.state = parseProject(JSON.stringify(candidate), INITIAL_STATE);
-    this.pushHistory(); this.notify();
+    if (Object.keys(updates).some(field => !tableSourceFields.some(allowed => allowed === field))) {
+      throw new Error('Only table content and formatting can be changed through this operation.');
+    }
+    this.updateTableFrames(frames, structuredClone(updates));
+  }
+
+  private updateTableFrames(frames: TableElement[], updates: TableSourceUpdates) {
+    validateTableFrames(frames.map(frame => ({ ...frame, ...updates, textWrap: frame.textWrap && { ...frame.textWrap } })));
+    // Table edits replace the cell matrix. Continuations can share it until the next edit.
+    for (const frame of frames) Object.assign(frame, updates);
+    this.history.push(this.state);
+    this.notify();
   }
 
   /** Append a single-page continuation in one undo step, retaining page-local geometry. */
@@ -1809,8 +1836,9 @@ export class StateManager {
     const frames = this.editableTableThread(frameId), source = frames[0], tail = frames.at(-1)!;
     if (frames.some(frame => frame.pasteboard)) throw new Error('Place this table on a page before adding a continuation.');
     const pageId = `page-${crypto.randomUUID()}`;
-    const next: TableElement = { ...structuredClone(tail), id: `table-${crypto.randomUUID()}`, pageId,
-      cells: structuredClone(source.cells), rows: source.rows, cols: source.cols, rowSizing: source.rowSizing,
+    const { cells: _cells, ...tailFrame } = tail;
+    const next: TableElement = { ...structuredClone(tailFrame), id: `table-${crypto.randomUUID()}`, pageId,
+      cells: source.cells, rows: source.rows, cols: source.cols, rowSizing: source.rowSizing,
       headerRowCount: source.headerRowCount, footerRowCount: source.footerRowCount,
       rowHeightsMm: source.rowHeightsMm?.slice(), colWidthsMm: source.colWidthsMm?.slice(),
       prevFrameId: tail.id, nextFrameId: undefined, groupId: undefined, zIndex: 1 };
@@ -2929,13 +2957,14 @@ export class StateManager {
   }
 
   public updateTableCell(tableId: string, row: number, col: number, text: string) {
-    const tableEl = this.editableTableThread(tableId)[0];
-    if (tableEl.cells[row] && tableEl.cells[row][col]) {
-      const newCells = tableEl.cells.map((r, rIdx) =>
-        r.map((c, cIdx) => (rIdx === row && cIdx === col ? { ...c, text } : { ...c }))
-      );
-      this.updateTableSource(tableId, { cells: newCells });
-    }
+    const frames = this.editableTableThread(tableId);
+    const source = frames[0].cells;
+    const cell = source[row]?.[col];
+    if (!cell || cell.text === text) return;
+    const cells = source.slice();
+    cells[row] = source[row].slice();
+    cells[row][col] = { ...cell, text };
+    this.updateTableFrames(frames, { cells });
   }
 
   public executeDataMerge(

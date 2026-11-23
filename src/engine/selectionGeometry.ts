@@ -14,9 +14,14 @@ export function restorePlacedPasteboard(state: ProjectState, element: CanvasElem
 /** A locked member protects the whole flat group during direct manipulation. */
 export function lockedArtworkIds(state: ProjectState) {
   const elements = state.spreads[state.activeSpreadIndex].elements;
-  const locked = elements.filter(element => element.locked || element.editorialOnly || state.layers.find(layer => layer.id === (element.layerId || 'layer-1'))?.locked);
-  const groups = new Set(locked.map(element => element.groupId).filter(Boolean));
-  return new Set(elements.filter(element => locked.includes(element) || (element.groupId && groups.has(element.groupId))).map(element => element.id));
+  const lockedLayers = new Set(state.layers.filter(layer => layer.locked).map(layer => layer.id));
+  const locked = new Set<string>(), groups = new Set<string>();
+  for (const element of elements) {
+    if (!element.locked && !element.editorialOnly && !lockedLayers.has(element.layerId || 'layer-1')) continue;
+    locked.add(element.id);
+    if (element.groupId) groups.add(element.groupId);
+  }
+  return new Set(elements.filter(element => locked.has(element.id) || (element.groupId && groups.has(element.groupId))).map(element => element.id));
 }
 
 export function selectionUnits(state: ProjectState, skipEditorial = false) {
@@ -62,7 +67,11 @@ export function arrangeSelection(state: ProjectState, operation: 'left' | 'cente
     let cursor = units[0][start];
     units.forEach(unit => { move(unit, cursor - unit[start]); cursor += unit[end] - unit[start] + spacing; });
   } else {
-    const min = Math.min(...units.map(unit => unit[start])), max = Math.max(...units.map(unit => unit[end]));
+    let min = Infinity, max = -Infinity;
+    for (const unit of units) {
+      min = Math.min(min, unit[start]);
+      max = Math.max(max, unit[end]);
+    }
     const center = operation === 'center' || operation === 'middle', trailing = operation === 'right' || operation === 'bottom';
     units.forEach(unit => move(unit, center ? (min + max - unit[start] - unit[end]) / 2 : trailing ? max - unit[end] : min - unit[start]));
   }

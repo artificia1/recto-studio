@@ -1,6 +1,6 @@
 import type { Footnote, ProjectState, StoryContent, StoryRun, TextElement } from '../types';
 import { indexStory, plainStory, sliceStory, storyText } from './storyContent';
-import { pageLabel } from './pageLabels';
+import { indexPageLabels } from './pageLabels';
 import { layoutStory, layoutStoryParagraphs, type StoryMeasure } from './storyLayout';
 import { publicationWrapObjects } from './publicationWrap';
 import { hierarchicalIndex } from './indexLayout';
@@ -35,57 +35,89 @@ export function insertRun(content: StoryContent, start: number, end: number, run
   return { version: 1, paragraphs: [...left.slice(0, -1), { ...left.at(-1)!, runs: [...left.at(-1)!.runs, run, ...right[0].runs] }, ...right.slice(1)] };
 }
 
-function frameAt(state: ProjectState, head: TextElement, offset: number, byId?: Map<string, TextElement>): TextElement {
+/** Walk each thread once for callers visiting offsets in manuscript order. */
+function scanStoryFrames(head: TextElement, findFrame: (id: string) => TextElement | undefined) {
   let frame = head;
   const seen = new Set<string>();
-  byId ??= new Map(textFrames(state).map(frame => [frame.id, frame]));
-  while (frame.nextFrameId && !seen.has(frame.id) && offset >= (frame.storyEnd ?? Infinity)) {
-    seen.add(frame.id);
-    const next = byId.get(frame.nextFrameId);
-    if (!next) break;
-    frame = next;
-  }
-  return frame;
+  return (offset: number) => {
+    while (frame.nextFrameId && !seen.has(frame.id) && offset >= (frame.storyEnd ?? Infinity)) {
+      seen.add(frame.id);
+      const next = findFrame(frame.nextFrameId);
+      if (!next) break;
+      frame = next;
+    }
+    return frame;
+  };
 }
 
 export interface PublicationHeading { title: string; level: number; elementId: string; paragraphId?: string; pageId: string; label: string; pageNumber: number }
 export const publicationId = (kind: string, id: string) => `${kind}-${[...new TextEncoder().encode(id)].map(byte => byte.toString(16).padStart(2, '0')).join('')}`;
 export function publicationText(state: ProjectState, text: string, pageNumber: number): string {
-  if (!text.includes('{')) return text;
-  const pages = state.spreads.flatMap(spread => spread.pages);
-  const page = pages.find(page => page.pageNumber === pageNumber);
-  const labels = pageLabel(pages, page?.id || '');
-  const chapter = /\{\{(?:sectionTitle|chapterTitle)\}\}/i.test(text)
-    ? publicationHeadings(state).filter(heading => heading.level === 1 && heading.pageNumber <= pageNumber).at(-1)?.title || labels.sectionTitle || state.settings.title
-    : '';
-  const hidden = new Set(state.conditions?.filter(condition => !condition.visible).map(condition => condition.name.toLowerCase()) || []);
-  return text.replace(/\{\{(page|physicalPage|totalPages|docTitle|sectionTitle|chapterTitle)\}\}/gi, (_, token: string) => ({ page: labels.label, physicalpage: String(pageNumber), totalpages: String(pages.length), doctitle: state.settings.title, sectiontitle: labels.sectionTitle || chapter, chaptertitle: chapter }[token.toLowerCase()] || ''))
-    .replace(/\{xref:([^}]+)\}/g, (_, id: string) => { const target = textFrames(state).find(frame => frame.id === id.trim()); return target ? pageLabel(pages, target.pageId).label : '[#?]'; })
-    .replace(/\{cond:([^}]+)\}([\s\S]*?)\{\/cond\}/g, (_, name: string, content: string) => hidden.has(name.trim().toLowerCase()) ? '' : content)
-    .replace(/\{index:[^}]+\}/g, '');
+  return text.includes('{') ? createPublicationTextResolver(state)(text, pageNumber) : text;
+}
+
+/** Reuse reference lookups while painting one immutable publication snapshot. */
+export function createPublicationTextResolver(state: ProjectState) {
+  let pages: ReturnType<typeof indexPageLabels> | undefined;
+  let pageCount = 0;
+  let headings: PublicationHeading[] | undefined;
+  let frames: Map<string, TextElement> | undefined;
+  let hidden: Set<string> | undefined;
+  const chapterByPage = new Map<number, string>();
+  return (text: string, pageNumber: number): string => {
+    if (!text.includes('{')) return text;
+    if (!pages) {
+      const all = state.spreads.flatMap(spread => spread.pages);
+      pageCount = all.length;
+      pages = indexPageLabels(all);
+    }
+    const { byId, byNumber } = pages;
+    const labels = byId.get(byNumber.get(pageNumber)?.id || '');
+    let chapter = '';
+    if (/\{\{(?:sectionTitle|chapterTitle)\}\}/i.test(text)) {
+      headings ??= publicationHeadings(state).filter(heading => heading.level === 1);
+      chapter = chapterByPage.get(pageNumber) ?? (headings.findLast(heading => heading.pageNumber <= pageNumber)?.title || labels?.sectionTitle || state.settings.title);
+      chapterByPage.set(pageNumber, chapter);
+    }
+    const tokens: Record<string, string | undefined> = { page: labels?.label, physicalpage: String(pageNumber), totalpages: String(pageCount),
+      doctitle: state.settings.title, sectiontitle: labels?.sectionTitle || chapter, chaptertitle: chapter };
+    return text.replace(/\{\{(page|physicalPage|totalPages|docTitle|sectionTitle|chapterTitle)\}\}/gi, (_, token: string) => tokens[token.toLowerCase()] ?? '')
+      .replace(/\{xref:([^}]+)\}/g, (_, id: string) => {
+        frames ??= new Map(textFrames(state).reverse().map(frame => [frame.id, frame]));
+        const target = frames.get(id.trim());
+        return target ? byId.get(target.pageId)?.label ?? '' : '[#?]';
+      })
+      .replace(/\{cond:([^}]+)\}([\s\S]*?)\{\/cond\}/g, (_, name: string, content: string) => {
+        hidden ??= new Set(state.conditions?.filter(condition => !condition.visible).map(condition => condition.name.toLowerCase()));
+        return hidden.has(name.trim().toLowerCase()) ? '' : content;
+      })
+      .replace(/\{index:[^}]+\}/g, '');
+  };
 }
 export function publicationHeadings(state: ProjectState): PublicationHeading[] {
   const pages = state.spreads.flatMap(spread => spread.pages);
-  const pageById = new Map<string, { page: typeof pages[number]; index: number }>();
-  pages.forEach((page, index) => { if (!pageById.has(page.id)) pageById.set(page.id, { page, index }); });
+  const { byId: pageById } = indexPageLabels(pages);
   const frames = textFrames(state);
   const byId = new Map(frames.map(frame => [frame.id, frame]));
+  const styles = new Map<string, ProjectState['paragraphStyles'][number]>();
+  for (const style of state.paragraphStyles) if (!styles.has(style.id)) styles.set(style.id, style);
   const result: PublicationHeading[] = [];
   for (const head of frames.filter(frame => !frame.prevFrameId)) {
     if (head.generated || head.pasteboard) continue;
+    const frameAt = scanStoryFrames(head, id => byId.get(id));
     let offset = 0;
     for (const [index, paragraph] of contentOf(head).paragraphs.entries()) {
-      const style = state.paragraphStyles.find(style => style.id === (paragraph.styleId || head.paragraphStyleId));
+      const style = styles.get(paragraph.styleId || head.paragraphStyleId || '');
       const tag = style?.pdfTag || '';
       const level = /^H[1-6]$/.test(tag) ? Number(tag[1]) : tag === 'Title' ? 1 :
         /style-h([1-6])/.exec(paragraph.styleId || head.paragraphStyleId || '')?.[1] ||
         (/headline|heading\s*1/i.test(style?.name || '') ? 1 : !head.storyContent && index === 0 && head.fontSizePt >= 24 ? 1 : 0);
-      const title = paragraph.runs.map(run => run.text).join('').trim();
+      const title = level ? paragraph.runs.map(run => run.text).join('').trim() : '';
       if (level && title) {
-        const frame = frameAt(state, head, offset, byId);
+        const frame = frameAt(offset);
         result.push({ title, level: Number(level), elementId: head.id, paragraphId: paragraph.id,
-          pageId: frame.pageId, pageNumber: pageById.get(frame.pageId)?.page.pageNumber || 1,
-          label: pageLabel(pages, frame.pageId).label });
+          pageId: frame.pageId, pageNumber: pageById.get(frame.pageId)?.pageNumber || 1,
+          label: pageById.get(frame.pageId)?.label ?? '' });
       }
       offset += paragraph.runs.reduce((n, run) => n + run.text.length, 0) + 1;
     }
@@ -293,7 +325,8 @@ export function layoutFrameNotes(state: ProjectState, frame: TextElement, notes?
 export function refreshPublication(state: ProjectState): boolean {
   let changed = false;
   if (!state.settings.identifier) { state.settings.identifier = `urn:uuid:${crypto.randomUUID()}`; changed = true; }
-  const heads = storyHeads(state);
+  const frames = textFrames(state);
+  const heads = frames.filter(frame => !frame.prevFrameId);
   const usedParagraphs = new Set<string>();
   for (const head of heads) if (head.storyContent) for (const paragraph of head.storyContent.paragraphs) {
     if (!paragraph.id || usedParagraphs.has(paragraph.id)) {
@@ -302,30 +335,45 @@ export function refreshPublication(state: ProjectState): boolean {
     }
     usedParagraphs.add(paragraph.id);
   }
-  const pages = state.spreads.flatMap(spread => spread.pages);
+  let pages: ReturnType<typeof indexPageLabels> | undefined;
+  const pageIndex = () => pages ??= indexPageLabels(state.spreads.flatMap(spread => spread.pages));
+  let frameById: Map<string, TextElement> | undefined;
+  const findFrame = (id: string) => (frameById ??= new Map(frames.map(frame => [frame.id, frame]))).get(id);
+  const notes = new Map<string, Footnote>();
+  for (const note of state.settings.footnotes || []) if (!notes.has(note.id)) notes.set(note.id, note);
+  const indexEntries = new Map<string, NonNullable<ProjectState['indexEntries']>[number]>();
+  for (const entry of state.indexEntries || []) if (!indexEntries.has(entry.id)) indexEntries.set(entry.id, entry);
   const occurrences: { note: Footnote; run: StoryRun; frame: TextElement; offset: number }[] = [];
-  for (const head of state.settings.footnotes?.length || state.indexEntries?.length ? heads : []) {
+  for (const head of notes.size || indexEntries.size ? heads : []) {
     if (head.generated) continue;
+    const frameAt = scanStoryFrames(head, findFrame);
     let offset = 0;
     for (const paragraph of contentOf(head).paragraphs) {
       for (const run of paragraph.runs) {
-        const note = state.settings.footnotes?.find(note => note.id === run.noteId);
-        if (note) occurrences.push({ note, run, frame: frameAt(state, head, offset), offset });
-        const entry = state.indexEntries?.find(entry => entry.id === run.indexId);
-        if (entry) { entry.elementId = frameAt(state, head, offset).id; entry.pageNumber = pages.find(page => page.id === frameAt(state, head, offset).pageId)?.pageNumber || 1; }
+        const note = run.noteId ? notes.get(run.noteId) : undefined;
+        const entry = run.indexId ? indexEntries.get(run.indexId) : undefined;
+        if (note || entry) {
+          const frame = frameAt(offset);
+          if (note) occurrences.push({ note, run, frame, offset });
+          if (entry) { entry.elementId = frame.id; entry.pageNumber = pageIndex().byId.get(frame.pageId)?.pageNumber || 1; }
+        }
         offset += run.text.length;
       }
       offset++;
     }
   }
-  occurrences.sort((a, b) => pages.findIndex(page => page.id === a.frame.pageId) - pages.findIndex(page => page.id === b.frame.pageId) || a.frame.y - b.frame.y || a.frame.x - b.frame.x || a.offset - b.offset);
+  if (occurrences.length) {
+    const { byId } = pageIndex();
+    occurrences.sort((a, b) => (byId.get(a.frame.pageId)?.index ?? -1) - (byId.get(b.frame.pageId)?.index ?? -1) ||
+      a.frame.y - b.frame.y || a.frame.x - b.frame.x || a.offset - b.offset);
+  }
   const seen = new Set<string>();
   const counters = new Map<string, number>();
   for (const { note, run, frame } of occurrences) {
     if (seen.has(note.id)) continue;
     seen.add(note.id);
     const scope = state.settings.footnoteSettings?.scope;
-    const section = pages.slice(0, pages.findIndex(page => page.id === frame.pageId) + 1).findLast(page => page.section)?.id || 'document';
+    const section = scope === 'section' ? pageIndex().byId.get(frame.pageId)?.sectionId ?? 'document' : 'document';
     const key = `${note.kind || 'footnote'}:${note.kind === 'endnote' ? 'document' : scope === 'page' ? frame.pageId : scope === 'section' ? section : 'document'}`;
     const number = (counters.get(key) || 0) + 1; counters.set(key, number);
     note.number = number; note.elementId = frame.id; note.pageId = frame.pageId;
@@ -341,14 +389,15 @@ export function refreshPublication(state: ProjectState): boolean {
   const captions = references.some(run => run.reference!.format === 'caption') || generatedHeads.some(head =>
     ['caption', 'figures', 'tables'].includes(head.generated!.kind)) ? publicationCaptions(state) : [];
   const captionById = new Map(captions.map(item => [item.id, item]));
-  const frameById = new Map((references.length ? textFrames(state) : []).map(frame => [frame.id, frame]));
+  const headingById = new Map<string, PublicationHeading>();
+  for (const heading of headings) if (heading.paragraphId && !headingById.has(heading.paragraphId)) headingById.set(heading.paragraphId, heading);
   for (const run of references) {
     const ref = run.reference!;
-    const heading = ref.targetParagraphId ? headings.find(heading => ref.targetParagraphId === heading.paragraphId) : undefined;
+    const heading = ref.targetParagraphId ? headingById.get(ref.targetParagraphId) : undefined;
     if (heading && ref.targetElementId !== heading.elementId) { ref.targetElementId = heading.elementId; changed = true; }
-    const target = frameById.get(ref.targetElementId);
+    const target = findFrame(ref.targetElementId);
     const label = ref.format === 'caption' ? captionById.get(ref.targetElementId)?.label || '[missing caption]' : heading ? (ref.format === 'title' ? heading.title : heading.label) :
-      !ref.targetParagraphId && target ? (ref.format === 'title' ? target.text.split('\n')[0] : pageLabel(pages, target.pageId).label) : '[missing reference]';
+      !ref.targetParagraphId && target ? (ref.format === 'title' ? target.text.split('\n')[0] : pageIndex().byId.get(target.pageId)?.label ?? '') : '[missing reference]';
     if (run.text !== label) { run.text = label; changed = true; }
   }
   for (const head of generatedHeads) {
@@ -375,17 +424,18 @@ export function refreshPublication(state: ProjectState): boolean {
       const entries = (state.indexEntries || []).filter(entry => authorities ? !!entry.authorityCategory && liveIds.has(entry.id) : !entry.authorityCategory);
       for (const source of heads.filter(source => !source.generated)) {
         if (authorities) break;
+        const frameAt = scanStoryFrames(source, findFrame);
         for (const match of storyText(contentOf(source)).matchAll(/\{index:([^}]+)\}/g)) {
           const [topic, subtopic] = match[1].split(':');
-          const frame = frameAt(state, source, match.index!);
-          entries.push({ id: '', topic, subtopic, elementId: frame.id, pageNumber: pages.find(page => page.id === frame.pageId)?.pageNumber || 1 });
+          const frame = frameAt(match.index!);
+          entries.push({ id: '', topic, subtopic, elementId: frame.id, pageNumber: pageIndex().byId.get(frame.pageId)?.pageNumber || 1 });
         }
       }
       for (const entry of entries) {
         const topic = `${authorities ? `${entry.authorityCategory}\u0000` : ''}${entry.topic}${entry.subtopic ? ` — ${entry.subtopic}` : ''}`;
-        const page = pages.find(page => page.pageNumber === entry.pageNumber);
+        const page = entry.pageNumber === undefined ? undefined : pageIndex().byNumber.get(entry.pageNumber);
         const labels = topics.get(topic) || new Map<number, { label: string; elementId?: string }>();
-        if (page) labels.set(page.pageNumber, { label: pageLabel(pages, page.id).label, elementId: entry.elementId });
+        if (page) labels.set(page.pageNumber, { label: pageIndex().byId.get(page.id)?.label ?? '', elementId: entry.elementId });
         topics.set(topic, labels);
       }
       const paragraphs: StoryContent['paragraphs'] = [{ runs: [{ text: generated.title }] }];
@@ -402,7 +452,7 @@ export function refreshPublication(state: ProjectState): boolean {
         }
         paragraphs.push({ runs });
       }
-      content = { version: 1, paragraphs: authorities ? paragraphs : [{ runs: [{ text: generated.title }] }, ...hierarchicalIndex(entries, pages)] };
+      content = { version: 1, paragraphs: authorities ? paragraphs : [{ runs: [{ text: generated.title }] }, ...hierarchicalIndex(entries, pageIndex())] };
     }
     // Paragraph IDs on generated lists are not reference targets.
     const comparable = (value: StoryContent) => JSON.stringify(value.paragraphs.map(({ id: _, ...paragraph }) => paragraph));

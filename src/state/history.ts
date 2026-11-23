@@ -1,17 +1,35 @@
-import type { CanvasElement, Spread } from '../types';
+import type { CanvasElement, Spread, TableCell } from '../types';
 
 const payloadFields = ['src', 'proxySrc', 'text', 'rawStoryText', 'storyContent', 'textContent'] as const;
-type PayloadField = typeof payloadFields[number];
+type PayloadField = typeof payloadFields[number] | 'cells';
 type Payload = { index: number; field: PayloadField; data: string; encoded: boolean };
 type SpreadSnapshot = string | { shell: string; payloads: Payload[] };
 type Snapshot = string | { document: string; spreads: SpreadSnapshot[] };
 
-function saveSpread(value: unknown, previous?: SpreadSnapshot): SpreadSnapshot {
+function saveSpread(value: unknown, tablePayloads: WeakMap<TableCell[][], string>, previous?: SpreadSnapshot): SpreadSnapshot {
   const spread = value as Partial<Spread> | null;
   if (Array.isArray(spread?.elements)) {
     let elements: CanvasElement[] | undefined;
     const payloads: Payload[] = [];
     spread.elements.forEach((element, index) => {
+      if (element?.type !== 'text' && element?.type !== 'image' && element?.type !== 'table') return;
+      const savePayload = (field: PayloadField, data: string, encoded: boolean) => {
+        const before = typeof previous === 'object' ? previous.payloads[payloads.length] : undefined;
+        payloads.push(before?.index === index && before.field === field && before.data === data && before.encoded === encoded
+          ? before : { index, field, data, encoded });
+        elements ??= spread.elements!.slice();
+        if (elements[index] === element) elements[index] = { ...element };
+        (elements[index] as unknown as Record<PayloadField, unknown>)[field] = null;
+      };
+      if (element?.type === 'table' && Array.isArray(element.cells) && (element.prevFrameId || element.nextFrameId)) {
+        let data = tablePayloads.get(element.cells);
+        if (data === undefined) {
+          data = JSON.stringify(element.cells);
+          tablePayloads.set(element.cells, data);
+        }
+        savePayload('cells', data, true);
+        return;
+      }
       if (element?.type !== 'text' && element?.type !== 'image') return;
       const fields = element as unknown as Partial<Record<PayloadField, unknown>>;
       for (const field of payloadFields) {
@@ -24,12 +42,7 @@ function saveSpread(value: unknown, previous?: SpreadSnapshot): SpreadSnapshot {
         if (length < 32_768 && !largeStory && !largeSlice) continue;
         const encoded = typeof value !== 'string';
         const data = encoded ? JSON.stringify(value) : value;
-        const before = typeof previous === 'object' ? previous.payloads[payloads.length] : undefined;
-        payloads.push(before?.index === index && before.field === field && before.data === data && before.encoded === encoded
-          ? before : { index, field, data, encoded });
-        elements ??= spread.elements!.slice();
-        if (elements[index] === element) elements[index] = { ...element };
-        (elements[index] as unknown as Record<PayloadField, unknown>)[field] = null;
+        savePayload(field, data, encoded);
       }
     });
     if (elements) {
@@ -73,9 +86,10 @@ export class StateHistory<T> {
     const previous = this.entries[this.index];
     const prior = typeof previous === 'object' ? previous : undefined;
     const document = JSON.stringify({ ...value, [key]: null });
+    const tablePayloads = new WeakMap<TableCell[][], string>();
     return {
       document: document === prior?.document ? prior.document : document,
-      spreads: Array.from(value[key] as unknown[], (spread, index) => saveSpread(spread, prior?.spreads[index])),
+      spreads: Array.from(value[key] as unknown[], (spread, index) => saveSpread(spread, tablePayloads, prior?.spreads[index])),
     };
   }
 

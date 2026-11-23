@@ -26,22 +26,37 @@ function roman(value: number): string {
   return result;
 }
 
+function printedLabel(page: Page, section: PublicationSection | undefined, offset: number) {
+  if (!section) return { label: String(page.pageNumber), sectionTitle: '' };
+  const number = section.startNumber + offset;
+  let label = String(number);
+  if (section.numbering !== 'arabic' && number <= 3999) {
+    label = roman(number);
+    if (section.numbering === 'roman-lower') label = label.toLowerCase();
+  }
+  return { label: section.prefix + label, sectionTitle: section.title };
+}
+
+export function indexPageLabels(pages: Page[]) {
+  const byId = new Map<string, ReturnType<typeof printedLabel> & { index: number; pageNumber: number; sectionId: string }>();
+  const byNumber = new Map<number, Page>();
+  let section: PublicationSection | undefined;
+  let sectionIndex = 0, sectionId = 'document';
+  for (const [index, page] of pages.entries()) {
+    if (page.section) { section = page.section; sectionIndex = index; sectionId = page.id; }
+    if (!byId.has(page.id)) byId.set(page.id, { ...printedLabel(page, section, index - sectionIndex), index, pageNumber: page.pageNumber, sectionId });
+    if (!byNumber.has(page.pageNumber)) byNumber.set(page.pageNumber, page);
+  }
+  return { byId, byNumber };
+}
+
 /** Physical numbers remain unique; printed labels may restart at any section. */
 export function pageLabel(pages: Page[], pageId: string): { label: string; sectionTitle: string } {
   let current: PublicationSection | undefined;
   let offset = 0;
   for (const page of pages) {
     if (page.section) { current = page.section; offset = 0; }
-    if (page.id === pageId) {
-      if (!current) return { label: String(page.pageNumber), sectionTitle: '' };
-      const number = current.startNumber + offset;
-      let label = String(number);
-      if (current.numbering !== 'arabic' && number <= 3999) {
-        label = roman(number);
-        if (current.numbering === 'roman-lower') label = label.toLowerCase();
-      }
-      return { label: current.prefix + label, sectionTitle: current.title };
-    }
+    if (page.id === pageId) return printedLabel(page, current, offset);
     offset++;
   }
   return { label: '', sectionTitle: '' };

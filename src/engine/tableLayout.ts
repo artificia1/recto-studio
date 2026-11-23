@@ -7,6 +7,10 @@ import { layoutAdvancedTables } from './tablePagination';
 export interface TableLayoutCell { cell: TableCell; x: number; width: number; lines: string[]; height?: number; column?: number }
 export interface TableLayoutRow { index: number; kind: 'header' | 'body' | 'footer'; y: number; height: number; cells: TableLayoutCell[]; horizontalOverflow: boolean; continuedFromPrevious?: boolean; continuesOnNext?: boolean }
 export interface TableFrameLayout { frameId: string; rows: TableLayoutRow[]; usedHeight: number; horizontalOverflow: boolean }
+export interface ContentTableLayout {
+  frames: ReadonlyMap<string, TableFrameLayout>;
+  overflows: boolean;
+}
 export type TableMeasure = (text: string, frame: TableElement) => number;
 const measure: TableMeasure = (text, frame) => measureStoryText(text, { fontFamily: frame.fontFamily, fontSizePt: frame.fontSizePt, color: '#000', letterSpacingPt: 0 });
 
@@ -78,4 +82,26 @@ export function layoutContentTables(thread: TableElement[], widthOf: TableMeasur
     frames.push({ frameId: frame.id, rows, usedHeight, horizontalOverflow: horizontalOverflow || reserved > frame.height + 0.001 });
   }
   return { frames, pendingRows: Array.from({ length: Math.max(0, bodyEnd - nextRow) }, (_, index) => nextRow + index) };
+}
+
+export function prepareContentTableLayout(thread: TableElement[]): ContentTableLayout {
+  const { frames, pendingRows } = layoutContentTables(thread);
+  return {
+    frames: new Map(frames.map(frame => [frame.frameId, frame])),
+    overflows: pendingRows.length > 0 || frames.some(frame => frame.horizontalOverflow),
+  };
+}
+
+/** Use with a stable thread lookup and discard when document or font metrics change. */
+export function createContentTableLayoutLookup() {
+  const recent = new Map<TableElement[], ContentTableLayout>();
+  const maxCachedThreads = 8;
+  return (thread: TableElement[]): ContentTableLayout | undefined => {
+    if (thread[0]?.rowSizing !== 'content') return;
+    const layout = recent.get(thread) ?? prepareContentTableLayout(thread);
+    recent.delete(thread);
+    recent.set(thread, layout);
+    if (recent.size > maxCachedThreads) recent.delete(recent.keys().next().value!);
+    return layout;
+  };
 }

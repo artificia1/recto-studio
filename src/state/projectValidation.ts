@@ -1,4 +1,4 @@
-import type { FillGradient, ProjectState } from '../types';
+import type { FillGradient, ProjectState, TableElement } from '../types';
 import { validGradient } from '../engine/fillGradients';
 import { resolveMaster } from '../engine/masterInheritance';
 import { cascadeStyles } from '../engine/styleInheritance';
@@ -63,7 +63,7 @@ const optional = (validate: Validator): Validator => (value, path) => {
 };
 const array = (validate: Validator): Validator => (value, path) => {
   if (!Array.isArray(value)) fail(path, 'expected a list');
-  value.forEach((item, index) => validate(item, `${path}[${index}]`));
+  for (let index = 0; index < value.length; index++) validate(value[index], `${path}[${index}]`);
 };
 const object = (schema: Schema): Validator => (value, path) => {
   const data = record(value, path);
@@ -160,7 +160,7 @@ const elementSchemas: Record<string, Schema> = {
   },
   table: {
     rowSizing: optional(choice('equal', 'content')), allowRowSplit: optional(boolean),
-    rows: count, cols: (value, path) => { count(value, path); if ((value as number) > 200) fail(path, 'tables support at most 200 columns'); }, cells: array(array(object({ text, colSpan: optional(count), rowSpan: optional(count), align: optional(choice('left', 'center', 'right')), verticalAlign: optional(choice('top', 'middle', 'bottom')), fillColor: optional(text), textColor: optional(text) }))),
+    rows: count, cols: (value, path) => { count(value, path); if ((value as number) > 200) fail(path, 'tables support at most 200 columns'); },
     headerRowCount: integer, headerFillColor: text, headerTextColor: text,
     footerRowCount: optional(integer), repeatHeaderOnOverflow: optional(boolean), repeatFooterOnOverflow: optional(boolean),
     borderColor: text, borderWidthMm: nonnegative, cellPaddingMm: nonnegative, ...typography,
@@ -168,7 +168,26 @@ const elementSchemas: Record<string, Schema> = {
   },
 };
 
-const element: Validator = (value, path) => {
+const tableCellSchema = array(array(object({ text, colSpan: optional(count), rowSpan: optional(count),
+  align: optional(choice('left', 'center', 'right')), verticalAlign: optional(choice('top', 'middle', 'bottom')),
+  fillColor: optional(text), textColor: optional(text) })));
+
+function validateTableContent(table: TableElement, path: string): void {
+  const { cells } = table;
+  tableCellSchema(cells, `${path}.cells`);
+  if (cells.length !== table.rows || cells.some(row => row.length !== table.cols)) {
+    fail(`${path}.cells`, 'cell dimensions must match rows and cols');
+  }
+  if (table.allowRowSplit || cells.some(row => row.some(cell => (cell.rowSpan || 1) > 1))) {
+    if (table.rowSizing !== 'content') fail(path, 'split rows and vertical merges require content row sizing');
+    try { tableGrid(cells, table.headerRowCount, table.footerRowCount || 0); }
+    catch (error) { fail(path, error instanceof Error ? error.message : String(error)); }
+  }
+}
+
+const element: Validator = (value, path) => validateElement(value, path);
+
+function validateElement(value: unknown, path: string, validateCells = validateTableContent): void {
   const data = record(value, path);
   if (data.textWrap && typeof data.textWrap === 'object' && !Array.isArray(data.textWrap)) {
     const wrap = data.textWrap as Record<string, unknown>;
@@ -211,24 +230,29 @@ const element: Validator = (value, path) => {
     shadow: optional(object({ color: text, blurMm: nonnegative, offsetX: number, offsetY: number })),
   })(data, path);
   if ((data.opacity as number) > 1) fail(`${path}.opacity`, 'must be between zero and one');
-  if (type === 'table') {
-    const cells = data.cells as unknown[][];
-    if (cells.length !== data.rows || cells.some(row => row.length !== data.cols)) {
-      fail(`${path}.cells`, 'cell dimensions must match rows and cols');
-    }
-    if (data.allowRowSplit || cells.some(row => row.some(cell => Number((cell as { rowSpan?: number }).rowSpan) > 1))) {
-      if (data.rowSizing !== 'content') fail(path, 'split rows and vertical merges require content row sizing');
-      try { tableGrid(cells as import('../types').TableCell[][], Number(data.headerRowCount || 0), Number(data.footerRowCount || 0)); }
-      catch (error) { fail(path, error instanceof Error ? error.message : String(error)); }
-    }
-  }
-};
+  if (type === 'table') validateCells(data as unknown as TableElement, path);
+}
 
 const page = object({ id: identifier, pageNumber: count, side: choice('left', 'right', 'single'),
   section: optional(object({ title: text, startNumber: count, numbering: choice('arabic', 'roman-lower', 'roman-upper'), prefix: text })) });
 const spread = object({ id: identifier, masterSpreadId: optional((value, path) => { if (value !== null) identifier(value, path); }), spreadIndex: integer, pages: array(page), elements: array(element) });
 const master = object({ id: identifier, parentMasterId: optional(identifier), name: text, prefix: text, pages: array(page), elements: array(element) });
 const layer = object({ id: identifier, name: text, colorHex: text, visible: boolean, printable: optional(boolean), locked: boolean, order: number });
+
+/** Validate replacements whose identity and page ownership are unchanged. */
+export function validateTableFrames(frames: TableElement[]): void {
+  const checked = new WeakMap<TableElement['cells'], Set<string>>();
+  const validateCells = (table: TableElement, path: string) => {
+    if (!Array.isArray(table.cells)) return validateTableContent(table, path);
+    const structure = JSON.stringify([table.rows, table.cols, table.rowSizing, !!table.allowRowSplit, table.headerRowCount, table.footerRowCount || 0]);
+    let structures = checked.get(table.cells);
+    if (structures?.has(structure)) return;
+    validateTableContent(table, path);
+    if (!structures) checked.set(table.cells, structures = new Set());
+    structures.add(structure);
+  };
+  for (const frame of frames) validateElement(frame, `Table ${frame.id}`, validateCells);
+}
 
 /** Validate a detached JSON document; only missing legacy fields receive defaults. */
 export function parseProject(json: string, defaults: ProjectState): ProjectState {

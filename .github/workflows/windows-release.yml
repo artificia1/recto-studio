@@ -2,6 +2,11 @@ name: Build Windows release
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - 'codex/release-check-*'
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
@@ -12,6 +17,7 @@ concurrency:
 
 jobs:
   windows:
+    if: github.ref_type != 'tag' || !contains(github.ref_name, '-')
     runs-on: windows-2022
     timeout-minutes: 45
     env:
@@ -22,6 +28,12 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Verify the release tag
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          if ($env:GITHUB_REF_NAME -cne "v$version") { throw "Tag must match application version v$version." }
       - name: Install build dependencies
         run: npm ci
       - name: Audit dependencies
@@ -103,6 +115,7 @@ jobs:
           $hashes | Set-Content -Encoding ascii release-artifacts/SHA256SUMS.txt
           "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
       - name: Create draft release
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
         shell: pwsh
         env:
           SIGNED_BUILD: ${{ steps.installer.outputs.signed }}
@@ -111,7 +124,7 @@ jobs:
           $releaseJson = gh release view $tag --repo $env:GITHUB_REPOSITORY --json isDraft,assets 2>$null
           if ($LASTEXITCODE -ne 0) {
             gh release create $tag --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --draft --title "Recto Studio $env:RELEASE_VERSION" --notes-file RELEASE_NOTES.md
-            if ($LASTEXITCODE -ne 0) { throw 'Could not create release.' }
+            # Linux may have created the shared draft between the lookup and create calls.
             $releaseJson = gh release view $tag --repo $env:GITHUB_REPOSITORY --json isDraft,assets
             if ($LASTEXITCODE -ne 0) { throw 'Could not verify the new draft release.' }
           }
@@ -134,6 +147,11 @@ jobs:
             src-tauri/Cargo.lock
             src-tauri/target/release/recto-studio.exe
             src-tauri/target/release/bundle/nsis/*-setup.exe
+            release-artifacts/*.exe
+            release-artifacts/*.zip
+            release-artifacts/*.sig
+            release-artifacts/latest.json
+            release-artifacts/SHA256SUMS.txt
           if-no-files-found: ignore
       - name: Save Rust build cache
         if: always() && steps.rust-cache.outputs.cache-hit != 'true'

@@ -1,27 +1,65 @@
-import { useState } from 'preact/hooks';
+import { useMemo, useState } from 'preact/hooks';
 import { stateManager } from '../../state';
 import type { TableElement, TableCell } from '../../types';
 import { parseTableData } from '../../engine/delimitedText';
-import { mergeTableCellRight, mergeTableCellDown, unmergeTableCell, tableGrid, tableCellSpan, tableThread } from '../../engine/tableCells';
+import { mergeTableCellRight, mergeTableCellDown, unmergeTableCell, tableGrid, tableThread, type TableCellOwner } from '../../engine/tableCells';
 import { layoutContentTables } from '../../engine/tableLayout';
+import { fontManager } from '../../fontManager';
+import { layoutKernels } from '../../engine/layoutRuntime';
+
+const visibleRows = 20;
+const visibleColumns = 8;
+
+function tableWindow(cells: TableCell[][], grid: TableCellOwner[][] | undefined, rowStart: number, rowEnd: number, colStart: number, colEnd: number) {
+  const owners = new Set<TableCellOwner>();
+  for (let row = rowStart; row < rowEnd; row++) {
+    if (grid) {
+      for (let column = colStart; column < colEnd; column++) owners.add(grid[row][column]);
+    } else {
+      for (let column = 0; column < colEnd;) {
+        const cell = cells[row][column];
+        const colSpan = Math.max(1, Math.min(cells[row].length - column, cell.colSpan || 1));
+        if (column + colSpan > colStart) owners.add({ row, column, rowSpan: 1, colSpan, cell });
+        column += colSpan;
+      }
+    }
+  }
+  return [...owners];
+}
 
 export default function TableInspector({ element: frame }: { element: TableElement }) {
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null);
   const [tableData, setTableData] = useState('');
   const [tableError, setTableError] = useState('');
   const [linkTarget, setLinkTarget] = useState('');
-  const thread = tableThread(stateManager.getState().spreads, frame);
+  const [rowPage, setRowPage] = useState(0);
+  const [colPage, setColPage] = useState(0);
+  const state = stateManager.getState();
+  const revision = stateManager.getDocumentRevision();
+  const thread = useMemo(() => tableThread(state.spreads, frame), [revision, frame]);
   const element = thread[0];
-  const advanced = element.allowRowSplit || element.cells.some(row => row.some(cell => (cell.rowSpan || 1) > 1));
-  const grid = advanced ? tableGrid(element.cells, element.headerRowCount, element.footerRowCount || 0) : undefined;
-  const locked = thread.some(item => item.locked || stateManager.getState().layers.find(layer => layer.id === item.layerId)?.locked);
-  const layout = element.rowSizing === 'content' ? layoutContentTables(thread) : null;
+  const grid = useMemo(() => element.cells.some(row => row.some(cell => (cell.rowSpan || 1) > 1))
+    ? tableGrid(element.cells, element.headerRowCount, element.footerRowCount || 0) : undefined,
+  [element.cells, element.headerRowCount, element.footerRowCount]);
+  const locked = thread.some(item => item.locked || state.layers.find(layer => layer.id === item.layerId)?.locked);
+  const layout = useMemo(() => element.rowSizing === 'content' ? layoutContentTables(thread) : null,
+    [thread, fontManager.generation, layoutKernels]);
+  const linkOptions = useMemo(() => {
+    const linkedIds = new Set(thread.map(item => item.id));
+    return state.spreads.flatMap(spread => spread.elements.flatMap(item => item.type === 'table' && !linkedIds.has(item.id)
+      ? [{ id: item.id, page: spread.pages.find(page => page.id === item.pageId)?.pageNumber }] : []));
+  }, [thread]);
+  const rowStart = Math.min(rowPage, Math.floor((element.rows - 1) / visibleRows)) * visibleRows;
+  const colStart = Math.min(colPage, Math.floor((element.cols - 1) / visibleColumns)) * visibleColumns;
+  const rowEnd = Math.min(rowStart + visibleRows, element.rows);
+  const colEnd = Math.min(colStart + visibleColumns, element.cols);
+  const rowLimit = Math.max(200, element.rows);
   const act = (action: () => void) => { try { action(); setTableError(''); } catch (reason) { setTableError(reason instanceof Error ? reason.message : String(reason)); } };
   const update = (_id: string, updates: Parameters<typeof stateManager.updateTableSource>[1]) => act(() => stateManager.updateTableSource(frame.id, updates));
 
   const handleRowsChange = (e: Event) => {
-    const newRows = Math.max(1, Math.min(20, parseInt((e.target as HTMLInputElement).value, 10) || 1));
-    if (newRows === element.rows) return;
+    const newRows = (e.target as HTMLInputElement).valueAsNumber;
+    if (!Number.isInteger(newRows) || newRows < 1 || newRows > rowLimit || newRows === element.rows) return;
     const newCells: TableCell[][] = [];
     for (let r = 0; r < newRows; r++) {
       if (r < element.rows) {
@@ -38,8 +76,8 @@ export default function TableInspector({ element: frame }: { element: TableEleme
   };
 
   const handleColsChange = (e: Event) => {
-    const newCols = Math.max(1, Math.min(10, parseInt((e.target as HTMLInputElement).value, 10) || 1));
-    if (newCols === element.cols) return;
+    const newCols = (e.target as HTMLInputElement).valueAsNumber;
+    if (!Number.isInteger(newCols) || newCols < 1 || newCols > 200 || newCols === element.cols) return;
     const newCells: TableCell[][] = element.cells.map((rowArr, r) => {
       const nextRow = [...rowArr];
       while (nextRow.length < newCols) {
@@ -69,7 +107,7 @@ export default function TableInspector({ element: frame }: { element: TableEleme
         <label className="publication-check"><input type="checkbox" aria-label="Split table rows across frames" disabled={locked} checked={!!element.allowRowSplit} onChange={event => update(element.id, { rowSizing: 'content', allowRowSplit: event.currentTarget.checked })}/>Split rows across frames</label>
         {layout && <p role="status">{layout.pendingRows.length ? `${layout.pendingRows.length} rows need more space. Add a continuation page or enlarge the frame. Vertically merged groups must fit together.` : 'All body rows fit.'}{layout.frames.some(item => item.horizontalOverflow) ? ' Text or repeated headers/footers exceed a frame.' : ''}</p>}
         <button className="sm-btn" disabled={locked || !!frame.pasteboard} onClick={() => act(() => { stateManager.addTableContinuationPage(frame.id); })}>Add continuation page</button>
-        <label>Next table frame<select value={linkTarget} onChange={event => setLinkTarget(event.currentTarget.value)}><option value="">Choose a table</option>{stateManager.getState().spreads.flatMap(spread => spread.elements.filter((item): item is TableElement => item.type === 'table' && !thread.some(frame => frame.id === item.id)).map(item => <option key={item.id} value={item.id}>{item.id} · page {spread.pages.find(page => page.id === item.pageId)?.pageNumber}</option>))}</select></label>
+        <label>Next table frame<select value={linkTarget} onChange={event => setLinkTarget(event.currentTarget.value)}><option value="">Choose a table</option>{linkOptions.map(item => <option key={item.id} value={item.id}>{item.id} · page {item.page}</option>)}</select></label>
         <button className="sm-btn" disabled={!linkTarget || !!frame.nextFrameId || locked} onClick={() => setTableError(stateManager.linkTableFrames(frame.id, linkTarget) ? 'Table continuation linked.' : 'Unlock both tables and choose an unlinked target outside this chain.')}>Link next frame</button>
         <button className="sm-btn" disabled={locked || (!frame.nextFrameId && !frame.prevFrameId)} onClick={() => { stateManager.unlinkTableFrame(frame.id); setTableError('Table frame unlinked.'); }}>Unlink table frame</button>
       </details>
@@ -89,7 +127,7 @@ export default function TableInspector({ element: frame }: { element: TableEleme
           <input
             type="number"
             min={1}
-            max={20}
+            max={rowLimit}
             value={element.rows}
             disabled={locked}
             onChange={handleRowsChange}
@@ -100,7 +138,7 @@ export default function TableInspector({ element: frame }: { element: TableEleme
           <input
             type="number"
             min={1}
-            max={10}
+            max={200}
             value={element.cols}
             disabled={locked}
             onChange={handleColsChange}
@@ -207,61 +245,36 @@ export default function TableInspector({ element: frame }: { element: TableEleme
         </label>
       </div>
 
-      <div style={{ marginTop: '12px' }}>
-        <div style={{ fontSize: '11px', fontWeight: 600, color: '#aaa', marginBottom: '6px' }}>
-          CELL MATRIX (CLICK CELL TO EDIT)
-        </div>
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: `repeat(${element.cols}, 1fr)`,
-            gap: '2px',
-            maxHeight: '160px',
-            overflowY: 'auto',
-            background: '#1a1a1a',
-            padding: '4px',
-            borderRadius: '4px',
-            border: '1px solid #333',
-          }}
-        >
-          {element.cells.map((rowArr, r) =>
-            rowArr.map((cell, c) => {
-              const owner = grid?.[r][c];
-              if (owner && (owner.row !== r || owner.column !== c)) return null;
-              const span = owner?.colSpan ?? tableCellSpan(rowArr, c);
-              if (!span) return null;
-              const isSelected = selectedCell?.row === r && selectedCell?.col === c;
-              const isHdr = r < element.headerRowCount;
-              return (
-                <div
-                  key={`${r}-${c}`}
-                  onClick={() => setSelectedCell({ row: r, col: c })}
-                  style={{
-                    gridColumn: `${c + 1} / span ${span}`, gridRow: `${r + 1} / span ${owner?.rowSpan ?? 1}`,
-                    padding: '4px 6px',
-                    fontSize: '10px',
-                    background: isSelected
-                      ? '#3b82f6'
-                      : isHdr
-                      ? '#333'
-                      : r % 2 === 1
-                      ? '#222'
-                      : '#2a2a2a',
-                    color: isSelected ? '#fff' : isHdr ? '#fbbf24' : '#e0e0e0',
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    border: isSelected ? '1px solid #fff' : '1px solid #444',
-                    borderRadius: '2px',
-                  }}
-                  title={`Row ${r + 1}, Col ${c + 1}: ${cell.text}`}
-                >
-                  {cell.text || '∅'}
-                </div>
-              );
-            })
-          )}
+      <div className="table-cell-editor">
+        <h4>Table cells</h4>
+        {element.rows > visibleRows && <div className="table-cell-pagination">
+          <button className="sm-btn" aria-label="Previous table rows" disabled={!rowStart} onClick={() => setRowPage(rowStart / visibleRows - 1)}>←</button>
+          <span>Rows {rowStart + 1}–{rowEnd} of {element.rows}</span>
+          <button className="sm-btn" aria-label="Next table rows" disabled={rowEnd === element.rows} onClick={() => setRowPage(rowStart / visibleRows + 1)}>→</button>
+          <input type="number" aria-label="Go to table row" placeholder="#" min={1} max={element.rows} onChange={event => {
+            const row = event.currentTarget.valueAsNumber;
+            if (Number.isInteger(row) && row >= 1 && row <= element.rows) setRowPage(Math.floor((row - 1) / visibleRows));
+          }}/>
+        </div>}
+        {element.cols > visibleColumns && <div className="table-cell-pagination">
+          <button className="sm-btn" aria-label="Previous table columns" disabled={!colStart} onClick={() => setColPage(colStart / visibleColumns - 1)}>←</button>
+          <span>Columns {colStart + 1}–{colEnd} of {element.cols}</span>
+          <button className="sm-btn" aria-label="Next table columns" disabled={colEnd === element.cols} onClick={() => setColPage(colStart / visibleColumns + 1)}>→</button>
+        </div>}
+        <div key={`${rowStart}:${colStart}`} className="table-cell-window" role="group" aria-label="Table cells"
+          style={{ gridTemplateColumns: `repeat(${colEnd - colStart}, minmax(0, 1fr))` }}>
+          {tableWindow(element.cells, grid, rowStart, rowEnd, colStart, colEnd).map(({ row, column, rowSpan, colSpan, cell }) => {
+            const firstRow = Math.max(row, rowStart), firstColumn = Math.max(column, colStart);
+            return <button type="button" key={`${row}:${column}`} className="table-cell-preview"
+              onClick={() => setSelectedCell({ row, col: column })}
+              aria-pressed={selectedCell?.row === row && selectedCell?.col === column}
+              data-header={row < element.headerRowCount}
+              style={{ gridRow: `${firstRow - rowStart + 1} / span ${Math.min(row + rowSpan, rowEnd) - firstRow}`,
+                gridColumn: `${firstColumn - colStart + 1} / span ${Math.min(column + colSpan, colEnd) - firstColumn}` }}
+              title={`Row ${row + 1}, Col ${column + 1}: ${cell.text}`}>
+              {cell.text || '∅'}
+            </button>;
+          })}
         </div>
       </div>
 

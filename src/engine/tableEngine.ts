@@ -9,7 +9,7 @@
 
 import { TableElement, TableCell } from '../types/index';
 import { tableCellSpan } from './tableCells';
-import { layoutContentTables } from './tableLayout';
+import { layoutContentTables, prepareContentTableLayout, type ContentTableLayout } from './tableLayout';
 import { drawContentTableCanvas, drawContentTablePdf } from './tableContentRenderer';
 import { fontManager } from '../fontManager';
 import { drawFontText, fontTextWidth } from '../export/fontOutlines';
@@ -93,10 +93,11 @@ export class TableEngine {
     screenH: number,
     pxPerMm: number,
     zoom: number,
-    allTablesInThread: TableElement[] = [table]
+    allTablesInThread: TableElement[] = [table],
+    preparedLayout?: ContentTableLayout
   ): void {
     if ((allTablesInThread[0] || table).rowSizing === 'content') {
-      const layout = layoutContentTables(allTablesInThread).frames.find(frame => frame.frameId === table.id);
+      const layout = preparedLayout ? preparedLayout.frames.get(table.id) : layoutContentTables(allTablesInThread).frames.find(frame => frame.frameId === table.id);
       if (layout) drawContentTableCanvas(ctx, table, layout, screenX, screenY, pxPerMm);
       return;
     }
@@ -231,12 +232,13 @@ export class TableEngine {
     hMm: number,
     allTablesInThread: TableElement[] = [table],
     overprintBlack: boolean = true,
-    semantics?: TablePdfSemantics
+    semantics?: TablePdfSemantics,
+    preparedLayout?: ContentTableLayout
   ): void {
     if ((allTablesInThread[0] || table).rowSizing === 'content') {
-      const result = layoutContentTables(allTablesInThread);
-      if (result.pendingRows.length || result.frames.some(frame => frame.horizontalOverflow)) throw new Error(`Table ${allTablesInThread[0].id} has content that does not fit. Add continuation frames or enlarge the table before PDF export.`);
-      const layout = result.frames.find(frame => frame.frameId === table.id);
+      const result = preparedLayout ?? prepareContentTableLayout(allTablesInThread);
+      if (result.overflows) throw new Error(`Table ${allTablesInThread[0].id} has content that does not fit. Add continuation frames or enlarge the table before PDF export.`);
+      const layout = result.frames.get(table.id);
       if (layout) drawContentTablePdf(doc, table, layout, xMm, yMm, overprintBlack, semantics);
       return;
     }

@@ -1,4 +1,4 @@
-import type { CanvasElement, ProjectState, StoryContent, TextElement } from '../types';
+import type { CanvasElement, ProjectState, StoryContent, TableElement, TextElement } from '../types';
 import { contentOf, publicationSnapshot, reflowStoryState, refreshPublication } from '../engine/publicationReferences';
 import { storyText } from '../engine/storyContent';
 import { tableThread } from '../engine/tableCells';
@@ -63,7 +63,7 @@ export function buildTranslatedEdition(source: ProjectState, review: Translation
   const notes = new Map((draft.settings.footnotes || []).map(note => [note.id, note]));
   const stories = new Map<TextElement, StoryContent>();
   const parentStories = new Map<TextElement, StoryContent>();
-  const tables = new Set<string>();
+  const tableRows = new Map<TableElement, Set<number>>();
   const fontUsage = new Map<string, FontUsage>();
   const changedFrames = new Set<string>();
   for (const [key, target] of targets) {
@@ -107,8 +107,17 @@ export function buildTranslatedEdition(source: ProjectState, review: Translation
       }
       case 'cell': {
         if (frame?.type !== 'table' || !frame.cells[address.row]?.[address.column]) throw new Error('The table changed. Refresh the review.');
-        frame.cells[address.row][address.column].text = text;
-        tables.add(frame.id);
+        let copiedRows = tableRows.get(frame);
+        if (!copiedRows) {
+          frame.cells = frame.cells.slice();
+          tableRows.set(frame, copiedRows = new Set());
+        }
+        if (!copiedRows.has(address.row)) {
+          frame.cells[address.row] = frame.cells[address.row].slice();
+          copiedRows.add(address.row);
+        }
+        const row = frame.cells[address.row];
+        row[address.column] = { ...row[address.column], text };
         addFontUsage(fontUsage, frame.id, frame.fontFamily, text);
         break;
       }
@@ -142,10 +151,8 @@ export function buildTranslatedEdition(source: ProjectState, review: Translation
     frame.textContent = frame.storyContent = content;
   }
   refreshPublication(draft);
-  for (const id of tables) {
-    const head = frames.get(id);
-    if (head?.type !== 'table') continue;
-    for (const frame of tableThread(draft.spreads, head).slice(1)) frame.cells = structuredClone(head.cells);
+  for (const head of tableRows.keys()) {
+    for (const frame of tableThread(draft.spreads, head).slice(1)) frame.cells = head.cells;
   }
   return { draft, changedFrames, fonts: checkFontCoverage(fontUsage) };
 }

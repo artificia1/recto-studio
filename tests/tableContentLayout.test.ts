@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { jsPDF } from 'jspdf';
 import type { TableElement } from '../src/types';
 import { layoutContentTables, wrapTableText } from '../src/engine/tableLayout';
+import * as tableLayout from '../src/engine/tableLayout';
 import { tableEngine } from '../src/engine/tableEngine';
 import { tableThread } from '../src/engine/tableCells';
 import { StateManager } from '../src/state/stateManager';
@@ -62,6 +63,45 @@ describe('content-sized table rows', () => {
     const operators = (doc.internal as unknown as { pages: string[][] }).pages[1];
     expect(operators.join('\n')).toContain('BODY TOKEN'); expect(operators).not.toContain('S');
   });
+  it('composes a linked table once for PDF painting and keeps the rows on their own pages', async () => {
+    const manager = new StateManager();
+    manager.createBlankProject('A4', 'Catalog', false);
+    manager.addElement(table({
+      pageId: manager.getActiveSpread().pages[0].id,
+      width: 100,
+      height: 15,
+      rows: 4,
+      cells: ['CATALOG HEADER', 'FIRST ITEM', 'SECOND ITEM', 'THIRD ITEM'].map(text => [{ text }]),
+    }));
+    const second = manager.addTableContinuationPage('table');
+    manager.addTableContinuationPage(second);
+
+    const layouts = new Set<tableLayout.ContentTableLayout>();
+    const createLookup = tableLayout.createContentTableLayoutLookup;
+    const compose = vi.spyOn(tableLayout, 'createContentTableLayoutLookup').mockImplementation(() => {
+      const lookup = createLookup();
+      return thread => {
+        const layout = lookup(thread);
+        if (layout) layouts.add(layout);
+        return layout;
+      };
+    });
+    try {
+      const doc = await exportDocumentToPdf(manager.getState(), { download: false });
+      expect(compose).toHaveBeenCalledTimes(1);
+      expect(layouts.size).toBe(1);
+      expect(doc.getNumberOfPages()).toBe(3);
+      const pages = (doc.internal as unknown as { pages: string[][] }).pages;
+      for (const [index, item] of ['FIRST ITEM', 'SECOND ITEM', 'THIRD ITEM'].entries()) {
+        const operators = pages[index + 1].join('\n');
+        expect(operators).toContain('CATALOG HEADER');
+        expect(operators).toContain(item);
+        expect(operators.match(/(FIRST|SECOND|THIRD) ITEM/g)).toEqual([item]);
+      }
+    } finally {
+      compose.mockRestore();
+    }
+  });
   it('adds a continuation atomically and edits canonical cells from a different page', () => {
     const manager = new StateManager(); manager.createBlankProject('A4', 'Tables', false);
     manager.addElement(table({ pageId: manager.getActiveSpread().pages[0].id, masterSourceId: 'master-table', isOverridden: true,
@@ -83,6 +123,30 @@ describe('content-sized table rows', () => {
     expect(() => manager.updateTableCell('table', 1, 0, 'Forbidden')).toThrow('Unlock');
     expect(() => manager.addTableContinuationPage('table')).toThrow('Unlock');
     expect(manager.exportJson()).toBe(locked);
+  });
+  it('edits shared continuation cells without rebuilding the publication and validates changes atomically', () => {
+    const manager = new StateManager();
+    manager.createBlankProject('A4', 'Tables', false);
+    const head = table({ pageId: manager.getActiveSpread().pages[0].id });
+    manager.addElement(head);
+    const tailId = manager.addTableContinuationPage(head.id);
+    const spreads = manager.getState().spreads;
+    const tail = manager.getElementById(tailId) as TableElement;
+    expect(tail.cells).toBe(head.cells);
+    const before = manager.exportJson();
+    expect(() => manager.updateTableSource(tailId, { cols: 6 })).toThrow('cell dimensions');
+    expect(() => manager.updateTableSource(tailId, { cells: Array.from({ length: 5 }, () => Array(1)) })).toThrow('expected an object');
+    expect(manager.exportJson()).toBe(before);
+    const unchanged = head.cells[0];
+    manager.updateTableCell(tailId, 1, 0, 'Revised');
+    expect(manager.getState().spreads).toBe(spreads);
+    expect(tail.cells).toBe(head.cells);
+    expect(head.cells[0]).toBe(unchanged);
+    expect(head.cells[1][0].text).toBe('Revised');
+    manager.undo();
+    expect(manager.exportJson()).toBe(before);
+    manager.redo();
+    expect((manager.getElementById(tailId) as TableElement).cells[1][0].text).toBe('Revised');
   });
   it('blocks a PDF when a linked continuation is excluded from publication', async () => {
     const manager = new StateManager(); manager.createBlankProject('A4', 'Hidden continuation', false);

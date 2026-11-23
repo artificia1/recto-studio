@@ -2,12 +2,18 @@ name: Build Linux release
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - 'codex/release-check-*'
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
 
 jobs:
   linux:
+    if: github.ref_type != 'tag' || !contains(github.ref_name, '-')
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     env:
@@ -18,6 +24,9 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Verify the release tag
+        if: github.ref_type == 'tag'
+        run: test "$GITHUB_REF_NAME" = "v$(node -p "require('./package.json').version")"
       - name: Install native dependencies
         run: |
           sudo apt-get update
@@ -45,6 +54,7 @@ jobs:
         working-directory: src-tauri
         run: cargo test --locked
       - name: Upload Linux packages to draft release
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
           set -euo pipefail
@@ -62,7 +72,10 @@ jobs:
           (cd release-artifacts && sha256sum *.deb *.AppImage > SHA256SUMS-linux.txt)
           tag="v$version"
           if ! draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft'); then
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --title "Recto Studio $version" --notes-file RELEASE_NOTES.md
+            # Windows may have created the shared draft after our initial lookup.
+            if ! gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --title "Recto Studio $version" --notes-file RELEASE_NOTES.md; then
+              echo 'Checking whether Windows created the draft concurrently.'
+            fi
             draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')
           fi
           if [[ "$draft" != true ]]; then

@@ -1,4 +1,4 @@
-import { drawCanvasRulers, type RulerPalette } from './engine/canvasRulers';
+import { CanvasRulers, type RulerPalette } from './engine/canvasRulers';
 import { instantiateMasterItem, resolveMaster } from './engine/masterInheritance';
 import { lockedArtworkIds } from './engine/selectionGeometry';
 import { calculateImageFitting } from './engine/imageFitting';
@@ -6,11 +6,12 @@ import { formatOpenTypeText, segmentTextWithGrep } from './engine/legacyTypograp
 export { formatOpenTypeText, segmentTextWithGrep, type TextRunSegment } from './engine/legacyTypography';
 import { publicationWrapObjects, wrappedPlainContent } from './engine/publicationWrap';
 export { calculateImageFitting, type ImageFitTransform } from './engine/imageFitting';
-import { layoutFrameNotes, publicationText } from './engine/publicationReferences';
+import { createPublicationTextResolver, layoutFrameNotes } from './engine/publicationReferences';
 import { reviewPinPosition } from './engine/reviewPins';
 import { calculateSpreadGeometry, getSpreadScreenOrigin, MM_TO_PX, screenToSpreadMm } from './engine/viewport';
 import { bindCanvasInput, type CanvasMouseDown, type CanvasMouseMove, type CanvasMouseUp } from './engine/interaction/canvasInput';
 import { handleCanvasKeyDown } from './engine/interaction/keyboard';
+import { createSmartGuideSnap, sameSmartGuides, type SmartGuides } from './engine/interaction/smartGuides';
 import { masterTargetPage } from './engine/pageLabels';
 import { getAppearance, pasteboardColors } from './appearance';
 import {
@@ -36,7 +37,8 @@ import { canvasGradient, displayGradientColor } from './engine/fillGradients';
 import { assetStore } from './engine/assetStore';
 import { AdjustmentPreviewCache } from './engine/adjustmentPreviewCache';
 import { tableEngine } from './engine/tableEngine';
-import { tableThread } from './engine/tableCells';
+import { createTableThreadLookup } from './engine/tableCells';
+import { createContentTableLayoutLookup } from './engine/tableLayout';
 import { canvasRunFont, layoutStory } from './engine/storyLayout';
 import { fontManager } from './fontManager';
 import { layoutKernels } from './engine/layoutRuntime';
@@ -56,7 +58,6 @@ interface CanvasTextLayout {
   dropCapWidth: number;
   dropCapFontSize: number;
 }
-
 
 const LEADING_HANG_CHARS = new Set(['“', '‘', '"', "'", '«', '‹', '(', '[']);
 const TRAILING_HANG_CHARS = new Set(['.', ',', '-', '–', '—', ':', ';', '”', '’', '"', "'", '»', '›', '!', '?', ')', ']']);
@@ -144,9 +145,7 @@ export class SpreadCanvas {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private rulerTop: HTMLCanvasElement;
-  private rulerLeft: HTMLCanvasElement;
-  private ctxTop: CanvasRenderingContext2D;
-  private ctxLeft: CanvasRenderingContext2D;
+  private rulers: CanvasRulers;
   private rulerPalette!: RulerPalette;
 
   private isDragging: boolean = false;
@@ -159,39 +158,22 @@ export class SpreadCanvas {
   private overflownTextFrameIds: Set<string> = new Set();
 
   private activePenPathId: string | null = null;
-  private activePenNodeIndex: number = -1;
-  private isPenDraggingHandle: boolean = false;
   private activeNodeDrag: {
-    pathId: string;
+    path: VectorPathElement;
     nodeIndex: number;
-    part: 'anchor' | 'handleIn' | 'handleOut';
+    part: 'anchor' | 'handleIn' | 'handleOut' | 'newHandle';
     startDragX: number;
     startDragY: number;
-    initialNode: BezierNode;
+    pending?: BezierNode;
   } | null = null;
 
   private marqueeStartMmX: number = 0;
   private marqueeStartMmY: number = 0;
   private marqueeCurrentMmX: number = 0;
   private marqueeCurrentMmY: number = 0;
-  private dragInitialPositions: Map<string, { x: number; y: number; locked: boolean; width: number; height: number; pageId: string }> = new Map();
-  private activeSmartGuides: {
-    lines: {
-      orientation: 'v' | 'h';
-      posMm: number;
-      minMm: number;
-      maxMm: number;
-      pageIndex: number;
-    }[];
-    spacings: {
-      orientation: 'h' | 'v';
-      startMm: number;
-      endMm: number;
-      crossMm: number;
-      gapMm: number;
-      pageIndex: number;
-    }[];
-  } = { lines: [], spacings: [] };
+  private dragInitialPositions = new Map<string, { element: CanvasElement; locked: boolean }>();
+  private activeSmartGuides: SmartGuides = { lines: [], spacings: [] };
+  private snapDuringDrag?: ReturnType<typeof createSmartGuideSnap>;
 
   private dragStartX: number = 0;
   private dragStartY: number = 0;
@@ -237,7 +219,6 @@ export class SpreadCanvas {
     { name: 'sw', x: 0, y: 0 },
     { name: 'w', x: 0, y: 0 },
   ];
-  private _dragUpdates: Array<{ id: string; partial: Partial<CanvasElement> }> = [];
   private dragPreview = new Map<string, CanvasElement>();
   private dragDocument?: { state: ProjectState; spread: Spread; revision: number; tool: ProjectState['activeTool'] };
 
@@ -245,8 +226,10 @@ export class SpreadCanvas {
     this.isDragging = false;
     this.isResizing = false;
     this.activeHandle = null;
+    this.activeNodeDrag = null;
     this.dragPreview.clear();
     this.dragDocument = undefined;
+    this.snapDuringDrag = undefined;
     this.dragInitialPositions.clear();
     this.activeSmartGuides = { lines: [], spacings: [] };
   }
@@ -266,10 +249,13 @@ export class SpreadCanvas {
   // Text layout memoization
   private textLayoutCache = new Map<string, CanvasTextLayout>();
   private formattedLayouts = new Map<TextElement, {
-    content: NonNullable<TextElement['textContent']>; reserve: number; layout: ReturnType<typeof layoutStory>;
+    content: NonNullable<TextElement['textContent']>; source?: string; reserve: number; layout: ReturnType<typeof layoutStory>;
   }>();
   private formattedLayoutRevision = '';
   private formattedLayoutKernels = layoutKernels;
+  private spreadScene?: ReturnType<SpreadCanvas['buildSpreadScene']>;
+  private tableThreads?: ReturnType<typeof createTableThreadLookup>;
+  private tableLayouts = createContentTableLayoutLookup();
 
   // Active in-place canvas overlay editor (WordPad/Figma style)
   private activeInlineEditor: { elementId: string; el: HTMLElement; finish?: (commit: boolean) => void } | null = null;
@@ -282,6 +268,7 @@ export class SpreadCanvas {
 
   // High-performance requestAnimationFrame render coalescing loop
   private renderRafId: number | null = null;
+  private rulerRafId: number | null = null;
 
   // Stylus (Apple Pencil, S-Pen, Surface Pen) and Palm Rejection Tracking
   private activePenPointerId: number | null = null;
@@ -305,11 +292,9 @@ export class SpreadCanvas {
     this.container = container;
     this.canvas = canvas;
     this.rulerTop = rulerTop;
-    this.rulerLeft = rulerLeft;
 
     this.ctx = canvas.getContext('2d', { alpha: false })!;
-    this.ctxTop = rulerTop.getContext('2d')!;
-    this.ctxLeft = rulerLeft.getContext('2d')!;
+    this.rulers = new CanvasRulers(rulerTop, rulerLeft, rulerTop.getContext('2d')!, rulerLeft.getContext('2d')!);
     this.refreshRulerPalette();
 
     this.initEvents();
@@ -341,17 +326,24 @@ export class SpreadCanvas {
 
     this.addWindowListener('blur', () => { this.cancelDrag(); this.scheduleRender(); });
 
+    const onFontLoaded = () => { this.rulers.invalidateMarks(); this.drawRulers(); };
+    document.fonts?.addEventListener('loadingdone', onFontLoaded);
+    this.windowCleanups.push(() => document.fonts?.removeEventListener('loadingdone', onFontLoaded));
     this.windowCleanups.push(collabSession.onPeersChange(() => this.scheduleRender()));
   }
 
   public destroy(): void {
     this.cancelDrag();
+    this.rulers.destroy();
+    this.spreadScene = undefined;
+    this.formattedLayouts.clear();
     this.trimDisplayImages(0);
     this.staticCanvas.width = this.staticCanvas.height = 0;
     if (this.renderRafId !== null) {
       cancelAnimationFrame(this.renderRafId);
       this.renderRafId = null;
     }
+    if (this.rulerRafId !== null) cancelAnimationFrame(this.rulerRafId);
     if (this.unsubState) {
       this.unsubState();
       this.unsubState = undefined;
@@ -374,10 +366,23 @@ export class SpreadCanvas {
   }
 
   public scheduleRender() {
+    if (this.rulerRafId !== null) {
+      cancelAnimationFrame(this.rulerRafId);
+      this.rulerRafId = null;
+    }
     if (this.renderRafId !== null) return;
     this.renderRafId = requestAnimationFrame(() => {
       this.renderRafId = null;
+      this.flushNodePreview();
       this.render();
+    });
+  }
+
+  private scheduleRulers() {
+    if (this.renderRafId !== null || this.rulerRafId !== null) return;
+    this.rulerRafId = requestAnimationFrame(() => {
+      this.rulerRafId = null;
+      this.drawRulers();
     });
   }
 
@@ -394,17 +399,7 @@ export class SpreadCanvas {
     this.canvas.style.height = `${h}px`;
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    this.rulerTop.width = w * dpr;
-    this.rulerTop.height = 24 * dpr;
-    this.rulerTop.style.width = `${w}px`;
-    this.rulerTop.style.height = '24px';
-    this.ctxTop.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    this.rulerLeft.width = 24 * dpr;
-    this.rulerLeft.height = h * dpr;
-    this.rulerLeft.style.width = '24px';
-    this.rulerLeft.style.height = `${h}px`;
-    this.ctxLeft.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.rulers.resize(w, h, dpr);
   }
 
   private initEvents() {
@@ -453,8 +448,6 @@ export class SpreadCanvas {
         finishPenPath: () => {
           if (!this.activePenPathId) return;
           this.activePenPathId = null;
-          this.activePenNodeIndex = -1;
-          this.isPenDraggingHandle = false;
           stateManager.setTool('select');
           this.render();
         },
@@ -556,7 +549,7 @@ export class SpreadCanvas {
 
     if (state.activeTool !== 'select') {
       if (state.activeTool === 'pen') {
-        this.handlePenMouseDown(mmX, mmY, screenX, screenY, e);
+        this.handlePenMouseDown(mmX, mmY, screenX, screenY);
         return;
       }
       if (state.activeTool === 'pencil') {
@@ -701,16 +694,7 @@ export class SpreadCanvas {
         if (el.type === 'path') {
           const nodeHit = this.hitTestPathNodes(screenX, screenY, state);
           if (nodeHit) {
-            const pathEl = el as VectorPathElement;
-            const initialNode = JSON.parse(JSON.stringify(pathEl.nodes[nodeHit.nodeIndex]));
-            this.activeNodeDrag = {
-              pathId: el.id,
-              nodeIndex: nodeHit.nodeIndex,
-              part: nodeHit.part,
-              startDragX: screenX,
-              startDragY: screenY,
-              initialNode,
-            };
+            this.startNodeDrag(el, nodeHit.nodeIndex, nodeHit.part, screenX, screenY);
             return;
           }
         }
@@ -777,26 +761,16 @@ export class SpreadCanvas {
     this.dragDocument = { state, spread: stateManager.getActiveSpread(), revision: stateManager.getDocumentRevision(), tool: state.activeTool };
     this.dragStartX = screenX;
     this.dragStartY = screenY;
-    this.dragInitialPositions.clear();
-    this.activeSmartGuides = { lines: [], spacings: [] };
     const spread = stateManager.getActiveSpread();
     const ids = state.selectedElementIds && state.selectedElementIds.length > 0
       ? state.selectedElementIds
       : (state.selectedElementId ? [state.selectedElementId] : []);
     const lockedIds = lockedArtworkIds(state);
 
+    const elements = this.getSpreadScene(state).elements;
     for (const id of ids) {
-      const el = spread.elements.find(item => item.id === id);
-      if (el) {
-        this.dragInitialPositions.set(id, {
-          x: el.x,
-          y: el.y,
-          locked: lockedIds.has(id),
-          width: el.width,
-          height: el.height,
-          pageId: el.pageId,
-        });
-      }
+      const element = elements.get(id);
+      if (element) this.dragInitialPositions.set(id, { element, locked: lockedIds.has(id) });
     }
   }
 
@@ -819,104 +793,16 @@ export class SpreadCanvas {
       return;
     }
 
-    if (state.linkingFromFrameId) {
-      this.render();
-    }
-
-    if (this.isPenDraggingHandle && this.activePenPathId) {
-      const spread = stateManager.getActiveSpread();
-      const pathEl = spread.elements.find(item => item.id === this.activePenPathId) as VectorPathElement | undefined;
-      if (pathEl && pathEl.nodes[this.activePenNodeIndex]) {
-        const pageHit = this.findPageAtMm(mmX, mmY, state);
-        const mouseX = pageHit ? pageHit.localX : mmX;
-        const mouseY = pageHit ? pageHit.localY : mmY;
-        const node = pathEl.nodes[this.activePenNodeIndex];
-        const anchorAbsX = pathEl.x + node.x;
-        const anchorAbsY = pathEl.y + node.y;
-        const dx = mouseX - anchorAbsX;
-        const dy = mouseY - anchorAbsY;
-        if (Math.hypot(dx, dy) >= 0.5) {
-          const newNodes = pathEl.nodes.map((n, idx) => {
-            if (idx !== this.activePenNodeIndex) return n;
-            return {
-              ...n,
-              handleOut: { x: dx, y: dy },
-              handleIn: { x: -dx, y: -dy },
-            };
-          });
-          const bounds = this.recalculatePathBounds(newNodes);
-          stateManager.updateElement(pathEl.id, {
-            nodes: newNodes,
-            width: bounds.width,
-            height: bounds.height,
-          });
-        }
-      }
-      this.render();
-      return;
-    }
+    if (state.linkingFromFrameId) this.scheduleRender();
 
     if (this.activeNodeDrag) {
-      const dxPx = screenX - this.activeNodeDrag.startDragX;
-      const dyPx = screenY - this.activeNodeDrag.startDragY;
-      const pxPerMm = MM_TO_PX * state.zoom;
-      const deltaMmX = dxPx / pxPerMm;
-      const deltaMmY = dyPx / pxPerMm;
-
-      const spread = stateManager.getActiveSpread();
-      const pathEl = spread.elements.find(item => item.id === this.activeNodeDrag!.pathId) as VectorPathElement | undefined;
-      if (pathEl) {
-        const idx = this.activeNodeDrag.nodeIndex;
-        const part = this.activeNodeDrag.part;
-        const init = this.activeNodeDrag.initialNode;
-
-        const newNodes = pathEl.nodes.map((n, i) => {
-          if (i !== idx) return n;
-          if (part === 'anchor') {
-            return {
-              ...n,
-              x: init.x + deltaMmX,
-              y: init.y + deltaMmY,
-            };
-          } else if (part === 'handleOut') {
-            const newHOut = {
-              x: (init.handleOut?.x || 0) + deltaMmX,
-              y: (init.handleOut?.y || 0) + deltaMmY,
-            };
-            const split = e.altKey;
-            return {
-              ...n,
-              handleOut: newHOut,
-              handleIn: split ? n.handleIn : { x: -newHOut.x, y: -newHOut.y },
-            };
-          } else if (part === 'handleIn') {
-            const newHIn = {
-              x: (init.handleIn?.x || 0) + deltaMmX,
-              y: (init.handleIn?.y || 0) + deltaMmY,
-            };
-            const split = e.altKey;
-            return {
-              ...n,
-              handleIn: newHIn,
-              handleOut: split ? n.handleOut : { x: -newHIn.x, y: -newHIn.y },
-            };
-          }
-          return n;
-        });
-
-        const bounds = this.recalculatePathBounds(newNodes);
-        stateManager.updateElement(pathEl.id, {
-          nodes: newNodes,
-          width: bounds.width,
-          height: bounds.height,
-        });
-      }
-      this.render();
+      this.previewNodeDrag(screenX, screenY, mmX, mmY, state, e.altKey);
+      this.scheduleRender();
       return;
     }
 
     if (state.activeTool === 'pen' && this.activePenPathId) {
-      this.render();
+      this.scheduleRender();
       return;
     }
 
@@ -946,7 +832,7 @@ export class SpreadCanvas {
     if (this.isMarquee) {
       this.marqueeCurrentMmX = mmX;
       this.marqueeCurrentMmY = mmY;
-      this.render();
+      this.scheduleRender();
       return;
     }
 
@@ -957,217 +843,34 @@ export class SpreadCanvas {
       const deltaMmX = dxPx / pxPerMm;
       const deltaMmY = dyPx / pxPerMm;
 
-      const updates = this._dragUpdates;
-      updates.length = 0;
-      this.activeSmartGuides = { lines: [], spacings: [] };
-
-      if (state.snapToGuides && this.dragInitialPositions.size === 1) {
-        const spread = stateManager.getActiveSpread();
-        const [id, initPos] = Array.from(this.dragInitialPositions.entries())[0];
-        if (!initPos.locked) {
-          let newX = initPos.x + deltaMmX;
-          let newY = initPos.y + deltaMmY;
-          const w = initPos.width;
-          const h = initPos.height;
-          const pageIdx = Math.max(0, spread.pages.findIndex((p) => p.id === initPos.pageId));
-          const pageWidthMm = state.settings.widthMm;
-          const pageHeightMm = state.settings.heightMm;
-          const snapThresholdMm = 2.0;
-
-          const otherElements = spread.elements.filter((e) => e.id !== id);
-
-          // 1. X-Axis Smart Guides (vertical laser lines)
-          let bestSnapDiffX = Infinity;
-          let snappedNewX = newX;
-          let activeLineX: { posMm: number; minMm: number; maxMm: number } | null = null;
-
-          const testPointsX = [
-            { offset: 0, type: 'left' },
-            { offset: w / 2, type: 'center' },
-            { offset: w, type: 'right' },
-          ];
-
-          const targetAnchorsX: { posMm: number; minY: number; maxY: number }[] = [];
-
-          // Page borders & center & margins
-          targetAnchorsX.push({ posMm: 0, minY: 0, maxY: pageHeightMm });
-          targetAnchorsX.push({ posMm: pageWidthMm / 2, minY: 0, maxY: pageHeightMm });
-          targetAnchorsX.push({ posMm: pageWidthMm, minY: 0, maxY: pageHeightMm });
-          targetAnchorsX.push({
-            posMm: state.settings.margins.insideMm,
-            minY: state.settings.margins.topMm,
-            maxY: pageHeightMm - state.settings.margins.bottomMm,
-          });
-          targetAnchorsX.push({
-            posMm: pageWidthMm - state.settings.margins.outsideMm,
-            minY: state.settings.margins.topMm,
-            maxY: pageHeightMm - state.settings.margins.bottomMm,
-          });
-
-          // Other elements
-          for (const other of otherElements) {
-            const oMinY = Math.min(newY, other.y);
-            const oMaxY = Math.max(newY + h, other.y + other.height);
-            targetAnchorsX.push({ posMm: other.x, minY: oMinY, maxY: oMaxY });
-            targetAnchorsX.push({ posMm: other.x + other.width / 2, minY: oMinY, maxY: oMaxY });
-            targetAnchorsX.push({ posMm: other.x + other.width, minY: oMinY, maxY: oMaxY });
-          }
-
-          for (const tp of testPointsX) {
-            const curTestX = newX + tp.offset;
-            for (const target of targetAnchorsX) {
-              const diff = Math.abs(curTestX - target.posMm);
-              if (diff <= snapThresholdMm && diff < bestSnapDiffX) {
-                bestSnapDiffX = diff;
-                snappedNewX = target.posMm - tp.offset;
-                activeLineX = {
-                  posMm: target.posMm,
-                  minMm: Math.min(target.minY, newY) - 4,
-                  maxMm: Math.max(target.maxY, newY + h) + 4,
-                };
-              }
-            }
-          }
-
-          if (activeLineX) {
-            newX = snappedNewX;
-            this.activeSmartGuides.lines.push({
-              orientation: 'v',
-              posMm: activeLineX.posMm,
-              minMm: activeLineX.minMm,
-              maxMm: activeLineX.maxMm,
-              pageIndex: pageIdx,
-            });
-          }
-
-          // 2. Y-Axis Smart Guides (horizontal laser lines)
-          let bestSnapDiffY = Infinity;
-          let snappedNewY = newY;
-          let activeLineY: { posMm: number; minMm: number; maxMm: number } | null = null;
-
-          const testPointsY = [
-            { offset: 0, type: 'top' },
-            { offset: h / 2, type: 'center' },
-            { offset: h, type: 'bottom' },
-          ];
-
-          const targetAnchorsY: { posMm: number; minX: number; maxX: number }[] = [];
-
-          // Page borders & center & margins
-          targetAnchorsY.push({ posMm: 0, minX: 0, maxX: pageWidthMm });
-          targetAnchorsY.push({ posMm: pageHeightMm / 2, minX: 0, maxX: pageWidthMm });
-          targetAnchorsY.push({ posMm: pageHeightMm, minX: 0, maxX: pageWidthMm });
-          targetAnchorsY.push({
-            posMm: state.settings.margins.topMm,
-            minX: state.settings.margins.insideMm,
-            maxX: pageWidthMm - state.settings.margins.outsideMm,
-          });
-          targetAnchorsY.push({
-            posMm: pageHeightMm - state.settings.margins.bottomMm,
-            minX: state.settings.margins.insideMm,
-            maxX: pageWidthMm - state.settings.margins.outsideMm,
-          });
-
-          // Other elements
-          for (const other of otherElements) {
-            const oMinX = Math.min(newX, other.x);
-            const oMaxX = Math.max(newX + w, other.x + other.width);
-            targetAnchorsY.push({ posMm: other.y, minX: oMinX, maxX: oMaxX });
-            targetAnchorsY.push({ posMm: other.y + other.height / 2, minX: oMinX, maxX: oMaxX });
-            targetAnchorsY.push({ posMm: other.y + other.height, minX: oMinX, maxX: oMaxX });
-          }
-
-          for (const tp of testPointsY) {
-            const curTestY = newY + tp.offset;
-            for (const target of targetAnchorsY) {
-              const diff = Math.abs(curTestY - target.posMm);
-              if (diff <= snapThresholdMm && diff < bestSnapDiffY) {
-                bestSnapDiffY = diff;
-                snappedNewY = target.posMm - tp.offset;
-                activeLineY = {
-                  posMm: target.posMm,
-                  minMm: Math.min(target.minX, newX) - 4,
-                  maxMm: Math.max(target.maxX, newX + w) + 4,
-                };
-              }
-            }
-          }
-
-          if (activeLineY) {
-            newY = snappedNewY;
-            this.activeSmartGuides.lines.push({
-              orientation: 'h',
-              posMm: activeLineY.posMm,
-              minMm: activeLineY.minMm,
-              maxMm: activeLineY.maxMm,
-              pageIndex: pageIdx,
-            });
-          }
-
-          // 3. Distance Snapping (Equal Gaps between horizontal neighbors)
-          const leftNeighbors = otherElements.filter((e) => (e.x + e.width) <= newX + snapThresholdMm);
-          const rightNeighbors = otherElements.filter((e) => e.x >= (newX + w) - snapThresholdMm);
-
-          if (leftNeighbors.length > 0 && rightNeighbors.length > 0) {
-            leftNeighbors.sort((a, b) => (b.x + b.width) - (a.x + a.width));
-            rightNeighbors.sort((a, b) => a.x - b.x);
-            const leftEl = leftNeighbors[0];
-            const rightEl = rightNeighbors[0];
-
-            const gap1 = newX - (leftEl.x + leftEl.width);
-            const gap2 = rightEl.x - (newX + w);
-
-            if (gap1 > 1 && gap2 > 1 && Math.abs(gap1 - gap2) <= snapThresholdMm) {
-              const equalGap = (gap1 + gap2) / 2;
-              newX = (leftEl.x + leftEl.width) + equalGap;
-              this.activeSmartGuides.spacings.push({
-                orientation: 'h',
-                startMm: leftEl.x + leftEl.width,
-                endMm: newX,
-                crossMm: newY + h / 2,
-                gapMm: equalGap,
-                pageIndex: pageIdx,
-              });
-              this.activeSmartGuides.spacings.push({
-                orientation: 'h',
-                startMm: newX + w,
-                endMm: rightEl.x,
-                crossMm: newY + h / 2,
-                gapMm: equalGap,
-                pageIndex: pageIdx,
-              });
-            }
-          }
-
-          updates.push({
-            id,
-            partial: {
-              x: Math.round(newX * 10) / 10,
-              y: Math.round(newY * 10) / 10,
-            },
-          });
+      let guides: SmartGuides = { lines: [], spacings: [] };
+      let moved = false;
+      for (const [id, { element, locked }] of this.dragInitialPositions) {
+        if (locked) continue;
+        let x = element.x + deltaMmX;
+        let y = element.y + deltaMmY;
+        if (state.snapToGuides && this.dragInitialPositions.size === 1) {
+          const spread = stateManager.getActiveSpread();
+          const pageIndex = Math.max(0, spread.pages.findIndex(page => page.id === element.pageId));
+          const snap = this.snapDuringDrag ??= createSmartGuideSnap(state.settings, spread.elements, id);
+          const result = snap({ x, y, width: element.width, height: element.height }, pageIndex);
+          x = result.x;
+          y = result.y;
+          guides = result.guides;
         }
-      } else {
-        for (const [id, initPos] of this.dragInitialPositions.entries()) {
-          if (initPos.locked) continue;
-          updates.push({
-            id,
-            partial: {
-              x: Math.round((initPos.x + deltaMmX) * 10) / 10,
-              y: Math.round((initPos.y + deltaMmY) * 10) / 10,
-            },
-          });
-        }
+        x = Math.round(x * 10) / 10;
+        y = Math.round(y * 10) / 10;
+        const previous = this.dragPreview.get(id) ?? element;
+        if (previous.x === x && previous.y === y) continue;
+        if (element.x === x && element.y === y) this.dragPreview.delete(id);
+        else this.dragPreview.set(id, { ...element, x, y });
+        moved = true;
       }
 
-      if (updates.length > 0) {
-        const spread = stateManager.getActiveSpread();
-        for (const { id, partial } of updates) {
-          const element = spread.elements.find(element => element.id === id);
-          if (element) this.dragPreview.set(id, { ...element, ...partial } as CanvasElement);
-        }
-      }
-      this.scheduleRender();
+      const changedGuides = !sameSmartGuides(guides, this.activeSmartGuides);
+      this.activeSmartGuides = guides;
+      if (moved || changedGuides) this.scheduleRender();
+      else this.scheduleRulers();
       return;
     }
 
@@ -1219,7 +922,7 @@ export class SpreadCanvas {
       const pageStartMm = pageIdx * pageWidthMm;
       this.drawCurrentMmX = mmX - pageStartMm;
       this.drawCurrentMmY = mmY;
-      this.render();
+      this.scheduleRender();
       return;
     }
 
@@ -1242,7 +945,7 @@ export class SpreadCanvas {
       this.canvas.style.cursor = 'default';
     }
 
-    this.drawRulers();
+    this.scheduleRulers();
   }
 
   private snapCoordinate(val: number, snapPoints: number[], thresholdMm: number = 2): number {
@@ -1262,7 +965,7 @@ export class SpreadCanvas {
 
     if (this.isDragging) {
       const updates = [...this.dragPreview.values()].flatMap(element => {
-        const initial = this.dragInitialPositions.get(element.id);
+        const initial = this.dragInitialPositions.get(element.id)?.element;
         return initial && (element.x !== initial.x || element.y !== initial.y)
           ? [{ id: element.id, partial: { x: element.x, y: element.y } }] : [];
       });
@@ -1289,11 +992,15 @@ export class SpreadCanvas {
       this.isPanning = false;
       this.canvas.style.cursor = (this.isSpacePanning || state.activeTool === 'hand') ? 'grab' : 'default';
     }
-    if (this.isPenDraggingHandle) {
-      this.isPenDraggingHandle = false;
-    }
     if (this.activeNodeDrag) {
-      this.activeNodeDrag = null;
+      this.flushNodePreview();
+      const draft = this.dragPreview.get(this.activeNodeDrag.path.id);
+      this.cancelDrag();
+      if (draft?.type === 'path') {
+        stateManager.updateElement(draft.id, { nodes: draft.nodes, width: draft.width, height: draft.height });
+        stateManager.finishUndoGroup();
+      }
+      this.scheduleRender();
     }
 
     if (this.isMarquee) {
@@ -1921,30 +1628,66 @@ export class SpreadCanvas {
     }
   }
 
-  private hitTestElements(spreadMmX: number, spreadMmY: number, state: ProjectState): CanvasElement | null {
-    const spread = stateManager.getActiveSpread();
-    const { pageWidthMm } = this.getSpreadDimensions(state);
+  private buildSpreadScene(state: ProjectState, spread: Spread, revision: number) {
     const layerMap = new Map((state.layers || []).map(l => [l.id, l]));
-
-    const elements = [...spread.elements].sort((a, b) => {
-      const layerA = layerMap.get(a.layerId || 'layer-1');
-      const layerB = layerMap.get(b.layerId || 'layer-1');
-      const orderA = layerA ? layerA.order : 0;
-      const orderB = layerB ? layerB.order : 0;
-      if (orderA !== orderB) {
-        return orderB - orderA;
-      }
-      return b.zIndex - a.zIndex;
+    const pageIndexes = new Map(spread.pages.map((page, index) => [page.id, index]));
+    const elements = new Map(spread.elements.map(element => [element.id, element]));
+    const layerOf = (element: CanvasElement) => layerMap.get(element.layerId || 'layer-1');
+    const paintOrder = (a: CanvasElement, b: CanvasElement) => (layerOf(a)?.order ?? 0) - (layerOf(b)?.order ?? 0) || a.zIndex - b.zIndex;
+    const master = resolveMaster(state.masterSpreads, spread.masterSpreadId);
+    const excludedMasterIds = new Set(spread.detachedMasterElementIds);
+    for (const element of spread.elements) if (element.masterSourceId) excludedMasterIds.add(element.masterSourceId);
+    const inherited = (master?.elements || []).filter(element => !excludedMasterIds.has(element.id));
+    const publicationText = createPublicationTextResolver(state);
+    const masterElements = inherited.flatMap(element => {
+      const page = masterTargetPage(master!.pages, spread.pages, element.pageId);
+      return page ? [instantiateMasterItem(element, page.id, text => publicationText(text, page.pageNumber))] : [];
     });
+    const visible = (element: CanvasElement) => layerOf(element)?.visible !== false;
+    const artwork = [...masterElements.filter(visible).sort(paintOrder), ...spread.elements.filter(visible).sort(paintOrder)];
+    const otherSpreads = new Map<string, Spread | undefined>();
+    const paragraphStyles = new Map(state.paragraphStyles.map(style => [style.id, style]));
+    let wrapByPage: Map<string, CanvasElement[]> | undefined;
+    let hitOrder: CanvasElement[] | undefined;
+    return {
+      state, spread, revision, layerMap, layerOf, pageIndexes, elements, master, inherited, artwork, paragraphStyles,
+      adjustedImages: artwork.reduce((count, element) => count + Number(element.type === 'image' && Boolean(element.adjustments)), 0),
+      hitOrder: () => hitOrder ??= spread.elements.filter(element => visible(element) && !layerOf(element)?.locked)
+        .sort((a, b) => paintOrder(b, a)),
+      linkedSpread: (id: string) => {
+        if (!otherSpreads.has(id)) otherSpreads.set(id, state.spreads.find(item => item.elements.some(element => element.id === id)));
+        return otherSpreads.get(id);
+      },
+      wrapOnPage: (pageId: string) => {
+        if (!wrapByPage) {
+          wrapByPage = new Map();
+          for (const obstacle of publicationWrapObjects(state, spread)) {
+            const page = wrapByPage.get(obstacle.pageId);
+            if (page) page.push(obstacle);
+            else wrapByPage.set(obstacle.pageId, [obstacle]);
+          }
+        }
+        return wrapByPage.get(pageId);
+      },
+    };
+  }
 
-    for (const el of elements) {
-      const elLayer = layerMap.get(el.layerId || 'layer-1');
-      if (elLayer && (elLayer.visible === false || elLayer.locked === true)) {
-        continue;
-      }
+  private getSpreadScene(state: ProjectState) {
+    const spread = stateManager.getActiveSpread();
+    const revision = stateManager.getDocumentRevision();
+    if (this.spreadScene?.state !== state || this.spreadScene.spread !== spread || this.spreadScene.revision !== revision) {
+      if (this.spreadScene?.spread !== spread || this.spreadScene.state !== state) this.formattedLayouts.clear();
+      this.spreadScene = this.buildSpreadScene(state, spread, revision);
+    }
+    return this.spreadScene;
+  }
 
-      const pageIdx = spread.pages.findIndex(p => p.id === el.pageId);
-      if (pageIdx === -1) continue;
+  private hitTestElements(spreadMmX: number, spreadMmY: number, state: ProjectState): CanvasElement | null {
+    const { pageIndexes, hitOrder } = this.getSpreadScene(state);
+    const { pageWidthMm } = this.getSpreadDimensions(state);
+    for (const el of hitOrder()) {
+      const pageIdx = pageIndexes.get(el.pageId);
+      if (pageIdx === undefined) continue;
 
       const pageStartMm = pageIdx * pageWidthMm;
       const elGlobalX = pageStartMm + el.x;
@@ -1984,25 +1727,21 @@ export class SpreadCanvas {
   }
 
   private hitTestMasterElements(spreadMmX: number, spreadMmY: number, state: ProjectState): { masterElement: CanvasElement; targetPage: Page } | null {
-    const spread = stateManager.getActiveSpread();
-    if (!spread.masterSpreadId) return null;
-    const master = resolveMaster(state.masterSpreads, spread.masterSpreadId);
+    const { spread, master, inherited, pageIndexes } = this.getSpreadScene(state);
     if (!master) return null;
 
     const { pageWidthMm, pageHeightMm } = this.getSpreadDimensions(state);
 
-    for (let i = master.elements.length - 1; i >= 0; i--) {
-      const mEl = master.elements[i];
-      if (spread.detachedMasterElementIds?.includes(mEl.id)) continue;
-      if (spread.elements.some((e) => e.masterSourceId === mEl.id)) continue;
+    for (let i = inherited.length - 1; i >= 0; i--) {
+      const mEl = inherited[i];
 
       const masterPage = master.pages.find((p) => p.id === mEl.pageId);
       let targetPage = spread.pages.find((p) => masterPage && p.side === masterPage.side);
       if (!targetPage) targetPage = spread.pages[0];
       if (!targetPage) continue;
 
-      const pageIdx = spread.pages.findIndex((p) => p.id === targetPage!.id);
-      if (pageIdx === -1) continue;
+      const pageIdx = pageIndexes.get(targetPage.id);
+      if (pageIdx === undefined) continue;
 
       const pageStartMm = pageIdx * pageWidthMm;
       let masterY = mEl.y;
@@ -2022,6 +1761,59 @@ export class SpreadCanvas {
       }
     }
     return null;
+  }
+
+  private startNodeDrag(path: VectorPathElement, nodeIndex: number, part: NonNullable<SpreadCanvas['activeNodeDrag']>['part'], startDragX: number, startDragY: number) {
+    this.cancelDrag();
+    const state = stateManager.getState();
+    this.dragDocument = { state, spread: stateManager.getActiveSpread(), revision: stateManager.getDocumentRevision(), tool: state.activeTool };
+    this.activeNodeDrag = { path, nodeIndex, part, startDragX, startDragY };
+  }
+
+  private previewNodeDrag(screenX: number, screenY: number, mmX: number, mmY: number, state: ProjectState, split: boolean) {
+    const drag = this.activeNodeDrag;
+    if (!drag) return;
+    const { path, nodeIndex, part } = drag;
+    const original = path.nodes[nodeIndex];
+    if (part === 'newHandle') {
+      const pageIndex = this.getSpreadScene(state).pageIndexes.get(path.pageId) ?? 0;
+      const dx = mmX - pageIndex * state.settings.widthMm - path.x - original.x;
+      const dy = mmY - path.y - original.y;
+      drag.pending = Math.hypot(dx, dy) < 0.5 ? original : {
+        ...original, handleOut: { x: dx, y: dy }, handleIn: { x: -dx, y: -dy },
+      };
+      return;
+    }
+
+    const pxPerMm = MM_TO_PX * state.zoom;
+    const dx = (screenX - drag.startDragX) / pxPerMm;
+    const dy = (screenY - drag.startDragY) / pxPerMm;
+    if (part === 'anchor') {
+      drag.pending = { ...original, x: original.x + dx, y: original.y + dy };
+      return;
+    }
+    const draft = this.dragPreview.get(path.id);
+    const current = drag.pending ?? (draft?.type === 'path' ? draft.nodes[nodeIndex] : original);
+    const opposite = part === 'handleIn' ? 'handleOut' : 'handleIn';
+    const handle = { x: (original[part]?.x ?? 0) + dx, y: (original[part]?.y ?? 0) + dy };
+    drag.pending = { ...original, [part]: handle, [opposite]: split ? current[opposite] : { x: -handle.x, y: -handle.y } };
+  }
+
+  private flushNodePreview() {
+    const drag = this.activeNodeDrag;
+    if (!drag?.pending) return;
+    const { path, nodeIndex, pending } = drag;
+    drag.pending = undefined;
+    const original = path.nodes[nodeIndex];
+    const equal = (a?: { x: number; y: number }, b?: { x: number; y: number }) => a?.x === b?.x && a?.y === b?.y;
+    if (equal(pending, original) && equal(pending.handleIn, original.handleIn) && equal(pending.handleOut, original.handleOut)) {
+      this.dragPreview.delete(path.id);
+      return;
+    }
+    const nodes = path.nodes.slice();
+    nodes[nodeIndex] = pending;
+    const { width, height } = this.recalculatePathBounds(nodes);
+    this.dragPreview.set(path.id, { ...path, nodes, width, height });
   }
 
   private recalculatePathBounds(nodes: BezierNode[]): { minX: number; minY: number; width: number; height: number } {
@@ -2098,7 +1890,7 @@ export class SpreadCanvas {
     return null;
   }
 
-  private handlePenMouseDown(mmX: number, mmY: number, screenX: number, screenY: number, e: CanvasMouseDown) {
+  private handlePenMouseDown(mmX: number, mmY: number, screenX: number, screenY: number) {
     const state = stateManager.getState();
     const spread = stateManager.getActiveSpread();
     const pageHit = this.findPageAtMm(mmX, mmY, state);
@@ -2113,8 +1905,6 @@ export class SpreadCanvas {
         if (distToFirst <= 5 && pathEl.nodes.length >= 2) {
           stateManager.updateElement(pathEl.id, { closed: true });
           this.activePenPathId = null;
-          this.activePenNodeIndex = -1;
-          this.isPenDraggingHandle = false;
           stateManager.setTool('select');
           this.render();
           return;
@@ -2130,9 +1920,9 @@ export class SpreadCanvas {
           width: bounds.width,
           height: bounds.height,
         });
-        this.activePenNodeIndex = newNodes.length - 1;
-        this.isPenDraggingHandle = true;
-        this.render();
+        const updated = stateManager.getElementById(pathEl.id);
+        if (updated?.type === 'path') this.startNodeDrag(updated, newNodes.length - 1, 'newHandle', screenX, screenY);
+        this.scheduleRender();
         return;
       }
     }
@@ -2164,8 +1954,7 @@ export class SpreadCanvas {
     stateManager.addElement(newPath);
     stateManager.selectElements([newId]);
     this.activePenPathId = newId;
-    this.activePenNodeIndex = 0;
-    this.isPenDraggingHandle = true;
+    this.startNodeDrag(newPath, 0, 'newHandle', screenX, screenY);
     this.scheduleRender();
   }
 
@@ -2784,6 +2573,8 @@ export class SpreadCanvas {
     const revision = `${stateManager.getDocumentRevision()}:${fontManager.generation}`;
     if (revision !== this.formattedLayoutRevision || layoutKernels !== this.formattedLayoutKernels) {
       this.formattedLayouts.clear();
+      this.tableThreads = undefined;
+      this.tableLayouts = createContentTableLayoutLookup();
       this.formattedLayoutRevision = revision;
       this.formattedLayoutKernels = layoutKernels;
     }
@@ -2807,14 +2598,16 @@ export class SpreadCanvas {
 
     const origin = this.getSpreadScreenOrigin(state);
     const pxPerMm = MM_TO_PX * state.zoom;
-    const realSpread = stateManager.getActiveSpread();
+    const scene = this.getSpreadScene(original);
+    const { spread: realSpread, pageIndexes, layerMap } = scene;
     const session = stateManager.getDocumentSession();
     if (realSpread.id !== this.imageSpreadId || session !== this.imageSession) {
       this.trimDisplayImages(session === this.imageSession ? 12 : 0);
       this.imageSpreadId = realSpread.id;
       this.imageSession = session;
     }
-    const spread = !proof && !state.previewMode && this.dragPreview.size
+    const showDrag = !proof && !state.previewMode && this.dragPreview.size > 0;
+    const spread = showDrag
       ? { ...realSpread, elements: realSpread.elements.map(element => this.dragPreview.get(element.id) || element) }
       : realSpread;
 
@@ -2841,40 +2634,18 @@ export class SpreadCanvas {
       ctx.clip();
     }
 
-    const layerMap = new Map((state.layers || []).map(l => [l.id, l]));
-
-    // Resolve parent chains once and send every master object through the normal renderer.
-    const master = resolveMaster(state.masterSpreads, spread.masterSpreadId);
-    const masterElements = (master?.elements || []).flatMap(element => {
-      if (spread.detachedMasterElementIds?.includes(element.id) || spread.elements.some(local => local.masterSourceId === element.id)) return [];
-      const page = masterTargetPage(master!.pages, spread.pages, element.pageId);
-      if (!page) return [];
-      return [instantiateMasterItem(element, page.id, text => publicationText(state, text, page.pageNumber))];
-    });
-    const inheritedIds = new Set(masterElements.map(element => element.id));
-    const visibleElements = [...masterElements, ...spread.elements].filter(el => {
-      const elLayer = layerMap.get(el.layerId || 'layer-1');
-      if (proof && (el.editorialOnly || (proof.spot && el.spotColor !== proof.spot))) return false;
-      if ((proof || state.previewMode) && (el.pasteboard || el.nonprinting || elLayer?.printable === false)) return false;
-      return !elLayer || elLayer.visible !== false;
-    });
-    const sortedElements = [...visibleElements].sort((a, b) => {
-      if (inheritedIds.has(a.id) !== inheritedIds.has(b.id)) return inheritedIds.has(a.id) ? -1 : 1;
-      const layerA = layerMap.get(a.layerId || 'layer-1');
-      const layerB = layerMap.get(b.layerId || 'layer-1');
-      const orderA = layerA ? layerA.order : 0;
-      const orderB = layerB ? layerB.order : 0;
-      if (orderA !== orderB) {
-        return orderA - orderB;
-      }
-      return a.zIndex - b.zIndex;
-    });
-    this.adjustmentPreviews.beginFrame(visibleElements.reduce((count, element) =>
-      count + Number(element.type === 'image' && Boolean(element.adjustments)), 0));
+    const preview = proof || state.previewMode;
+    const artwork = preview ? scene.artwork.filter(el => !el.pasteboard && !el.nonprinting &&
+      scene.layerOf(el)?.printable !== false && (!proof || (!el.editorialOnly && (!proof.spot || el.spotColor === proof.spot)))) : scene.artwork;
+    this.adjustmentPreviews.beginFrame(preview ? artwork.reduce((count, element) =>
+      count + Number(element.type === 'image' && Boolean(element.adjustments)), 0) : scene.adjustedImages);
+    const selected = new Set(state.selectedElementIds ?? (state.selectedElementId ? [state.selectedElementId] : []));
+    const currentElement = (id: string) => (showDrag ? this.dragPreview.get(id) : undefined) ?? scene.elements.get(id);
     if (proof?.spot) ctx = spotProofContext(ctx);
-    for (const el of sortedElements) {
-      const pageIdx = spread.pages.findIndex(p => p.id === el.pageId);
-      if (pageIdx === -1) continue;
+    for (const saved of artwork) {
+      const el = showDrag ? this.dragPreview.get(saved.id) ?? saved : saved;
+      const pageIdx = pageIndexes.get(el.pageId);
+      if (pageIdx === undefined) continue;
 
       const pageStartMm = pageIdx * pageWidthMm;
       const elScreenX = origin.x + ((pageStartMm + el.x) * pxPerMm);
@@ -2889,12 +2660,12 @@ export class SpreadCanvas {
         if (elScreenX + elScreenW < -padding || elScreenY + elScreenH < -padding ||
           elScreenX > canvasW + padding || elScreenY > canvasH + padding) continue;
       }
-      const isSelected = state.selectedElementIds ? state.selectedElementIds.includes(el.id) : state.selectedElementId === el.id;
+      const isSelected = selected.has(el.id);
 
       ctx.save();
       const opacity = this.opacityPreview;
       ctx.globalAlpha = !proof && !state.previewMode && opacity?.id === el.id &&
-        opacity.revision === stateManager.getDocumentRevision() ? opacity.value : el.opacity;
+        opacity.revision === scene.revision ? opacity.value : el.opacity;
       ctx.globalCompositeOperation = el.blendMode === 'normal' || !el.blendMode ? 'source-over' : el.blendMode;
 
       if (el.shadow && el.shadow.color) {
@@ -3033,7 +2804,12 @@ export class SpreadCanvas {
         this.renderVectorPath(ctx, pathEl, origin, pageStartMm, pxPerMm, isSelected, this.activePenPathId, !!proof?.spot);
       } else if (el.type === 'table') {
         const table = el as TableElement;
-        tableEngine.renderCanvasTable(ctx, table, elScreenX, elScreenY, elScreenW, elScreenH, pxPerMm, state.zoom, tableThread(state.spreads, table));
+        const preview = !proof && !state.previewMode && this.dragPreview.has(table.id);
+        const resizing = preview && this.isResizing;
+        const source = preview && !resizing ? scene.elements.get(table.id) : table;
+        const thread = (this.tableThreads ??= createTableThreadLookup(state.spreads))(source?.type === 'table' ? source : table);
+        const layout = resizing ? undefined : this.tableLayouts(thread);
+        tableEngine.renderCanvasTable(ctx, table, elScreenX, elScreenY, elScreenW, elScreenH, pxPerMm, state.zoom, thread, layout);
       } else if (el.type === 'text') {
         const text = el as TextElement;
         if (!proof && this.activeInlineEditor && this.activeInlineEditor.elementId === el.id) {
@@ -3080,7 +2856,7 @@ export class SpreadCanvas {
           ctx.restore();
         }
 
-        const pStyle = text.paragraphStyleId ? state.paragraphStyles.find(s => s.id === text.paragraphStyleId) : undefined;
+        const pStyle = text.paragraphStyleId ? scene.paragraphStyles.get(text.paragraphStyleId) : undefined;
         const activeGrepRules = pStyle?.grepStyles || text.grepStyles;
         if (pStyle?.shadingColor) {
           const sPaddingPx = (pStyle.shadingPaddingMm || 1.5) * pxPerMm;
@@ -3123,8 +2899,10 @@ export class SpreadCanvas {
         const gridStartY = origin.y + (startMm * pxPerMm);
 
         const layoutFrame = this.dragPreview.has(text.id)
-          ? realSpread.elements.find(element => element.id === text.id) as TextElement : text;
-        const obstacles = publicationWrapObjects(state, realSpread).filter(other => other.id !== text.id && other.pageId === text.pageId);
+          ? scene.elements.get(text.id) as TextElement : text;
+        const pageObstacles = scene.wrapOnPage(text.pageId);
+        const obstacles = text.textWrap?.mode && text.textWrap.mode !== 'none'
+          ? pageObstacles?.filter(other => other.id !== text.id) : pageObstacles;
 
         const fnSettings = state.settings.footnoteSettings || {
           numberingStyle: 'superscript',
@@ -3136,7 +2914,7 @@ export class SpreadCanvas {
         const fnFontSizePx = (fnFontSizePt * (96 / 72)) * state.zoom;
         const fnLineSpacingPx = fnFontSizePx * 1.35;
         const fnRuleGapPx = 6 * state.zoom;
-        const noteLayout = layoutFrameNotes(state, layoutFrame);
+        const noteLayout = layoutFrameNotes(original, layoutFrame);
         const totalFootnoteHeightPx = noteLayout.height * pxPerMm;
 
         let isOverflowing = false;
@@ -3153,15 +2931,15 @@ export class SpreadCanvas {
         }
         const processedText = formatOpenTypeText(rawCleanedText, text.openTypeFeatures);
 
-        const flowContent = text.textContent || (obstacles.length ? wrappedPlainContent(text, processedText) : undefined);
+        const cached = this.formattedLayouts.get(layoutFrame);
+        const flowContent = text.textContent || (obstacles?.length
+          ? cached?.source === processedText ? cached.content : wrappedPlainContent(text, processedText) : undefined);
         if (flowContent) {
-          const cached = this.formattedLayouts.get(layoutFrame);
           const layout = cached?.content === flowContent && cached.reserve === noteLayout.height ? cached.layout :
             layoutStory(flowContent, layoutFrame, state.paragraphStyles, state.characterStyles,
               undefined, noteLayout.height, { obstacles, baselineGrid: state.settings.baselineGrid });
-          if (cached?.layout !== layout && flowContent === text.textContent && !inheritedIds.has(text.id)) {
-            if (this.formattedLayouts.size >= 64) this.formattedLayouts.clear();
-            this.formattedLayouts.set(layoutFrame, { content: flowContent, reserve: noteLayout.height, layout });
+          if (cached?.layout !== layout && (cached || this.formattedLayouts.size < 64)) {
+            this.formattedLayouts.set(layoutFrame, { content: flowContent, source: text.textContent ? undefined : processedText, reserve: noteLayout.height, layout });
           }
           ctx.textAlign = 'left';
           ctx.textBaseline = 'alphabetic';
@@ -3612,17 +3390,15 @@ export class SpreadCanvas {
     for (const el of spread.elements) {
       if (el.type === 'text') {
         const textEl = el as TextElement;
-        const isSelected = state.selectedElementIds ? state.selectedElementIds.includes(textEl.id) : state.selectedElementId === textEl.id;
+        const isSelected = selected.has(textEl.id);
         if ((isSelected || state.linkingFromFrameId === textEl.id) && textEl.nextFrameId) {
-          const pageIdxA = spread.pages.findIndex(p => p.id === textEl.pageId);
-          const fromPageStart = (pageIdxA !== -1 ? pageIdxA : 0) * pageWidthMm;
+          const fromPageStart = (pageIndexes.get(textEl.pageId) ?? 0) * pageWidthMm;
           const fromX = origin.x + ((fromPageStart + textEl.x + textEl.width) * pxPerMm) - 7;
           const fromY = origin.y + ((textEl.y + textEl.height) * pxPerMm) - 7;
 
-          const targetEl = spread.elements.find(e => e.id === textEl.nextFrameId);
+          const targetEl = currentElement(textEl.nextFrameId);
           if (targetEl && targetEl.type === 'text') {
-            const pageIdxB = spread.pages.findIndex(p => p.id === targetEl.pageId);
-            const toPageStart = (pageIdxB !== -1 ? pageIdxB : 0) * pageWidthMm;
+            const toPageStart = (pageIndexes.get(targetEl.pageId) ?? 0) * pageWidthMm;
             const toX = origin.x + ((toPageStart + targetEl.x) * pxPerMm) + 5;
             const toY = origin.y + (targetEl.y * pxPerMm) + 15;
 
@@ -3653,7 +3429,7 @@ export class SpreadCanvas {
             ctx.fill();
             ctx.restore();
           } else {
-            const otherSpread = state.spreads.find(s => s.elements.some(e => e.id === textEl.nextFrameId));
+            const otherSpread = scene.linkedSpread(textEl.nextFrameId);
             const spIdx = otherSpread ? otherSpread.spreadIndex + 1 : '?';
             ctx.save();
             ctx.fillStyle = '#00b4d8';
@@ -4622,8 +4398,7 @@ export class SpreadCanvas {
 
   public drawRulers() {
     const state = stateManager.getState();
-    drawCanvasRulers(this.rulerTop, this.rulerLeft, this.ctxTop, this.ctxLeft,
-      this.getSpreadScreenOrigin(state), state.zoom, { x: this.mouseMmX, y: this.mouseMmY }, this.rulerPalette);
+    this.rulers.draw(this.getSpreadScreenOrigin(state), state.zoom, { x: this.mouseMmX, y: this.mouseMmY }, this.rulerPalette);
   }
 
   private renderVectorPath(

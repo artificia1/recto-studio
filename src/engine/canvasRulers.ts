@@ -2,86 +2,117 @@ import { MM_TO_PX, type Point2D } from './viewport';
 
 export interface RulerPalette { background: string; marks: string; labels: string; cursor: string }
 
-export function drawCanvasRulers(
-  rulerTop: HTMLCanvasElement, rulerLeft: HTMLCanvasElement,
-  ctxT: CanvasRenderingContext2D, ctxL: CanvasRenderingContext2D,
-  origin: Point2D, zoom: number, mouse: Point2D, palette: RulerPalette,
-) {
-  const pxPerMm = MM_TO_PX * zoom;
+const thickness = 24;
 
-  const wT = rulerTop.getBoundingClientRect().width;
-  ctxT.fillStyle = palette.background;
-  ctxT.fillRect(0, 0, wT, 24);
+/** The marks stay on their canvas. The cursor moves independently of the canvas drawing. */
+export class CanvasRulers {
+  private readonly topCursor = document.createElement('span');
+  private readonly leftCursor = document.createElement('span');
+  private width = 0;
+  private height = 0;
+  private topKey = '';
+  private leftKey = '';
+  private cursorX = NaN;
+  private cursorY = NaN;
+  private cursorColor = '';
 
-  ctxT.strokeStyle = palette.marks;
-  ctxT.fillStyle = palette.labels;
-  ctxT.font = '9px Inter, sans-serif';
-  ctxT.textAlign = 'left';
-  ctxT.lineWidth = 1;
+  constructor(
+    private readonly top: HTMLCanvasElement, private readonly left: HTMLCanvasElement,
+    private readonly topContext: CanvasRenderingContext2D, private readonly leftContext: CanvasRenderingContext2D,
+  ) {
+    this.topCursor.className = 'ruler-cursor ruler-cursor-top';
+    this.leftCursor.className = 'ruler-cursor ruler-cursor-left';
+    for (const cursor of [this.topCursor, this.leftCursor]) cursor.setAttribute('aria-hidden', 'true');
+    top.parentElement?.appendChild(this.topCursor);
+    left.parentElement?.appendChild(this.leftCursor);
+  }
 
-  const startMmX = Math.floor(-origin.x / pxPerMm);
-  const endMmX = Math.ceil((wT - origin.x) / pxPerMm);
+  resize(width: number, height: number, scale: number) {
+    this.width = width;
+    this.height = height;
+    this.top.width = width * scale;
+    this.top.height = thickness * scale;
+    this.top.style.width = `${width}px`;
+    this.top.style.height = `${thickness}px`;
+    this.left.width = thickness * scale;
+    this.left.height = height * scale;
+    this.left.style.width = `${thickness}px`;
+    this.left.style.height = `${height}px`;
+    this.topContext.setTransform(scale, 0, 0, scale, 0, 0);
+    this.leftContext.setTransform(scale, 0, 0, scale, 0, 0);
+    this.invalidateMarks();
+  }
 
-  for (let mm = startMmX; mm <= endMmX; mm++) {
-    const screenX = origin.x + (mm * pxPerMm);
-    if (mm % 50 === 0) {
-      ctxT.beginPath();
-      ctxT.moveTo(screenX, 10);
-      ctxT.lineTo(screenX, 24);
-      ctxT.stroke();
-      ctxT.fillText(`${mm}`, screenX + 2, 9);
-    } else if (mm % 10 === 0) {
-      ctxT.beginPath();
-      ctxT.moveTo(screenX, 16);
-      ctxT.lineTo(screenX, 24);
-      ctxT.stroke();
+  invalidateMarks() {
+    this.topKey = this.leftKey = '';
+  }
+
+  draw(origin: Point2D, zoom: number, mouse: Point2D, palette: RulerPalette) {
+    const pxPerMm = MM_TO_PX * zoom;
+    const colors = `${palette.background}:${palette.marks}:${palette.labels}`;
+    const topKey = `${origin.x}:${zoom}:${colors}`;
+    const leftKey = `${origin.y}:${zoom}:${colors}`;
+    if (topKey !== this.topKey) {
+      drawMarks(this.topContext, this.width, origin.x, pxPerMm, palette, true);
+      this.topKey = topKey;
+    }
+    if (leftKey !== this.leftKey) {
+      drawMarks(this.leftContext, this.height, origin.y, pxPerMm, palette, false);
+      this.leftKey = leftKey;
+    }
+
+    if (palette.cursor !== this.cursorColor) {
+      this.cursorColor = palette.cursor;
+      this.topCursor.style.backgroundColor = this.leftCursor.style.backgroundColor = palette.cursor;
+    }
+    const x = origin.x + mouse.x * pxPerMm, y = origin.y + mouse.y * pxPerMm;
+    if (x !== this.cursorX) {
+      this.topCursor.style.transform = `translateX(${x - 0.5}px)`;
+      this.cursorX = x;
+    }
+    if (y !== this.cursorY) {
+      this.leftCursor.style.transform = `translateY(${y - 0.5}px)`;
+      this.cursorY = y;
     }
   }
 
-  const cursorTopX = origin.x + (mouse.x * pxPerMm);
-  ctxT.strokeStyle = palette.cursor;
-  ctxT.beginPath();
-  ctxT.moveTo(cursorTopX, 0);
-  ctxT.lineTo(cursorTopX, 24);
-  ctxT.stroke();
+  destroy() {
+    this.topCursor.remove();
+    this.leftCursor.remove();
+  }
+}
 
-  const hL = rulerLeft.getBoundingClientRect().height;
-  ctxL.fillStyle = palette.background;
-  ctxL.fillRect(0, 0, 24, hL);
+function drawMarks(ctx: CanvasRenderingContext2D, length: number, origin: number, pxPerMm: number,
+  palette: RulerPalette, horizontal: boolean) {
+  ctx.fillStyle = palette.background;
+  ctx.fillRect(0, 0, horizontal ? length : thickness, horizontal ? thickness : length);
+  ctx.strokeStyle = palette.marks;
+  ctx.fillStyle = palette.labels;
+  ctx.font = '9px Inter, sans-serif';
+  ctx.textAlign = horizontal ? 'left' : 'right';
+  ctx.lineWidth = 1;
+  const startMm = Math.ceil(Math.floor(-origin / pxPerMm) / 10) * 10;
+  const endMm = Math.ceil((length - origin) / pxPerMm);
 
-  ctxL.strokeStyle = palette.marks;
-  ctxL.fillStyle = palette.labels;
-  ctxL.font = '9px Inter, sans-serif';
-  ctxL.textAlign = 'right';
-  ctxL.lineWidth = 1;
-
-  const startMmY = Math.floor(-origin.y / pxPerMm);
-  const endMmY = Math.ceil((hL - origin.y) / pxPerMm);
-
-  for (let mm = startMmY; mm <= endMmY; mm++) {
-    const screenY = origin.y + (mm * pxPerMm);
-    if (mm % 50 === 0) {
-      ctxL.beginPath();
-      ctxL.moveTo(10, screenY);
-      ctxL.lineTo(24, screenY);
-      ctxL.stroke();
-      ctxL.save();
-      ctxL.translate(9, screenY - 2);
-      ctxL.rotate(-Math.PI / 2);
-      ctxL.fillText(`${mm}`, 0, 0);
-      ctxL.restore();
-    } else if (mm % 10 === 0) {
-      ctxL.beginPath();
-      ctxL.moveTo(16, screenY);
-      ctxL.lineTo(24, screenY);
-      ctxL.stroke();
+  ctx.beginPath();
+  for (let mm = startMm; mm <= endMm; mm += 10) {
+    const position = origin + mm * pxPerMm;
+    const major = mm % 50 === 0;
+    if (horizontal) {
+      ctx.moveTo(position, major ? 10 : 16);
+      ctx.lineTo(position, thickness);
+      if (major) ctx.fillText(String(mm), position + 2, 9);
+    } else {
+      ctx.moveTo(major ? 10 : 16, position);
+      ctx.lineTo(thickness, position);
+      if (major) {
+        ctx.save();
+        ctx.translate(9, position - 2);
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillText(String(mm), 0, 0);
+        ctx.restore();
+      }
     }
   }
-
-  const cursorLeftY = origin.y + (mouse.y * pxPerMm);
-  ctxL.strokeStyle = palette.cursor;
-  ctxL.beginPath();
-  ctxL.moveTo(0, cursorLeftY);
-  ctxL.lineTo(24, cursorLeftY);
-  ctxL.stroke();
+  ctx.stroke();
 }

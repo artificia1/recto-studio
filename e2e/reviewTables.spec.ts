@@ -128,3 +128,23 @@ test('fits table content, adds a continuation page, and edits source cells from 
   expect(saved.spreads[1].elements[0].cells[1][0].text).toBe('Edited from continuation');
   await page.screenshot({ path: 'test-results/table-continuation.png', fullPage: true });
 });
+
+test('edits a cell beyond the first row and column window of a large table', async ({ page }) => {
+  const project = projectFixture();
+  const rows = 151, cols = 12;
+  Object.assign(project.spreads[0].elements[0], { type: 'table', rows, cols,
+    cells: Array.from({ length: rows }, (_, row) => Array.from({ length: cols }, (_, col) => ({ text: `${row + 1}/${col + 1}` }))),
+    headerRowCount: 0, headerFillColor: '#222222', headerTextColor: '#ffffff', borderWidthMm: 0, cellPaddingMm: 1 });
+  await importProject(page, project);
+  const cells = page.getByRole('group', { name: 'Table cells' });
+  await expect(cells.getByRole('button')).toHaveCount(160);
+  await page.getByRole('spinbutton', { name: 'Go to table row' }).fill('151');
+  await page.getByRole('spinbutton', { name: 'Go to table row' }).press('Tab');
+  await page.getByRole('button', { name: 'Next table columns' }).click();
+  await expect(cells.getByRole('button')).toHaveCount(44);
+  await cells.getByTitle('Row 151, Col 12: 151/12').click();
+  await page.getByRole('textbox', { name: 'Selected table cell text' }).fill('Revised catalog entry');
+  const saved = await savedProject(page);
+  expect(saved.spreads[0].elements[0].cells[150][11].text).toBe('Revised catalog entry');
+  expect(saved.spreads[0].elements[0].cells[0][0].text).toBe('1/1');
+});

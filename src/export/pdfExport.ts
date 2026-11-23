@@ -1,5 +1,5 @@
 import { instantiateMasterItem, resolveMaster } from '../engine/masterInheritance';
-import { layoutFrameNotes, publicationSnapshot, publicationText } from '../engine/publicationReferences';
+import { createPublicationTextResolver, layoutFrameNotes, publicationSnapshot } from '../engine/publicationReferences';
 import { publicationPreflight } from '../engine/publicationPreflight';
 import { embeddedAsset, prepareExportAssets } from './publicationAssets';
 import { registerPdfFonts, usedPdfFonts } from './pdfFonts';
@@ -23,7 +23,8 @@ import { stateManager, numberToSuperscript } from '../state';
 import { calculateImageFitting } from '../canvas';
 import { assetStore } from '../engine/assetStore';
 import { tableEngine } from '../engine/tableEngine';
-import { tableThread } from '../engine/tableCells';
+import { createTableThreadLookup } from '../engine/tableCells';
+import { createContentTableLayoutLookup } from '../engine/tableLayout';
 import { prepareManagedPdf } from './iccPdf';
 import { publicationWrapObjects, wrappedPlainContent } from '../engine/publicationWrap';
 import { formatOpenTypeText } from '../engine/legacyTypography';
@@ -77,6 +78,7 @@ export async function exportDocumentToPdf(
   const measure = pdfStoryMeasure();
   const state = publicationSnapshot(await prepareExportAssets(source, options.fetchExternalAssets ?? typeof window !== 'undefined', false, true,
     options.visualProof ? warning => options.onWarning?.(warning) : undefined), measure);
+  const publicationText = createPublicationTextResolver(state);
   const publicationIssues = publicationPreflight(state, options.strict ? 'print' : 'editor');
   const tableErrors = publicationIssues.filter(issue => issue.code === 'TABLE_LAYOUT' && issue.severity === 'error');
   if (tableErrors.length && !options.visualProof) throw new Error(tableErrors.map(issue => `Page ${issue.pageNumber}: ${issue.message}`).join('\n'));
@@ -183,6 +185,8 @@ export async function exportDocumentToPdf(
   }
 
   const totalPagesInDoc = state.spreads.reduce((acc, s) => acc + s.pages.length, 0);
+  const findTableThread = createTableThreadLookup(state.spreads);
+  const findTableLayout = createContentTableLayoutLookup();
 
   for (const { page, spread } of pagesToExport) {
     if (!isFirstPage) {
@@ -241,7 +245,7 @@ export async function exportDocumentToPdf(
       masterTargetPage(master!.pages, spread.pages, element.pageId)?.id === page.id &&
       !spread.detachedMasterElementIds?.includes(element.id) &&
       !spread.elements.some(candidate => candidate.masterSourceId === element.id && candidate.pageId === page.id))
-      .map(element => instantiateMasterItem(element, page.id, text => publicationText(state, text, page.pageNumber)));
+      .map(element => instantiateMasterItem(element, page.id, text => publicationText(text, page.pageNumber)));
     semantic?.furniture(masterElements.map(element => element.id));
     const paintOrder = (a: CanvasElement, b: CanvasElement) => (state.layers.find(layer => layer.id === a.layerId)?.order || 0) - (state.layers.find(layer => layer.id === b.layerId)?.order || 0) || a.zIndex - b.zIndex;
     const omitInvisible = options.transparency === 'flatten' || !!semantic;
@@ -378,7 +382,7 @@ export async function exportDocumentToPdf(
 
         const wrapObjects = publicationWrapObjects(state, spread);
         const hasWrap = wrapObjects.some(object => object.id !== text.id && object.pageId === text.pageId);
-        const flowContent = text.textContent || (hasWrap || semantic ? wrappedPlainContent(text, formatOpenTypeText(publicationText(state, text.text || '', page.pageNumber).replace(/\{index:[^}]+\}/g, ''), text.openTypeFeatures)) : undefined);
+        const flowContent = text.textContent || (hasWrap || semantic ? wrappedPlainContent(text, formatOpenTypeText(publicationText(text.text || '', page.pageNumber).replace(/\{index:[^}]+\}/g, ''), text.openTypeFeatures)) : undefined);
         if (flowContent) {
           const layout = layoutStory(flowContent, text, state.paragraphStyles, state.characterStyles, measure, totalFnHtMm,
             { obstacles: wrapObjects, baselineGrid: state.settings.baselineGrid });
@@ -425,12 +429,12 @@ export async function exportDocumentToPdf(
         if (text.prevFrameId && storyOverflowMap.has(text.id)) {
           linesToRender = storyOverflowMap.get(text.id)!;
         } else {
-          let evalText = publicationText(state, text.text || '', page.pageNumber);
+          let evalText = publicationText(text.text || '', page.pageNumber);
           if (evalText.includes('{cond:')) {
-            evalText = publicationText(state, evalText, page.pageNumber);
+            evalText = publicationText(evalText, page.pageNumber);
           }
           if (evalText.includes('{xref:')) {
-            evalText = publicationText(state, evalText, page.pageNumber);
+            evalText = publicationText(evalText, page.pageNumber);
           }
           if (evalText.includes('{index:')) {
             evalText = evalText.replace(/\{index:[^}]+\}/g, '');
@@ -602,8 +606,9 @@ export async function exportDocumentToPdf(
         }
       } else if (el.type === 'table') {
         const table = el as TableElement;
-        const tableFrames = tableThread(state.spreads, table);
-        tableEngine.exportPdfTable(doc, table, elX, elY, table.width, table.height, tableFrames, overprintBlack, semantic?.table(table, tableFrames[0]));
+        const tableFrames = findTableThread(table);
+        const tableLayout = tableFrames.length > 1 ? findTableLayout(tableFrames) : undefined;
+        tableEngine.exportPdfTable(doc, table, elX, elY, table.width, table.height, tableFrames, overprintBlack, semantic?.table(table, tableFrames[0]), tableLayout);
       }
 
       // 4b. AcroForm Interactive PDF Form Field
