@@ -1,5 +1,11 @@
+export interface AutosaveJob {
+  json: string;
+  updatedAt: number;
+  checkpoint?: { id: string; fileName?: string; recoverable: boolean };
+}
+
 /** One worker per large save keeps an idle editor from retaining two copies of its project. */
-export function saveProjectInWorker(json: string, updatedAt: number): Promise<boolean> {
+export function saveProjectInWorker(job: AutosaveJob): Promise<boolean> {
   return new Promise(resolve => {
     let worker: Worker | undefined;
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -14,7 +20,7 @@ export function saveProjectInWorker(json: string, updatedAt: number): Promise<bo
       worker.onerror = event => { event.preventDefault(); finish(false); };
       worker.onmessageerror = () => finish(false);
       timeout = setTimeout(() => finish(false), 15_000);
-      worker.postMessage({ json, updatedAt });
+      worker.postMessage(job);
     } catch {
       finish(false);
     }

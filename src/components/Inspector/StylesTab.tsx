@@ -3,6 +3,7 @@ import { stateManager } from '../../state';
 import { fontManager } from '../../fontManager';
 import { ProjectState, ParagraphStyle, GrepStyleRule } from '../../types';
 import StyleExchangePanel from './StyleExchangePanel';
+import { CommitNumberInput } from '../common/CommitNumberInput';
 
 interface StylesTabProps {
   state: ProjectState;
@@ -178,29 +179,21 @@ export function StylesTab({ state }: StylesTabProps) {
                 <div className="input-grid-2" style={{ marginBottom: '8px' }}>
                   <label>
                     Size (pt):
-                    <input
-                      type="number"
+                    <CommitNumberInput
                       value={style.fontSizePt}
                       min={6}
                       max={96}
-                      onInput={(e) =>
-                        stateManager.updateParagraphStyle(style.id, {
-                          fontSizePt: parseFloat((e.target as HTMLInputElement).value) || 12,
-                        })}
+                      onCommit={fontSizePt => stateManager.updateParagraphStyle(style.id, { fontSizePt })}
                     />
                   </label>
                   <label>
                     Leading:
-                    <input
-                      type="number"
+                    <CommitNumberInput
                       value={style.lineHeight}
                       step={0.05}
                       min={0.8}
                       max={2.5}
-                      onInput={(e) =>
-                        stateManager.updateParagraphStyle(style.id, {
-                          lineHeight: parseFloat((e.target as HTMLInputElement).value) || 1.3,
-                        })}
+                      onCommit={lineHeight => stateManager.updateParagraphStyle(style.id, { lineHeight })}
                     />
                   </label>
                 </div>
@@ -211,7 +204,7 @@ export function StylesTab({ state }: StylesTabProps) {
                     <input
                       type="color"
                       value={style.color}
-                      onInput={(e) =>
+                      onChange={(e) =>
                         stateManager.updateParagraphStyle(style.id, {
                           color: (e.target as HTMLInputElement).value,
                         })}

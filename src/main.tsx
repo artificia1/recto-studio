@@ -12,6 +12,18 @@ import { warmLayout } from './engine/layoutRuntime';
 initializeAppearance();
 if (!isDesktop()) listenForWebInstall();
 const mountPoint = document.getElementById('root');
+
+function loadWorkspaceFonts() {
+  const stylesheet = document.createElement('link');
+  stylesheet.rel = 'stylesheet';
+  stylesheet.href = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Space+Grotesk:wght@500;700&display=swap';
+  // Paint with local fallbacks while the optional stylesheet downloads.
+  stylesheet.media = 'print';
+  stylesheet.onload = () => { stylesheet.media = 'all'; };
+  stylesheet.onerror = () => stylesheet.remove();
+  document.head.appendChild(stylesheet);
+}
+
 async function start() {
   await stateManager.recoverAutosave();
   try {
@@ -25,6 +37,7 @@ async function start() {
   });
   if (mountPoint) {
     render(<App />, mountPoint);
+    loadWorkspaceFonts();
     void warmLayout();
     const counter = import.meta.env.VITE_VISIT_COUNTER_URL;
     if (counter && !isDesktop() && location.origin === 'https://artificia1.github.io' && location.pathname.startsWith('/recto-studio/')) {

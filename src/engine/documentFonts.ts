@@ -1,4 +1,5 @@
 import type { CanvasElement, ProjectState } from '../types';
+import { formattedStoryHeadsMatching } from './storyContent';
 export const primaryFont = (family: string) => family.split(',')[0].trim().replace(/['"]/g, '').toLocaleLowerCase();
 
 export function elementUsesFont(state: ProjectState, element: CanvasElement, family: string) {
@@ -36,4 +37,30 @@ export function documentFontUsage(state: ProjectState) {
     entry.count++; usages.set(key, entry);
   });
   return [...usages.values()].sort((a, b) => a.family.localeCompare(b.family));
+}
+
+function fontFamilyMatcher(families: readonly string[]) {
+  const changed = new Set(families.map(primaryFont));
+  return (fontFamily?: string) => !!fontFamily?.split(',').some(family => changed.has(primaryFont(family)));
+}
+
+export function documentUsesFontFamilies(state: ProjectState, families: readonly string[]): boolean {
+  const matches = fontFamilyMatcher(families);
+  let used = false;
+  visitDocumentFonts(state, ({ fontFamily }) => {
+    if (!used && matches(fontFamily)) used = true;
+  });
+  return used;
+}
+
+/** A font in any linked frame or run can change where its manuscript splits. */
+export function storyHeadsUsingFontFamilies(state: ProjectState, families: readonly string[]) {
+  const matches = fontFamilyMatcher(families);
+  const paragraphFonts = new Map(state.paragraphStyles.map(style => [style.id, style.fontFamily]));
+  const characterFonts = new Map(state.characterStyles?.map(style => [style.id, style.fontFamily]));
+  return formattedStoryHeadsMatching(state,
+    content => content.paragraphs.some(paragraph =>
+      matches(paragraph.formatting?.fontFamily) || matches(paragraphFonts.get(paragraph.styleId ?? '')) ||
+      paragraph.runs.some(run => matches(run.fontFamily) || matches(characterFonts.get(run.characterStyleId ?? '')))),
+    frame => matches(frame.fontFamily));
 }

@@ -2618,7 +2618,7 @@ const psdTestImg: ImageElement = {
   borderWidthMm: 0,
 };
 stateManager.addElement(psdTestImg);
-const psdLoaded = stateManager.loadPsdForElement(psdTestImg.id, psdBuf, 'cover.psd');
+const psdLoaded = await stateManager.loadPsdForElement(psdTestImg.id, psdBuf, 'cover.psd');
 assert(psdLoaded, 'loadPsdForElement should succeed');
 const loadedImg = stateManager.getElementById(psdTestImg.id) as ImageElement;
 assert.strictEqual(loadedImg.isPsd, true, 'Element must be marked as PSD');

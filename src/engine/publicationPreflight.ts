@@ -1,7 +1,7 @@
-import type { CanvasElement, PreflightIssue, ProjectState } from '../types';
-import { contentOf, layoutFrameNotes, publicationHeadings, storyHeads, textFrames } from './publicationReferences';
+import type { CanvasElement, PreflightIssue, ProjectState, StoryRun } from '../types';
+import { layoutFrameNotes, publicationHeadings, textFrames } from './publicationReferences';
 import { printReadiness } from './printReadiness';
-import { tableThread } from './tableCells';
+import { createTableThreadLookup } from './tableCells';
 import { layoutContentTables } from './tableLayout';
 import { publicationCaptions } from './publicationCaptions';
 
@@ -10,7 +10,6 @@ export function publicationPreflight(state: ProjectState, target: 'editor' | 'ep
   const hiddenLayers = new Set(state.layers?.filter(layer => !layer.visible || layer.printable === false).map(layer => layer.id));
   const excluded = (element: CanvasElement) => element.pasteboard || element.editorialOnly || element.nonprinting || hiddenLayers.has(element.layerId || 'layer-1');
   const frames = textFrames(state).filter(frame => !frame.pasteboard);
-  const allRuns = storyHeads(state).filter(head => !head.pasteboard).flatMap(head => contentOf(head).paragraphs.flatMap(paragraph => paragraph.runs.map(run => ({ run, head }))));
   let headingIds: Set<string | undefined> | undefined;
   let captionIds: Set<string> | undefined;
   const hasCaption = (id: string) => (captionIds ??= new Set(publicationCaptions(state).map(caption => caption.id))).has(id);
@@ -19,29 +18,46 @@ export function publicationPreflight(state: ProjectState, target: 'editor' | 'ep
   const noteIds = new Set(notes.map(note => note.id));
   const anchorCounts = new Map<string, number>();
   const indexAnchors = new Set<string>();
-  for (const { run } of allRuns) {
-    if (run.noteId) anchorCounts.set(run.noteId, (anchorCounts.get(run.noteId) || 0) + 1);
-    if (run.indexId) indexAnchors.add(run.indexId);
+  const referenceRuns: { headId: string; noteId?: string; reference?: StoryRun['reference'] }[] = [];
+  for (const head of frames) {
+    if (head.prevFrameId || !head.storyContent) continue;
+    for (const paragraph of head.storyContent.paragraphs) for (const run of paragraph.runs) {
+      if (run.noteId) anchorCounts.set(run.noteId, (anchorCounts.get(run.noteId) || 0) + 1);
+      if (run.indexId) indexAnchors.add(run.indexId);
+      if (run.reference || (run.noteId && !noteIds.has(run.noteId))) {
+        referenceRuns.push({ headId: head.id, noteId: run.noteId, reference: run.reference });
+      }
+    }
   }
+  let locations: Map<string, { spreadIndex: number; pageNumber: number }> | undefined;
   function issue(code: PreflightIssue['code'], message: string, elementId?: string, severity: PreflightIssue['severity'] = 'error') {
-    const spreadIndex = Math.max(0, state.spreads.findIndex(spread => spread.elements.some(element => element.id === elementId)));
-    const element = state.spreads[spreadIndex]?.elements.find(element => element.id === elementId);
-    const page = state.spreads[spreadIndex]?.pages.find(page => page.id === element?.pageId) || state.spreads[spreadIndex]?.pages[0];
-    issues.push({ id: `publication-${code}-${elementId || issues.length}`, code, message, severity, elementId, spreadIndex, pageNumber: page?.pageNumber || 1 });
+    if (elementId && !locations) {
+      const index = new Map<string, { spreadIndex: number; pageNumber: number }>();
+      for (const [spreadIndex, spread] of state.spreads.entries()) {
+        const pages = new Map(spread.pages.map(page => [page.id, page.pageNumber]));
+        for (const element of spread.elements) {
+          const pageNumber = (pages.get(element.pageId) ?? spread.pages[0]?.pageNumber) || 1;
+          if (!index.has(element.id)) index.set(element.id, { spreadIndex, pageNumber });
+        }
+      }
+      locations = index;
+    }
+    const location = elementId ? locations?.get(elementId) : undefined;
+    const { spreadIndex, pageNumber } = location ?? { spreadIndex: 0, pageNumber: state.spreads[0]?.pages[0]?.pageNumber || 1 };
+    issues.push({ id: `publication-${code}-${elementId || issues.length}`, code, message, severity, elementId, spreadIndex, pageNumber });
   }
   for (const note of notes) {
     if (!note.text.trim()) issue('ORPHAN_NOTE', `Note ${note.number} has no body. Fill it in or delete the note before exporting.`, note.elementId);
     const anchors = anchorCounts.get(note.id);
     if (anchors !== 1) issue('ORPHAN_NOTE', `Note ${note.number} has ${anchors ? 'duplicated' : 'no surviving'} manuscript anchors. Reinsert or delete this note.`, note.elementId);
   }
-  for (const { run, head } of allRuns) {
-    if (run.noteId && !noteIds.has(run.noteId)) issue('ORPHAN_NOTE', 'A note marker has no note body. Remove or replace the marker.', head.id);
-    if (run.reference) {
-      const ref = run.reference;
+  for (const { headId, noteId, reference: ref } of referenceRuns) {
+    if (noteId && !noteIds.has(noteId)) issue('ORPHAN_NOTE', 'A note marker has no note body. Remove or replace the marker.', headId);
+    if (ref) {
       const exists = ref.format === 'caption' ? hasCaption(ref.targetElementId) : ref.targetParagraphId
         ? (headingIds ??= new Set(publicationHeadings(state).map(heading => heading.paragraphId))).has(ref.targetParagraphId)
         : frameIds.has(ref.targetElementId);
-      if (!exists) issue('MISSING_REFERENCE', 'A reference target was removed or is no longer a heading. Choose a new target in the Story Editor.', head.id);
+      if (!exists) issue('MISSING_REFERENCE', 'A reference target was removed or is no longer a heading. Choose a new target in the Story Editor.', headId);
     }
   }
   for (const entry of state.indexEntries || []) if (!entry.elementId || !frameIds.has(entry.elementId) || !indexAnchors.has(entry.id)) {
@@ -75,9 +91,10 @@ export function publicationPreflight(state: ProjectState, target: 'editor' | 'ep
   }
   if (state.publicationError) issue('PUBLICATION_FLOW', state.publicationError);
   const reviewedTables = new Set<string>();
+  const findTableThread = createTableThreadLookup(state.spreads);
   for (const spread of state.spreads) for (const table of spread.elements) {
     if (table.type !== 'table' || excluded(table) || reviewedTables.has(table.id)) continue;
-    const thread = tableThread(state.spreads, table), head = thread[0];
+    const thread = findTableThread(table), head = thread[0];
     for (const frame of thread) reviewedTables.add(frame.id);
     if (head.rowSizing !== 'content') continue;
     if (thread.some(excluded)) {

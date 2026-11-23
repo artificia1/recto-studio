@@ -330,6 +330,7 @@ export function validateProjectValue(value: unknown, defaults: ProjectState): Pr
   }
   // Selection and viewport are session state, so stale references can be repaired.
   const frames = new Map(project.spreads.flatMap(s => s.elements).filter(e => e.type === 'text').map(e => [e.id, e]));
+  const validatedPaths = new Set<string>();
   for (const frame of frames.values()) {
     if (!frame.storyContent && !frame.textContent) continue;
     for (const [pointer, reciprocal] of [['nextFrameId', 'prevFrameId'], ['prevFrameId', 'nextFrameId']] as const) {
@@ -338,14 +339,18 @@ export function validateProjectValue(value: unknown, defaults: ProjectState): Pr
     }
     const visited = new Set<string>();
     let current = frame;
-    while (current.prevFrameId) {
+    while (current.prevFrameId && !validatedPaths.has(current.id)) {
       if (visited.has(current.id)) fail(`Story ${frame.id}`, 'circular text-frame link');
       visited.add(current.id);
       const previous = frames.get(current.prevFrameId);
       if (!previous) fail(`Story ${frame.id}`, 'missing text frame');
       current = previous;
     }
-    if (!current.storyContent) fail(`Story ${frame.id}`, 'the first frame is missing its manuscript');
+    if (!validatedPaths.has(current.id)) {
+      if (!current.storyContent) fail(`Story ${frame.id}`, 'the first frame is missing its manuscript');
+      validatedPaths.add(current.id);
+    }
+    for (const id of visited) validatedPaths.add(id);
   }
   if (new Set(project.masterSpreads.map(master => master.id)).size !== project.masterSpreads.length) fail('Project.masterSpreads', 'duplicate master ID');
   project.masterSpreads.forEach(master => resolveMaster(project.masterSpreads, master.id));

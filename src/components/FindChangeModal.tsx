@@ -36,7 +36,9 @@ export function FindChangeModal({ isOpen, onClose }: FindChangeModalProps) {
   const [scope, setScope] = useState<'document' | 'spread' | 'story'>('document');
   const [activeMatch, setActiveMatch] = useState<FindResult | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
+  const [changingAll, setChangingAll] = useState(false);
 
+  const changeController = useRef<AbortController>();
   const findInputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
   useModalFocus(isOpen, dialogRef);
@@ -44,7 +46,10 @@ export function FindChangeModal({ isOpen, onClose }: FindChangeModalProps) {
   useEffect(() => {
     if (isOpen) {
       const timer = setTimeout(() => findInputRef.current?.focus(), 50);
-      return () => clearTimeout(timer);
+      return () => {
+        clearTimeout(timer);
+        changeController.current?.abort();
+      };
     }
   }, [isOpen]);
   if (!isOpen) return null;
@@ -61,6 +66,7 @@ export function FindChangeModal({ isOpen, onClose }: FindChangeModalProps) {
   });
 
   const handleFindNext = () => {
+    if (changeController.current) return;
     if (!findText.trim()) {
       setStatusMessage('Please enter text or GREP pattern to find.');
       return;
@@ -82,6 +88,7 @@ export function FindChangeModal({ isOpen, onClose }: FindChangeModalProps) {
   };
 
   const handleChange = () => {
+    if (changeController.current) return;
     if (!activeMatch) {
       handleFindNext();
       return;
@@ -109,17 +116,40 @@ export function FindChangeModal({ isOpen, onClose }: FindChangeModalProps) {
     handleChange();
   };
 
-  const handleChangeAll = () => {
+  const handleChangeAll = async () => {
+    if (changeController.current) return;
     if (!findText.trim()) {
       setStatusMessage('Please enter text or pattern to replace.');
       return;
     }
 
+    const controller = new AbortController();
+    changeController.current = controller;
+    setChangingAll(true);
+    setStatusMessage('Applying replacements…');
     try {
-      const result = stateManager.changeAll(getQuery());
+      const result = await stateManager.changeAllInBackground(getQuery(), controller.signal);
+      if (!result || controller.signal.aborted) return;
       setActiveMatch(null);
       setStatusMessage(`Search complete. Replaced ${result.replacementsCount} occurrence(s) across ${result.elementsAffected} stories.`);
-    } catch (reason) { setStatusMessage(reason instanceof Error ? reason.message : String(reason)); }
+    } catch (reason) {
+      if (!controller.signal.aborted) setStatusMessage(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      if (changeController.current === controller) {
+        changeController.current = undefined;
+        setChangingAll(false);
+      }
+    }
+  };
+
+  const close = () => {
+    if (changeController.current) {
+      changeController.current.abort();
+      changeController.current = undefined;
+      setChangingAll(false);
+      setStatusMessage('');
+    }
+    onClose();
   };
 
   const handleGrepPresetSelect = (e: Event) => {
@@ -131,7 +161,7 @@ export function FindChangeModal({ isOpen, onClose }: FindChangeModalProps) {
   };
 
   return (
-    <div className="editor-dialog-backdrop find-change-backdrop" onClick={onClose}>
+    <div className="editor-dialog-backdrop find-change-backdrop" onClick={close}>
       <section
         ref={dialogRef}
         className="modal-dialog editor-dialog find-change-dialog"
@@ -141,7 +171,7 @@ export function FindChangeModal({ isOpen, onClose }: FindChangeModalProps) {
         onClick={event => event.stopPropagation()}
         onKeyDown={event => {
           event.stopPropagation();
-          if (event.key === 'Escape') onClose();
+          if (event.key === 'Escape') close();
         }}
       >
         <header className="editor-dialog-header">
@@ -149,7 +179,7 @@ export function FindChangeModal({ isOpen, onClose }: FindChangeModalProps) {
             <h2 id="find-change-title">Find / Change</h2>
             <span className="editor-dialog-tag" data-grep={isGrep}>{isGrep ? 'GREP Mode' : 'Text Mode'}</span>
           </div>
-          <button type="button" className="editor-dialog-close" aria-label="Close Find / Change" onClick={onClose}>×</button>
+          <button type="button" className="editor-dialog-close" aria-label="Close Find / Change" onClick={close}>×</button>
         </header>
 
         <div className="editor-dialog-fields">
@@ -245,10 +275,10 @@ export function FindChangeModal({ isOpen, onClose }: FindChangeModalProps) {
         </div>
 
         <footer className="editor-dialog-actions">
-          <button type="button" className="action-btn" onClick={handleFindNext}>Find Next</button>
-          <button type="button" className="action-btn" onClick={handleChange}>Change</button>
-          <button type="button" className="action-btn" onClick={handleChangeFind}>Change / Find</button>
-          <button type="button" className="action-btn-primary" onClick={handleChangeAll}>Change All</button>
+          <button type="button" className="action-btn" disabled={changingAll} onClick={handleFindNext}>Find Next</button>
+          <button type="button" className="action-btn" disabled={changingAll} onClick={handleChange}>Change</button>
+          <button type="button" className="action-btn" disabled={changingAll} onClick={handleChangeFind}>Change / Find</button>
+          <button type="button" className="action-btn-primary" disabled={changingAll} onClick={handleChangeAll}>Change All</button>
         </footer>
       </section>
     </div>

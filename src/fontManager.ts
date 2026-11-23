@@ -89,23 +89,24 @@ export class FontManager {
   private googleRequests = new Map<string, Promise<boolean>>();
   private customFonts: Map<string, FontMetadata> = new Map();
   private loadedGoogleFonts: Set<string> = new Set();
-  private listeners: Set<() => void> = new Set();
+  private listeners = new Set<(families: readonly string[]) => void>();
+  private pendingGoogleFonts = new Set<string>();
+  private googleNotification?: ReturnType<typeof setTimeout>;
   public generation = 0;
 
   constructor() {
     // A font is cached only after its actual bytes or stylesheet have loaded.
   }
 
-  public subscribe(listener: () => void): () => void {
+  public subscribe(listener: (families: readonly string[]) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
-  private notify() {
-    this.generation++;
+  private notify(families: readonly string[]) {
     for (const listener of this.listeners) {
       try {
-        listener();
+        listener(families);
       } catch {}
     }
   }
@@ -184,18 +185,35 @@ export class FontManager {
       }
       await document.fonts.load(`16px "${cleanFamily}"`);
       this.loadedGoogleFonts.add(cleanFamily);
-      this.notify();
+      this.generation++;
+      this.pendingGoogleFonts.add(cleanFamily);
+      this.googleNotification ??= setTimeout(() => {
+        const families = [...this.pendingGoogleFonts];
+        this.pendingGoogleFonts.clear();
+        this.googleNotification = undefined;
+        this.notify(families);
+      }, 32);
       return true;
     } catch {
       return false;
     }
   }
 
-  public async registerFontBuffer(
+  public registerFontBuffer(
     fileName: string,
     buffer: ArrayBuffer | Uint8Array,
     variations?: FontVariations,
     beforeActivate?: () => void,
+  ): Promise<string> {
+    return this.activateFontBuffer(fileName, buffer, variations, beforeActivate, family => this.notify([family]));
+  }
+
+  private async activateFontBuffer(
+    fileName: string,
+    buffer: ArrayBuffer | Uint8Array,
+    variations: FontVariations | undefined,
+    beforeActivate: (() => void) | undefined,
+    activated: (family: string) => void,
   ): Promise<string> {
     const bytes = buffer instanceof Uint8Array ? new Uint8Array(buffer) : new Uint8Array(buffer.slice(0));
     if (!bytes.length || bytes.length > 32 * 1024 * 1024) {
@@ -263,7 +281,8 @@ export class FontManager {
       binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
     }
     this.fontAssets.set(familyName, { family: familyName, fileName, data: btoa(binary), ...(coordinates ? { variations: coordinates } : {}) });
-    this.notify();
+    this.generation++;
+    activated(familyName);
     return familyName;
   }
 
@@ -291,12 +310,17 @@ export class FontManager {
   }
 
   public async restoreFonts(assets: FontAsset[] = [], beforeActivate?: () => void) {
-    for (const asset of assets) {
-      const existing = this.fontAssets.get(asset.family);
-      if (existing?.data === asset.data && variationCss(existing.variations) === variationCss(asset.variations)) continue;
-      const bytes = Uint8Array.from(atob(asset.data), character => character.charCodeAt(0));
-      const restoredFamily = await this.registerFontBuffer(asset.fileName, bytes, asset.variations, beforeActivate);
-      if (asset.variations && restoredFamily !== asset.family) throw new Error('The saved variable-font instance name does not match its source and coordinates.');
+    const activated = new Set<string>();
+    try {
+      for (const asset of assets) {
+        const existing = this.fontAssets.get(asset.family);
+        if (existing?.data === asset.data && variationCss(existing.variations) === variationCss(asset.variations)) continue;
+        const bytes = Uint8Array.from(atob(asset.data), character => character.charCodeAt(0));
+        const restoredFamily = await this.activateFontBuffer(asset.fileName, bytes, asset.variations, beforeActivate, family => activated.add(family));
+        if (asset.variations && restoredFamily !== asset.family) throw new Error('The saved variable-font instance name does not match its source and coordinates.');
+      }
+    } finally {
+      if (activated.size) this.notify([...activated]);
     }
   }
 

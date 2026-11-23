@@ -1,4 +1,23 @@
-import type { StoryContent, StoryParagraph, StoryRun, TextElement, TextFormatting } from '../types';
+import type { ProjectState, StoryContent, StoryParagraph, StoryRun, TextElement, TextFormatting } from '../types';
+
+export function formattedStoryHeadsMatching(state: Pick<ProjectState, 'spreads'>,
+  matchesContent: (content: StoryContent) => boolean, matchesFrame: (frame: TextElement) => boolean): TextElement[] {
+  const frames = new Map<string, TextElement>();
+  for (const spread of state.spreads) for (const frame of spread.elements) {
+    if (frame.type === 'text') frames.set(frame.id, frame);
+  }
+  const matching: TextElement[] = [];
+  for (const head of frames.values()) {
+    if (head.prevFrameId || !head.storyContent) continue;
+    if (matchesContent(head.storyContent)) { matching.push(head); continue; }
+    const seen = new Set<string>();
+    for (let frame: TextElement | undefined = head; frame && !seen.has(frame.id); frame = frames.get(frame.nextFrameId ?? '')) {
+      if (matchesFrame(frame)) { matching.push(head); break; }
+      seen.add(frame.id);
+    }
+  }
+  return matching;
+}
 
 export const storyText = (content: StoryContent): string =>
   content.paragraphs.map(p => p.runs.map(r => r.text).join('')).join('\n');

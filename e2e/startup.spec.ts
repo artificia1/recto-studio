@@ -1,6 +1,31 @@
 import { test, expect } from '@playwright/test';
 import { writePsdBuffer } from 'ag-psd';
 
+test('opens the editor while the optional workspace font stylesheet is still loading', async ({ page }) => {
+  let requested = false;
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  await page.route(/fonts\.(googleapis|gstatic)\.com/, async route => {
+    const families = new URL(route.request().url()).searchParams.getAll('family');
+    if (families.length < 2) { await route.abort(); return; }
+    requested = true;
+    await pending;
+    await route.fulfill({ contentType: 'text/css', body: '/* Workspace font fixture */' });
+  });
+  try {
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => requested).toBe(true);
+    await expect(page.locator('#spread-canvas')).toBeVisible();
+    const title = page.getByTitle('Click to rename document');
+    await title.fill('Edited before fonts load');
+    await title.press('Enter');
+    await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('recto_project_autosave')!).settings.title))
+      .toBe('Edited before fonts load');
+  } finally { release(); }
+  await expect(page.locator('link[href*="JetBrains+Mono"]')).toHaveAttribute('media', 'all');
+});
+
 test('records cold startup resources and timings', async ({ page }) => {
   await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.abort());
   await page.goto('/');

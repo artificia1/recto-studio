@@ -11,6 +11,8 @@ interface FontProbe {
   widths: number[];
 }
 
+type FrameEdit = { frameId: string; updates: FrameLayoutEdit };
+
 export type ComposedFrame = Pick<TextElement, 'id' | 'text' | 'textContent' | 'storyStart' | 'storyEnd'>;
 export interface StoryComposition {
   content: StoryContent;
@@ -21,7 +23,7 @@ export interface StoryComposition {
 export interface StoryCompositionRequest {
   headId: string;
   before: StoryContent;
-  edit: string | { frameId: string; updates: FrameLayoutEdit };
+  edit: string | FrameEdit | { prepared: true };
   layout: StoryLayoutState;
   wrap: Record<string, CanvasElement[]>;
   fonts: FontAsset[];
@@ -49,7 +51,7 @@ export function compositionFontSamples(...sources: string[]): string[] {
   return [latinProbe, ...blocks.values()];
 }
 
-export async function prepareStoryComposition(state: ProjectState, head: TextElement, edit: StoryCompositionRequest['edit'],
+export async function prepareStoryComposition(state: ProjectState, head: TextElement, edit: string | FrameEdit | { content: StoryContent },
   signal?: AbortSignal): Promise<StoryCompositionRequest | null> {
   const raw = head.rawStoryText || '';
   if (signal?.aborted || !head.nextFrameId || !head.storyContent || head.generated || head.autoExtendStory ||
@@ -64,7 +66,8 @@ export async function prepareStoryComposition(state: ProjectState, head: TextEle
     frames.push(frame);
   }
   if (frames.length < 2) return null;
-  const frameEdit = typeof edit === 'string' ? undefined : edit;
+  const frameEdit = typeof edit === 'object' && 'frameId' in edit ? edit : undefined;
+  const preparedContent = typeof edit === 'object' && 'content' in edit ? edit.content : undefined;
   if (frameEdit && !frames.some(frame => frame.id === frameEdit.frameId && frame.textContent)) return null;
 
   const { baselineGrid } = state.settings;
@@ -100,7 +103,8 @@ export async function prepareStoryComposition(state: ProjectState, head: TextEle
     const key = JSON.stringify([style.fontFamily, !!style.bold, !!style.italic]);
     if (!faces.has(key)) faces.set(key, style);
   };
-  for (const [index, paragraph] of head.storyContent.paragraphs.entries()) {
+  const content = preparedContent ?? head.storyContent;
+  for (const [index, paragraph] of content.paragraphs.entries()) {
     if ((index & 63) === 0 && performance.now() > deadline && !await yieldToEditor()) return null;
     const style = resolveParagraphStyle(paragraph, paragraphStyles);
     for (const run of paragraph.runs) {
@@ -111,7 +115,7 @@ export async function prepareStoryComposition(state: ProjectState, head: TextEle
       }
     }
   }
-  const samples = compositionFontSamples(raw || storyText(head.storyContent), typeof edit === 'string' ? edit : '');
+  const samples = compositionFontSamples(preparedContent ? storyText(preparedContent) : raw || storyText(content), typeof edit === 'string' ? edit : '');
   for (const [key, style] of faces) {
     const asset = fontManager.getFontAsset(style.fontFamily);
     if (asset) {
@@ -128,10 +132,10 @@ export async function prepareStoryComposition(state: ProjectState, head: TextEle
     }
   }
 
-  const paragraphIds = frameEdit ? [] : storyHeads(state).filter(frame => frame.id !== head.id).flatMap(frame =>
+  const paragraphIds = typeof edit !== 'string' ? [] : storyHeads(state).filter(frame => frame.id !== head.id).flatMap(frame =>
     frame.storyContent?.paragraphs.flatMap(paragraph => paragraph.id ? [paragraph.id] : []) || []);
   if (signal?.aborted) return null;
-  return { headId: head.id, before: head.storyContent, edit,
+  return { headId: head.id, before: content, edit: typeof edit === 'string' ? edit : frameEdit ?? { prepared: true },
     layout: { settings: { baselineGrid }, spreads, paragraphStyles, characterStyles, masterSpreads: [], layers: [] },
     wrap, fonts: Array.from(fonts.values()), probes: Array.from(probes.values()), samples, paragraphIds };
 }
@@ -157,12 +161,14 @@ export async function composeStoryInBackground(request: StoryCompositionRequest)
       occupied.add(id);
       return { ...paragraph, id };
     }) };
-  } else {
+  } else if ('frameId' in edit) {
     const frame = frames.find(item => item.id === edit.frameId);
     if (frame?.type !== 'text') return null;
     const formatted = formatFrameParagraphs(request.before, frame, edit.updates);
     head.storyContent = formatted?.content ?? request.before;
     resume = { frameId: frame.id, ...formatted?.range };
+  } else {
+    head.storyContent = request.before;
   }
   // Unchanged prefix and tail frames hold placeholder slices in the worker.
   // Return recomposed slices even if empty, so pushed text is removed on the UI thread.

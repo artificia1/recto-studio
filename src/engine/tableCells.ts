@@ -1,7 +1,35 @@
 import type { Spread, TableCell, TableElement } from '../types';
 
 export function tableThread(spreads: Spread[], table: TableElement): TableElement[] {
-  const frames = new Map(spreads.flatMap(spread => spread.elements).filter((element): element is TableElement => element.type === 'table').map(frame => [frame.id, frame]));
+  return createTableThreadLookup(spreads)(table);
+}
+
+/** Callers processing a stable publication snapshot can share one lookup. */
+export function createTableThreadLookup(spreads: Spread[]) {
+  let frames: Map<string, TableElement> | undefined;
+  const threads = new WeakMap<TableElement, TableElement[]>();
+  return (table: TableElement): TableElement[] => {
+    if (!table.prevFrameId && !table.nextFrameId) return [table];
+    const cached = threads.get(table);
+    if (cached) return cached;
+    if (!frames) {
+      frames = new Map();
+      for (const spread of spreads) for (const element of spread.elements) {
+        if (element.type === 'table') frames.set(element.id, element);
+      }
+    }
+    const thread = resolveTableThread(frames, table);
+    threads.set(table, thread);
+    // Broken or circular links keep their existing best-effort traversal.
+    if (thread.every((frame, index) => !((frame.prevFrameId ?? '') !== (thread[index - 1]?.id ?? '') ||
+      (frame.nextFrameId ?? '') !== (thread[index + 1]?.id ?? '') || frames?.get(frame.id) !== frame))) {
+      for (const frame of thread) threads.set(frame, thread);
+    }
+    return thread;
+  };
+}
+
+function resolveTableThread(frames: ReadonlyMap<string, TableElement>, table: TableElement): TableElement[] {
   let head = table; const seen = new Set<string>();
   while (head.prevFrameId && !seen.has(head.id)) { seen.add(head.id); const previous = frames.get(head.prevFrameId); if (!previous) break; head = previous; }
   seen.clear(); const result: TableElement[] = []; let current: TableElement | undefined = head;

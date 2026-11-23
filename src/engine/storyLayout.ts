@@ -16,10 +16,12 @@ export interface StoryLine { segments: StorySegment[]; y: number; height: number
 export type StoryMeasure = (text: string, style: RunStyle) => number;
 export interface StoryLayoutOptions {
   obstacles?: CanvasElement[];
+  positionText?: boolean;
   baselineGrid?: { enabled: boolean; startMm: number; incrementPt: number };
 }
 const PT = 25.4 / 72;
 let context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null | undefined;
+let contextFace: string | undefined;
 const measuredFaces = new Map<string, Map<string, number>>();
 let measuredFontGeneration = -1;
 let measuredKernels = layoutKernels;
@@ -40,6 +42,7 @@ export function measuredAdvance(text: string, style: RunStyle, measure: StoryMea
 export const measureStoryText: StoryMeasure = (text, style) => {
   if (measuredFontGeneration !== fontManager.generation || measuredKernels !== layoutKernels) {
     measuredFaces.clear();
+    contextFace = undefined;
     measuredFontGeneration = fontManager.generation;
     measuredKernels = layoutKernels;
   }
@@ -65,10 +68,13 @@ export const measureStoryText: StoryMeasure = (text, style) => {
   if (context === undefined) {
     context = typeof document !== 'undefined' ? document.createElement('canvas').getContext('2d')
       : typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(1, 1).getContext('2d') : null;
+    if (context) context.letterSpacing = '0px';
   }
   if (context) {
-    if (context.font !== face) context.font = face;
-    context.letterSpacing = '0px';
+    if (contextFace !== face) {
+      context.font = face;
+      contextFace = face;
+    }
     return remember(context.measureText(text).width * 25.4 / 96);
   }
   return remember(Array.from(text).reduce((n, c) => n + (/\s/.test(c) ? 0.28 : /[ilI.,!]/.test(c) ? 0.27 : /[MW]/.test(c) ? 0.85 : 0.52), 0) * style.fontSizePt * PT);
@@ -111,6 +117,7 @@ function composeStory(paragraphs: StoryParagraphs, frame: TextElement, styles: P
   const width = Math.max(0, (frame.width - padding * 2 - (cols - 1) * gutter) / cols);
   const bottom = frame.height - padding - reserveBottom;
   const lines: StoryLine[] = [];
+  const positionText = options.positionText !== false;
   const wrapObstacles = prepareWrapObstacles(options.obstacles || [], frame);
   const placeLine = layoutKernels?.place(wrapObstacles, frame.x, frame.y, padding, bottom, width, gutter, cols);
   let column = 0, y = padding, offset = 0, consumed = 0;
@@ -127,12 +134,13 @@ function composeStory(paragraphs: StoryParagraphs, frame: TextElement, styles: P
     const leading = style?.lineHeight || frame.lineHeight || 1.3;
     const paragraphHeight = paragraph.runs.reduce((maximum, r) => Math.max(maximum, resolveRunStyle(frame, style, r, characters).fontSizePt), base.fontSizePt) * PT * leading;
     let segments: StorySegment[] = [], lineWidth = 0, height = paragraphHeight;
+    let hasText = false;
     let lineStart = offset;
     let availableWidth = width, inset = 0;
     const grid = options.baselineGrid;
     const pitch = (style?.snapToBaseline ?? frame.snapToBaseline) && grid?.enabled ? grid.incrementPt * PT : 0;
     const prepare = (): boolean => {
-      if (segments.length) return true;
+      if (hasText) return true;
       let probes = 0;
       if (breaks.has(lineStart) && !appliedBreaks.has(lineStart)) {
         appliedBreaks.add(lineStart);
@@ -159,34 +167,36 @@ function composeStory(paragraphs: StoryParagraphs, frame: TextElement, styles: P
     };
     const flush = (last: boolean): boolean => {
       if (!prepare()) return false;
-      const alignment = style?.alignment || frame.alignment;
-      const lineText = frame.opticalMarginAlignment ? segments.map(segment => segment.text).join('') : '';
-      const first = lineText.trimStart()[0], lastCharacter = lineText.trimEnd().at(-1);
-      const leadingHang = frame.opticalMarginAlignment && first && '“‘"\'«‹(['.includes(first) ? measure(first, segments[0].style) / 2 : 0;
-      const trailingHang = frame.opticalMarginAlignment && lastCharacter && '.,-–—:;”’"\'»›!?)]'.includes(lastCharacter) ? measure(lastCharacter, segments.at(-1)!.style) / 2 : 0;
-      let shift = alignment === 'right' ? availableWidth - lineWidth + trailingHang : alignment === 'center' ? (availableWidth - lineWidth - leadingHang + trailingHang) / 2 : -leadingHang;
-      const spaces = alignment === 'justify' && !last && lineWidth < availableWidth + leadingHang + trailingHang
-        ? segments.reduce((n, s) => n + (s.text.match(/ /g)?.length || 0), 0)
-        : 0;
-      const extra = alignment === 'justify' && !last && spaces ? Math.max(0, availableWidth - lineWidth + leadingHang + trailingHang) / spaces : 0;
       const positioned: StorySegment[] = [];
-      for (const segment of segments) {
-        // Split at spaces for explicit justification, shared by canvas and PDF.
-        const parts = extra ? segment.text.split(/( )/) : [segment.text];
-        let local = 0;
-        for (const part of parts) {
-          if (!part) continue;
-          const w = part === segment.text ? segment.width : measuredAdvance(part, segment.style, measure);
-          positioned.push({ text: part, width: w, style: segment.style,
-            x: padding + column * (width + gutter) + inset + segment.x + local + shift });
-          local += w;
-          if (part === ' ') shift += extra;
+      if (positionText) {
+        const alignment = style?.alignment || frame.alignment;
+        const lineText = frame.opticalMarginAlignment ? segments.map(segment => segment.text).join('') : '';
+        const first = lineText.trimStart()[0], lastCharacter = lineText.trimEnd().at(-1);
+        const leadingHang = frame.opticalMarginAlignment && first && '“‘"\'«‹(['.includes(first) ? measure(first, segments[0].style) / 2 : 0;
+        const trailingHang = frame.opticalMarginAlignment && lastCharacter && '.,-–—:;”’"\'»›!?)]'.includes(lastCharacter) ? measure(lastCharacter, segments.at(-1)!.style) / 2 : 0;
+        let shift = alignment === 'right' ? availableWidth - lineWidth + trailingHang : alignment === 'center' ? (availableWidth - lineWidth - leadingHang + trailingHang) / 2 : -leadingHang;
+        const spaces = alignment === 'justify' && !last && lineWidth < availableWidth + leadingHang + trailingHang
+          ? segments.reduce((n, s) => n + (s.text.match(/ /g)?.length || 0), 0)
+          : 0;
+        const extra = alignment === 'justify' && !last && spaces ? Math.max(0, availableWidth - lineWidth + leadingHang + trailingHang) / spaces : 0;
+        for (const segment of segments) {
+          // Split at spaces for explicit justification, shared by canvas and PDF.
+          const parts = extra ? segment.text.split(/( )/) : [segment.text];
+          let local = 0;
+          for (const part of parts) {
+            if (!part) continue;
+            const w = part === segment.text ? segment.width : measuredAdvance(part, segment.style, measure);
+            positioned.push({ text: part, width: w, style: segment.style,
+              x: padding + column * (width + gutter) + inset + segment.x + local + shift });
+            local += w;
+            if (part === ' ') shift += extra;
+          }
         }
       }
       lines.push({ segments: positioned, y, height, start: lineStart, end: offset, column });
       y += height;
       consumed = offset;
-      segments = []; lineWidth = 0; lineStart = offset; height = paragraphHeight;
+      segments = []; hasText = false; lineWidth = 0; lineStart = offset; height = paragraphHeight;
       return true;
     };
     const cjk = !!style.cjkLineBreak;
@@ -206,7 +216,8 @@ function composeStory(paragraphs: StoryParagraphs, frame: TextElement, styles: P
             if (!flush(true)) return { lines, consumed, overset: true };
             continue;
           }
-          segments.push({ ...token, x: lineWidth });
+          if (positionText) segments.push({ ...token, x: lineWidth });
+          hasText = true;
           lineWidth += token.width;
           height = Math.max(height, token.style.fontSizePt * PT * leading);
         }
@@ -225,6 +236,7 @@ function composeStory(paragraphs: StoryParagraphs, frame: TextElement, styles: P
       const runStyle = resolveRunStyle(frame, style, run, characters);
       if (run.noteId) runStyle.fontSizePt *= 0.7;
       const renderedText = run.noteId ? item.text.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]/g, digit => String('⁰¹²³⁴⁵⁶⁷⁸⁹'.indexOf(digit))) : item.text;
+      const measured = (text: string) => measuredAdvance(text, runStyle, measure);
       // Keep ordinary words together; split overlong tokens by Unicode code point.
       for (let token of cjk ? [renderedText] : renderedText.match(/[^\S\n]+|\n|[^\s]+/gu) || []) {
         if (!prepare()) return { lines, consumed, overset: true };
@@ -239,7 +251,6 @@ function composeStory(paragraphs: StoryParagraphs, frame: TextElement, styles: P
           if (!flush(true)) return { lines, consumed, overset: true };
           continue;
         }
-        const measured = (text: string) => measuredAdvance(text, runStyle, measure);
         if (!cjk && style.hyphenate && /^\p{L}+$/u.test(token)) {
           while (measured(token) > availableWidth - lineWidth + 0.0001) {
             const syllables = hyphenateLanguage(token, style.language);
@@ -254,7 +265,8 @@ function composeStory(paragraphs: StoryParagraphs, frame: TextElement, styles: P
               continue;
             }
             const hyphenWidth = measured(fitting + '-');
-            segments.push({ text: fitting + '-', x: lineWidth, width: hyphenWidth, style: runStyle });
+            if (positionText) segments.push({ text: fitting + '-', x: lineWidth, width: hyphenWidth, style: runStyle });
+            hasText = true;
             lineWidth += hyphenWidth;
             offset += fitting.length;
             token = token.slice(fitting.length);
@@ -276,7 +288,8 @@ function composeStory(paragraphs: StoryParagraphs, frame: TextElement, styles: P
             if (!prepare()) return { lines, consumed, overset: true };
           }
           if (w > availableWidth + 0.0001 && !cjk) return { lines, consumed, overset: true };
-          segments.push({ text: part, x: lineWidth, width: w, style: runStyle });
+          if (positionText) segments.push({ text: part, x: lineWidth, width: w, style: runStyle });
+          hasText = true;
           lineWidth += w; offset += part.length;
           height = Math.max(height, runStyle.fontSizePt * PT * leading);
         }
@@ -319,7 +332,7 @@ export function layoutStoryParagraphs(source: StoryParagraphs, frame: TextElemen
       const copy = { ...frame, columns: 1, splitColumns: 1, spanColumns: true,
         width: (frame.width - padding * 2 - ((frame.spanColumns ? 1 : Math.max(1, frame.splitColumns || frame.columns)) - 1) * frame.columnGutterMm) / (frame.spanColumns ? 1 : Math.max(1, frame.splitColumns || frame.columns)) + padding * 2,
         height: Math.max(100000, frame.height) };
-      counts.set(index, composeStory([source.at(index)!], copy, styles, characters, measure).lines);
+      counts.set(index, composeStory([source.at(index)!], copy, styles, characters, measure, 0, { positionText: false }).lines);
     }
     return counts.get(index)!;
   };
@@ -343,9 +356,9 @@ export function layoutStoryParagraphs(source: StoryParagraphs, frame: TextElemen
       }
       const split = groups.size > 1 || result.consumed < end;
       // A fully composed paragraph in one column has no widow or orphan to move.
-      if (split || options.baselineGrid?.enabled || options.obstacles?.length || breaks.size) {
+      if (split) {
         const full = allLines(index);
-        if (style.keepTogether && split && full.reduce((n, line) => n + line.height, 0) <= capacity && visible[0].y > padding + 0.001) move = start;
+        if (style.keepTogether && full.reduce((n, line) => n + line.height, 0) <= capacity && visible[0].y > padding + 0.001) move = start;
         let shown = 0;
         for (const group of groups.values()) {
           shown += group.length;

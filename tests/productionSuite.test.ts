@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { StateManager } from '../src/state/stateManager';
 import type { TextElement } from '../src/types';
 import { assembleBook } from '../src/engine/bookAssembly';
@@ -65,6 +65,26 @@ describe('publication production workflows', () => {
     manager.getElementById('story')!.locked = true; const before = manager.exportJson();
     expect(() => manager.changeAll({ findText: 'a', changeText: 'b' })).toThrow('Unlock'); expect(manager.exportJson()).toBe(before);
   });
+  it('reflows only the changed story and preserves paragraphs and inline styles in Change All', () => {
+    manager.addElement(text('target', ''));
+    manager.addElement(text('independent', ''));
+    manager.setStoryContent('target', { version: 1, paragraphs: [
+      { id: 'first', runs: [{ text: 'Find ' }, { text: 'one', italic: true }] },
+      { id: 'second', runs: [{ text: 'Find two', bold: true }] },
+    ] });
+    manager.setStoryText('independent', 'Leave this story alone.');
+    const reflow = vi.spyOn(manager, 'reflowStory');
+    try {
+      expect(manager.changeAll({ findText: 'Find', changeText: 'Keep' })).toEqual({ replacementsCount: 2, elementsAffected: 1 });
+      expect(reflow.mock.calls.map(([id]) => id)).toEqual(['target']);
+      const { paragraphs } = manager.getStoryContent('target');
+      expect(paragraphs.map(paragraph => paragraph.id)).toEqual(['first', 'second']);
+      expect(paragraphs[0].runs.at(-1)).toMatchObject({ text: 'one', italic: true });
+      expect(storyText(manager.getStoryContent('target'))).toBe('Keep one\nKeep two');
+      manager.undo();
+      expect(storyText(manager.getStoryContent('target'))).toBe('Find one\nFind two');
+    } finally { reflow.mockRestore(); }
+  });
   it('cascades paragraph styles while retaining local overrides and rejecting cycles', () => {
     const base = { ...manager.getState().paragraphStyles[0], id: 'base', name: 'Base', fontSizePt: 12 };
     manager.createParagraphStyle(base);
@@ -77,6 +97,27 @@ describe('publication production workflows', () => {
     expect(() => manager.updateParagraphStyle('base', { basedOnId: 'child' })).toThrow('circle'); expect(manager.exportJson()).toBe(before);
     expect(() => parseProject(manager.exportJson(), manager.getState())).not.toThrow();
     expect(() => manager.deleteParagraphStyle('base')).toThrow('Detach');
+  });
+
+  it('reflows affected inherited styles without composing independent stories or style renames', () => {
+    const base = { ...manager.getState().paragraphStyles[0], id: 'scoped-base', name: 'Base', fontSizePt: 12 };
+    manager.createParagraphStyle(base);
+    manager.createParagraphStyle({ ...base, id: 'scoped-child', name: 'Child', basedOnId: base.id, inheritedProperties: ['fontSizePt'] });
+    manager.addElement(text('affected-style', ''));
+    manager.addElement(text('unaffected-style', ''));
+    manager.setStoryContent('affected-style', { version: 1, paragraphs: [{ styleId: 'scoped-child', runs: [{ text: 'Inherited style.' }] }] });
+    manager.setStoryContent('unaffected-style', { version: 1, paragraphs: [{ runs: [{ text: 'Unrelated story.' }] }] });
+    const reflow = vi.spyOn(manager, 'reflowStory');
+    try {
+      manager.updateParagraphStyle(base.id, { fontSizePt: 16 });
+      expect(reflow.mock.calls.map(([id]) => id)).toEqual(['affected-style']);
+      expect(manager.getState().paragraphStyles.find(style => style.id === 'scoped-child')?.fontSizePt).toBe(16);
+      reflow.mockClear();
+      manager.updateParagraphStyle(base.id, { name: 'Renamed style' });
+      expect(reflow).not.toHaveBeenCalled();
+      manager.undo();
+      expect(manager.getState().paragraphStyles.find(style => style.id === base.id)?.name).toBe('Base');
+    } finally { reflow.mockRestore(); }
   });
   it('imports styles in one undo step and rejects invalid style sets before mutation', () => {
     const source = structuredClone(manager.getState().paragraphStyles[0]);

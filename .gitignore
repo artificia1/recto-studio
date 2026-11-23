@@ -4,6 +4,8 @@ node_modules/
 # Production output
 dist/
 build/
+target/
+/output/
 src-tauri/target/
 /native/target/
 src-tauri/gen/
@@ -14,6 +16,7 @@ release-artifacts/
 *.local
 .DS_Store
 *.pdf
+marauders-reader-edition/
 npm-debug.log*
 test-results/
 playwright-report/

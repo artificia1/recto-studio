@@ -14,7 +14,7 @@ import { publicationWrapObjects, wrappedPlainContent } from '../engine/publicati
 import { layoutStory, resolveParagraphStyle } from '../engine/storyLayout';
 import { bezierNodesToSvgPath, shapeToPath } from '../engine/vectorPath';
 import { compareReadingOrder, readingCaptions, readingSections, readingTextRole } from '../engine/readingOrder';
-import { tableThread } from '../engine/tableCells';
+import { createTableThreadLookup } from '../engine/tableCells';
 import { layoutContentTables, type TableFrameLayout } from '../engine/tableLayout';
 
 const ns = 'http://www.w3.org/1999/xhtml';
@@ -113,9 +113,10 @@ export function generateFixedEpubPackage(source: ProjectState) {
   if (issues.length) throw new Error(issues.map(issue => `Page ${issue.pageNumber}: ${issue.message}`).join('\n'));
   const pages = state.spreads.flatMap(spread => spread.pages.map(page => ({ spread, page, artwork: pageArtwork(state, spread, page) })));
   const tableLayouts = new Map<string, TableFrameLayout>();
+  const findTableThread = createTableThreadLookup(state.spreads);
   for (const { artwork } of pages) for (const table of artwork) {
     if (table.type !== 'table' || table.rowSizing !== 'content' || tableLayouts.has(table.id)) continue;
-    const layout = layoutContentTables(tableThread(state.spreads, table));
+    const layout = layoutContentTables(findTableThread(table));
     for (const frame of layout.frames) tableLayouts.set(frame.frameId, frame);
   }
   const problems = [...new Set(pages.flatMap(({ page, artwork }) => artwork.flatMap(element => {

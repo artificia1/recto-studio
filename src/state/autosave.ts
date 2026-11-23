@@ -1,5 +1,6 @@
 import type { ProjectState } from '../types';
 import type { ActiveDesktopProject } from './desktopRecovery';
+import type { AutosaveJob } from './autosaveWorkerClient';
 import { RectoDB } from './persistence';
 
 export const AUTOSAVE_KEY = 'recto_project_autosave';
@@ -21,6 +22,10 @@ interface BrowserSnapshot {
   json: string;
   updatedAt: number;
   localSaved?: boolean;
+}
+
+function saveInWorker(job: AutosaveJob): Promise<boolean> {
+  return import('./autosaveWorkerClient').then(client => client.saveProjectInWorker(job)).catch(() => false);
 }
 
 /** Batches edits while keeping asynchronous writes in document order. */
@@ -141,8 +146,7 @@ export class Autosave {
       let databaseSaved = false;
       if (database) {
         try {
-          databaseSaved = useWorker &&
-            await import('./autosaveWorkerClient').then(client => client.saveProjectInWorker(json, updatedAt)).catch(() => false);
+          databaseSaved = useWorker && await saveInWorker({ json, updatedAt });
           if (!databaseSaved) {
             if (snapshot === this.latestBrowserSnapshot) this.saveLocalSnapshot(snapshot);
             await RectoDB.saveProject(JSON.parse(json) as ProjectState, updatedAt);
@@ -169,9 +173,14 @@ export class Autosave {
   }
 
   private saveCheckpoint(session: RecoverySession, revision: number, updatedAt: number, recoverable = true): Promise<void> {
-    const fileName = session.fileName;
-    let state: ProjectState;
-    try { state = structuredClone(this.getState()); }
+    const checkpoint = { id: session.id, fileName: session.fileName, recoverable };
+    let snapshot: string | ProjectState;
+    try {
+      // Capture before the next document or edit can change the live state.
+      const state = this.getState();
+      snapshot = typeof Worker === 'undefined' || typeof indexedDB === 'undefined'
+        ? structuredClone(state) : JSON.stringify(state);
+    }
     catch {
       this.pending = recoverable;
       this.setStatus('error');
@@ -181,8 +190,14 @@ export class Autosave {
     return this.enqueueWrite(session, async () => {
       let saved = false;
       try {
-        await (await import('./desktopRecovery')).saveRecoveryCheckpoint(session.id, state, updatedAt, fileName, recoverable);
-        saved = true;
+        saved = typeof snapshot === 'string' && snapshot.length >= WORKER_SNAPSHOT_MIN_LENGTH &&
+          await saveInWorker({ json: snapshot, updatedAt, checkpoint });
+        if (!saved) {
+          const { saveRecoveryCheckpoint } = await import('./desktopRecovery');
+          const state = typeof snapshot === 'string' ? JSON.parse(snapshot) as ProjectState : snapshot;
+          await saveRecoveryCheckpoint(checkpoint.id, state, updatedAt, checkpoint.fileName, checkpoint.recoverable);
+          saved = true;
+        }
       } catch { /* Keep the current checkpoint pending for a retry. */ }
       if (revision === this.revision) {
         this.pending = recoverable && !saved;
@@ -211,7 +226,7 @@ export class Autosave {
     return this.writes;
   }
 
-  async recover(hasValidLocalSave = true): Promise<ProjectState | null> {
+  async recover(hasValidLocalSave?: boolean): Promise<ProjectState | null> {
     const session = this.recoverySession;
     if (session) {
       try {
@@ -226,7 +241,7 @@ export class Autosave {
     const record = await RectoDB.loadProjectRecord();
     let localTimestamp = 0;
     try {
-      if (hasValidLocalSave && localStorage.getItem(AUTOSAVE_KEY)) {
+      if (hasValidLocalSave ?? !!localStorage.getItem(AUTOSAVE_KEY)) {
         localTimestamp = Number(localStorage.getItem(TIMESTAMP_KEY)) || 0;
       }
     } catch {}

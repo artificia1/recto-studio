@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StateManager } from '../src/state/stateManager';
 import { parseProject, ProjectValidationError } from '../src/state/projectValidation';
 import { RectoDB } from '../src/state/persistence';
-import type { ProjectState } from '../src/types';
+import type { ProjectState, TextElement } from '../src/types';
 import { TEMPLATES } from '../src/templates';
 
 describe('Project import validation and legacy defaults', () => {
@@ -123,10 +123,54 @@ describe('Project import validation and legacy defaults', () => {
     expect(manager.getState().paragraphStyles).toEqual([]);
   });
 
+  it('validates a long thread in reverse spread order and rejects circular or broken links', () => {
+    const spread = original.spreads[0];
+    const base = original.spreads.flatMap(spread => spread.elements).find(element => element.type === 'text')!;
+    const frames: TextElement[] = Array.from({ length: 1200 }, (_, index) => ({
+      ...base, id: `thread-${index}`, pageId: spread.pages[0].id,
+      prevFrameId: index > 0 ? `thread-${index - 1}` : undefined,
+      nextFrameId: index < 1199 ? `thread-${index + 1}` : undefined,
+      storyContent: index === 0 ? { version: 1, paragraphs: [{ runs: [{ text: 'Manuscript' }] }] } : undefined,
+      textContent: { version: 1, paragraphs: [{ runs: [{ text: '' }] }] },
+    }));
+    original.spreads = [{ ...spread, elements: frames.slice().reverse() }];
+    expect(parseProject(JSON.stringify(original), manager.getState()).spreads[0].elements).toHaveLength(1200);
+    frames[0].prevFrameId = frames.at(-1)!.id;
+    frames.at(-1)!.nextFrameId = frames[0].id;
+    expect(() => parseProject(JSON.stringify(original), manager.getState())).toThrow('circular text-frame link');
+    frames[0].prevFrameId = undefined;
+    expect(() => parseProject(JSON.stringify(original), manager.getState())).toThrow('broken text-frame link');
+  });
+
   it('validates the file API and rejects before replacing the open project', async () => {
     const file = new File(['{"settings":{}}'], 'invalid.recto');
     await expect(manager.importProjectFile(file)).rejects.toThrow(ProjectValidationError);
     expect(manager.getState()).toEqual(original);
     await expect(RectoDB.importProjectFile(file, original)).rejects.toThrow(ProjectValidationError);
+  });
+
+  it('keeps intervening edits when a large project is staged across task boundaries', async () => {
+    const spread = original.spreads[0];
+    const head = original.spreads.flatMap(spread => spread.elements).find(element => element.type === 'text')!;
+    const draft: ProjectState = { ...original, spreads: Array.from({ length: 24 }, (_, index) => ({
+      ...spread, id: `staged-${index}`, pages: [{ ...spread.pages[0], id: `staged-page-${index}` }],
+      elements: index === 0 ? [{ ...head, pageId: 'staged-page-0',
+        storyContent: { version: 1 as const, paragraphs: [{ runs: [{ text: 'Staged manuscript' }] }] } }] : [],
+    })) };
+    vi.spyOn(RectoDB, 'importProjectFile').mockResolvedValue(draft);
+    vi.useFakeTimers();
+    try {
+      let now = 0;
+      vi.spyOn(performance, 'now').mockImplementation(() => now += 10);
+      const opening = manager.importProjectFile(new File(['{}'], 'large.recto'));
+      const rejected = expect(opening).rejects.toThrow('document changed while this file was opening');
+      for (let turn = 0; turn < 20 && vi.getTimerCount() === 0; turn++) await Promise.resolve();
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+      manager.updateSettings({ title: 'Kept edit' });
+      await vi.runAllTimersAsync();
+      await rejected;
+      expect(manager.getState().settings.title).toBe('Kept edit');
+      expect(manager.getState().spreads).toEqual(original.spreads);
+    } finally { vi.useRealTimers(); }
   });
 });

@@ -1,4 +1,4 @@
-import type { PreflightIssue, ProjectState } from '../types';
+import type { PreflightIssue, ProjectState, Spread, TextElement } from '../types';
 import { layoutFrameNotes } from './publicationReferences';
 import { publicationPreflight } from './publicationPreflight';
 import { layoutStory } from './storyLayout';
@@ -34,6 +34,37 @@ export function calculateTacPercentage(colorStr?: string): number {
   return 0;
 }
 
+function textOverflowMessage(state: ProjectState, spread: Spread, frame: TextElement): string | undefined {
+  const text = frame.text || '';
+  if (!text.length || frame.nextFrameId) return;
+  if (frame.textContent) {
+    const reserve = state.settings.footnotes?.length ? layoutFrameNotes(state, frame).height : 0;
+    const layout = layoutStory(frame.textContent, frame, state.paragraphStyles, state.characterStyles, undefined, reserve,
+      { obstacles: spread.elements, baselineGrid: state.settings.baselineGrid, positionText: false });
+    if (layout.overset) return 'Manuscript text exceeds the final frame. Link another frame or enlarge this frame.';
+    return;
+  }
+
+  const padding = frame.paddingMm ?? 2;
+  const columns = Math.max(1, frame.columns || 1);
+  const width = Math.max(10, (frame.width - padding * 2 - (columns - 1) * (frame.columnGutterMm ?? 4)) / columns);
+  const height = Math.max(10, frame.height - padding * 2);
+  const fontPt = frame.fontSizePt || 10;
+  const lines = Math.max(1, Math.floor(height / (fontPt * (frame.lineHeight || 1.3) * 25.4 / 72))) * columns;
+  const charactersPerLine = Math.max(10, Math.floor(width / (fontPt * 0.45 * 25.4 / 72)));
+  const capacity = lines * charactersPerLine;
+  let usedLines = 0;
+  let start = 0;
+  for (let end = text.indexOf('\n'); end !== -1; end = text.indexOf('\n', start)) {
+    usedLines += Math.max(1, Math.ceil((end - start) / charactersPerLine));
+    start = end + 1;
+  }
+  usedLines += Math.max(1, Math.ceil((text.length - start) / charactersPerLine));
+  if (usedLines <= lines && text.length <= capacity * 1.15) return;
+  const excess = Math.max(usedLines - lines, Math.ceil((text.length - capacity) / charactersPerLine));
+  return `Text frame overflows available area by ~${excess} lines. Link to next frame or enlarge frame.`;
+}
+
 export function runEditorPreflight(snapshot: ProjectState): PreflightIssue[] {
   const issues: PreflightIssue[] = [];
   const settings = snapshot.settings;
@@ -52,48 +83,9 @@ export function runEditorPreflight(snapshot: ProjectState): PreflightIssue[] {
 
       // 1. OVERSET_TEXT: Overflowing text frames without continuation nextFrameId
       if (el.type === 'text') {
-        const textEl = el;
-        const textContent = textEl.text || '';
-        if (textContent.length > 0 && !textEl.nextFrameId) {
-          const padding = textEl.paddingMm ?? 2;
-          const cols = Math.max(1, textEl.columns || 1);
-          const gutter = textEl.columnGutterMm ?? 4;
-          const availW = Math.max(10, (textEl.width - (padding * 2) - ((cols - 1) * gutter)) / cols);
-          const availH = Math.max(10, textEl.height - (padding * 2));
-          const fontPt = textEl.fontSizePt || 10;
-          const lineH = textEl.lineHeight || 1.3;
-          const lineSpacingMm = (fontPt * lineH * 25.4) / 72;
-          const maxLinesPerCol = Math.max(1, Math.floor(availH / lineSpacingMm));
-          const avgCharWidthMm = (fontPt * 0.45 * 25.4) / 72;
-          const charsPerLine = Math.max(10, Math.floor(availW / avgCharWidthMm));
-          const totalCapacity = maxLinesPerCol * charsPerLine * cols;
-
-          const explicitLines = textContent.split('\n');
-          let approxRenderedLines = 0;
-          for (const line of explicitLines) {
-            approxRenderedLines += Math.max(1, Math.ceil(line.length / charsPerLine));
-          }
-          const totalLinesCapacity = maxLinesPerCol * cols;
-
-          const overset = textEl.textContent ? layoutStory(textEl.textContent, textEl, snapshot.paragraphStyles, snapshot.characterStyles, undefined, layoutFrameNotes(snapshot, textEl).height,
-            { obstacles: spread.elements, baselineGrid: settings.baselineGrid }).overset
-            : approxRenderedLines > totalLinesCapacity || textContent.length > totalCapacity * 1.15;
-          if (overset) {
-            const overflowAmt = Math.max(
-              approxRenderedLines - totalLinesCapacity,
-              Math.ceil((textContent.length - totalCapacity) / charsPerLine)
-            );
-            issues.push({
-              id: `preflight-overset-${spreadIdx}-${el.id}`,
-              severity: 'error',
-              code: 'OVERSET_TEXT',
-              message: textEl.textContent ? 'Manuscript text exceeds the final frame. Link another frame or enlarge this frame.' : `Text frame overflows available area by ~${overflowAmt} lines. Link to next frame or enlarge frame.`,
-              spreadIndex: spreadIdx,
-              pageNumber,
-              elementId: el.id,
-            });
-          }
-        }
+        const message = textOverflowMessage(snapshot, spread, el);
+        if (message) issues.push({ id: `preflight-overset-${spreadIdx}-${el.id}`, severity: 'error',
+          code: 'OVERSET_TEXT', message, spreadIndex: spreadIdx, pageNumber, elementId: el.id });
       }
 
       // 2. LOW_RES_IMAGE: Empty src or low effective DPI (<220 DPI)
@@ -313,5 +305,12 @@ export function runEditorPreflight(snapshot: ProjectState): PreflightIssue[] {
     }
   });
 
-  return [...issues, ...publicationPreflight(snapshot).filter(issue => !(((issue.code === 'MISSING_ASSET' && issues.some(existing => existing.elementId === issue.elementId && existing.severity === 'error')) || (issue.code === 'MISSING_ALT_TEXT' && issues.some(existing => existing.elementId === issue.elementId && existing.code === issue.code)))))];
+  const errorElements = new Set(issues.filter(issue => issue.severity === 'error').map(issue => issue.elementId));
+  const missingAlt = new Set(issues.filter(issue => issue.code === 'MISSING_ALT_TEXT').map(issue => issue.elementId));
+  for (const issue of publicationPreflight(snapshot)) {
+    if (issue.code === 'MISSING_ASSET' && errorElements.has(issue.elementId)) continue;
+    if (issue.code === 'MISSING_ALT_TEXT' && missingAlt.has(issue.elementId)) continue;
+    issues.push(issue);
+  }
+  return issues;
 }

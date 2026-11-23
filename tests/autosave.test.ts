@@ -59,8 +59,12 @@ describe('Autosave scheduling and recovery', () => {
     const saved = structuredClone(manager.getState());
     saved.settings.title = 'Recovered';
     vi.mocked(RectoDB.loadProjectRecord).mockResolvedValue({ state: saved, updatedAt: 20 });
+    const revision = manager.getDocumentRevision();
     await manager.recoverAutosave();
     expect(manager.getState().settings.title).toBe('Recovered');
+    expect(manager.getDocumentRevision()).toBe(revision + 1);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(RectoDB.saveProject).not.toHaveBeenCalled();
     storage.set(AUTOSAVE_KEY, JSON.stringify(saved));
     storage.set(`${AUTOSAVE_KEY}_timestamp`, '30');
     expect(await manager.autosave.recover()).toBeNull();

@@ -3,6 +3,7 @@ import { lazy, Suspense } from 'preact/compat';
 import type { IngestedStory } from '../contentImport';
 import type { TextElement, ImageElement } from '../types';
 import { storyText } from '../engine/storyContent';
+import { documentUsesFontFamilies, visitDocumentFonts } from '../engine/documentFonts';
 import { useProjectState } from '../hooks/useProjectState';
 import { TopBar } from './TopBar';
 import { Toolbar } from './Toolbar';
@@ -81,22 +82,19 @@ export function App() {
   const rulerLeftRef = useRef<HTMLCanvasElement>(null);
   const spreadCanvasRef = useRef<SpreadCanvas | null>(null);
 
+  useEffect(() => fontManager.subscribe(families => {
+    if (!documentUsesFontFamilies(stateManager.getState(), families)) return;
+    stateManager.refreshLayoutForFonts(families);
+    spreadCanvasRef.current?.render();
+  }), []);
+  const documentSession = stateManager.getDocumentSession();
   useEffect(() => {
-    const unsubscribe = fontManager.subscribe(() => {
-      stateManager.refreshPublicationReferences(false);
-      spreadCanvasRef.current?.render();
-    });
-    const families = new Set(state.paragraphStyles.map(style => style.fontFamily));
-    for (const spread of state.spreads) {
-      for (const element of spread.elements) {
-        if (element.type === 'text') families.add(element.fontFamily);
-      }
-    }
+    const families = new Set<string>();
+    visitDocumentFonts(stateManager.getState(), ({ fontFamily }) => { if (fontFamily) families.add(fontFamily); });
     families.forEach(family => {
       if (fontManager.isGoogleFont(family)) void fontManager.loadGoogleFont(family);
     });
-    return unsubscribe;
-  }, []);
+  }, [documentSession]);
 
   useEffect(() => {
     const handleGlobalShortcuts = (e: KeyboardEvent) => {

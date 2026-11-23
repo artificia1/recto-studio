@@ -110,6 +110,17 @@ export interface StoryReflowRange {
 export function reflowStoryState(state: StoryLayoutState, frameId: string,
   getWrapObjects: typeof publicationWrapObjects = publicationWrapObjects, measure?: StoryMeasure,
   resume?: StoryReflowRange) {
+  const steps = reflowStoryFrames(state, frameId, getWrapObjects, measure, resume);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+/** Reflow a detached story in steps without publishing partially updated frames. */
+export function* reflowStoryFrames(state: StoryLayoutState, frameId: string,
+  getWrapObjects: typeof publicationWrapObjects = publicationWrapObjects, measure?: StoryMeasure,
+  resume?: StoryReflowRange): Generator<void, TextElement[] | undefined> {
   const byId = new Map<string, TextElement>();
   const spreadsByFrame = new Map<string, ProjectState['spreads'][number]>();
   for (const spread of state.spreads) for (const element of spread.elements) {
@@ -153,31 +164,37 @@ export function reflowStoryState(state: StoryLayoutState, frameId: string,
     const lastFrame = index === chain.length - 1;
     const previousEnd = frame.storyEnd;
     const remaining = lastFrame ? slice(offset, head.rawStoryText.length) : undefined;
-    const paragraphs = remaining?.paragraphs ?? indexed!.from(offset);
-    const spread = spreadsByFrame.get(frame.id)!;
-    let obstacles = wrapBySpread.get(spread);
-    if (!obstacles) {
-      obstacles = getWrapObjects(state, spread);
-      wrapBySpread.set(spread, obstacles);
-    }
-    const options = { obstacles, baselineGrid: state.settings.baselineGrid };
+    let consumed = 0;
     let reserved = 0;
-    let layout = layoutStoryParagraphs(paragraphs, frame, state.paragraphStyles, state.characterStyles, measure, reserved, options);
     let fragments: ReturnType<typeof composeFootnotes> | undefined;
-    if (documentHasNotes) {
-      const tailNotes = remaining ? notesForFrame(state, { ...frame, textContent: remaining }) : [];
-      for (let pass = 0; pass <= 8; pass++) {
-        const visible = slice(offset, offset + layout.consumed);
-        const notes = notesForFrame(state, { ...frame, textContent: visible });
-        if (!notes.length && !pending.length && !reserved && !tailNotes.length) { fragments = undefined; break; }
-        fragments = composeFootnotes(state, frame, visible, layout.lines, notes, pending);
-        fragments.unplacedAnchors += Math.max(0, tailNotes.length - notes.length);
-        if (fragments.height <= reserved + 0.001 || pass === 8) break;
-        reserved = fragments.height;
-        layout = layoutStoryParagraphs(paragraphs, frame, state.paragraphStyles, state.characterStyles, measure, reserved, options);
+    // A terminal frame owns the entire remaining manuscript, including overset
+    // text. Only footnotes need its lines during reflow.
+    if (!lastFrame || documentHasNotes) {
+      const paragraphs = remaining?.paragraphs ?? indexed!.from(offset);
+      const spread = spreadsByFrame.get(frame.id)!;
+      let obstacles = wrapBySpread.get(spread);
+      if (!obstacles) {
+        obstacles = getWrapObjects(state, spread);
+        wrapBySpread.set(spread, obstacles);
       }
+      const options = { obstacles, baselineGrid: state.settings.baselineGrid, positionText: documentHasNotes };
+      let layout = layoutStoryParagraphs(paragraphs, frame, state.paragraphStyles, state.characterStyles, measure, reserved, options);
+      if (documentHasNotes) {
+        const tailNotes = remaining ? notesForFrame(state, { ...frame, textContent: remaining }) : [];
+        for (let pass = 0; pass <= 8; pass++) {
+          const visible = slice(offset, offset + layout.consumed);
+          const notes = notesForFrame(state, { ...frame, textContent: visible });
+          if (!notes.length && !pending.length && !reserved && !tailNotes.length) { fragments = undefined; break; }
+          fragments = composeFootnotes(state, frame, visible, layout.lines, notes, pending);
+          fragments.unplacedAnchors += Math.max(0, tailNotes.length - notes.length);
+          if (fragments.height <= reserved + 0.001 || pass === 8) break;
+          reserved = fragments.height;
+          layout = layoutStoryParagraphs(paragraphs, frame, state.paragraphStyles, state.characterStyles, measure, reserved, options);
+        }
+      }
+      consumed = layout.consumed;
     }
-    const end = lastFrame ? head.rawStoryText.length : offset + layout.consumed;
+    const end = lastFrame ? head.rawStoryText.length : offset + consumed;
     frame.textContent = remaining ?? slice(offset, end);
     frame.text = head.rawStoryText.slice(offset, end);
     frame.storyStart = offset; frame.storyEnd = end;
@@ -189,6 +206,7 @@ export function reflowStoryState(state: StoryLayoutState, frameId: string,
     }
     if (index) { delete frame.storyContent; delete frame.rawStoryText; }
     offset = end;
+    yield;
     // Later frames are unchanged once their incoming text offset is stable.
     const next = chain[index + 1];
     if (index >= edited && end > reuseAfter && previousEnd === end && next?.textContent && next.storyStart === end) break;

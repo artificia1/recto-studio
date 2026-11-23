@@ -42,6 +42,50 @@ test('panning and zooming reuse preflight while edits refresh it', async ({ page
   await expect(page.getByText('Preflight: 1 to review')).toBeVisible();
 });
 
+test('reflows once when two document fonts finish loading together after importing a project', async ({ page }) => {
+  const project = projectFixture();
+  const first = project.spreads[0].elements[0];
+  first.fontFamily = 'Lora, serif';
+  project.spreads[0].elements.push({ ...first, id: 'second-font', fontFamily: 'Libre Baskerville, serif' });
+  await page.addInitScript(() => {
+    const ready: (() => void)[] = [];
+    Object.defineProperty(document.fonts, 'load', { value: (font: string) => {
+      if (!/"(Lora|Libre Baskerville)"/.test(font)) return Promise.resolve([]);
+      return new Promise(resolve => {
+        ready.push(() => resolve([]));
+        if (ready.length === 2) ready.splice(0).forEach(activate => activate());
+      });
+    } });
+  });
+  let release!: () => void;
+  const fonts = new Promise<void>(resolve => { release = resolve; });
+  await page.route(/fonts\.googleapis\.com\/css2/, async route => {
+    const family = new URL(route.request().url()).searchParams.get('family')?.split(':')[0];
+    if (family === 'Lora' || family === 'Libre Baskerville') await fonts;
+    await route.fulfill({ contentType: 'text/css', body: '/* Browser font fixture */' });
+  });
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => 'recto' in window);
+  const imported = { ...project, paragraphStyles: [], masterSpreads: [] };
+  await importProject(page, imported);
+  await page.evaluate(() => {
+    const { stateManager } = (window as Window & { recto?: { stateManager: {
+      refreshPublicationReferences(recordHistory?: boolean): void;
+    } } }).recto!;
+    const refresh = stateManager.refreshPublicationReferences.bind(stateManager);
+    let count = 0;
+    stateManager.refreshPublicationReferences = recordHistory => {
+      document.documentElement.dataset.fontReflows = String(++count);
+      refresh(recordHistory);
+    };
+  });
+  release();
+  await expect(page.locator('html')).toHaveAttribute('data-font-reflows', '1');
+  await expect(page.locator('#gfont-lora, #gfont-libre-baskerville')).toHaveCount(2);
+  await expect(page.getByRole('button', { name: /^Preflight: / })).toHaveAttribute('aria-busy', 'false');
+  await expect(page.locator('html')).toHaveAttribute('data-font-reflows', '1');
+});
+
 test('opens Markdown as a complete book and retains its text and hierarchy after reopening', async ({ page }) => {
   await page.goto('/');
   await page.getByTitle('File Management, Project IO, and Document Imports').click();
@@ -139,6 +183,18 @@ test('persists paragraph keep rules, hyphenation language and font emphasis', as
   await importProject(page);
   await page.getByRole('button', { name: 'Styles', exact: true }).click();
   await page.getByRole('button', { name: 'Edit', exact: true }).first().click();
+  const size = page.getByRole('spinbutton', { name: /Size \(pt\)/ });
+  const styleSize = () => page.evaluate(() => (window as unknown as { recto: { stateManager: {
+    getState(): ProjectState;
+  } } }).recto.stateManager.getState().paragraphStyles[0].fontSizePt);
+  const originalSize = await styleSize();
+  await size.fill('19');
+  expect(await styleSize()).toBe(originalSize);
+  await size.press('Escape');
+  await expect(size).toHaveValue(String(originalSize));
+  await size.fill('20');
+  await size.press('Enter');
+  expect(await styleSize()).toBe(20);
   await page.getByLabel('Keep with next paragraph', { exact: true }).check();
   await page.getByLabel('Keep paragraph together', { exact: true }).check();
   await page.getByLabel('Automatic hyphenation', { exact: true }).check();
@@ -147,7 +203,7 @@ test('persists paragraph keep rules, hyphenation language and font emphasis', as
   await page.getByLabel('Minimum lines at column top', { exact: true }).selectOption('2');
   await page.getByLabel('Hyphenation language', { exact: true }).selectOption('de');
   const saved = await savedProject(page);
-  expect(saved.paragraphStyles[0]).toMatchObject({ keepWithNext: true, keepTogether: true, hyphenate: true, bold: true, orphanLines: 2, widowLines: 2, language: 'de' });
+  expect(saved.paragraphStyles[0]).toMatchObject({ fontSizePt: 20, keepWithNext: true, keepTogether: true, hyphenate: true, bold: true, orphanLines: 2, widowLines: 2, language: 'de' });
   await page.reload();
   await page.getByRole('button', { name: 'Styles', exact: true }).click();
   await page.getByRole('button', { name: 'Edit', exact: true }).first().click();
@@ -809,7 +865,7 @@ test('previews mixed manuscript styles, cancels safely and preserves rich format
   await expect(editor).toHaveValue(/Final paragraph\. Appended\.$/);
 });
 
-test('composes long threaded edits in a worker and preserves the frame split and undo', async ({ page }) => {
+test('composes long threaded edits and Change All in a worker with cancellation and undo', async ({ page }) => {
   const project = projectFixture();
   const first = project.spreads[0].elements[0];
   const paragraph = 'A long draft keeps its paragraph style as words move between linked frames.';
@@ -820,6 +876,7 @@ test('composes long threaded edits in a worker and preserves the frame split and
   Object.assign(first, { text: draft, storyContent: { version: 1, paragraphs }, nextFrameId: 'text-next' });
   project.spreads[0].elements.push({ ...first, id: 'text-next', y: 130, text: '' });
   Object.assign(project.spreads[0].elements[1], { storyContent: undefined, nextFrameId: undefined, prevFrameId: first.id });
+  project.spreads[0].elements.push({ ...projectFixture().spreads[0].elements[0], id: 'text-caption', y: 225, text: 'A short draft.' });
   await importProject(page, project);
   await page.evaluate(() => {
     const OriginalWorker = window.Worker;
@@ -827,6 +884,11 @@ test('composes long threaded edits in a worker and preserves the frame split and
       constructor(url: string | URL, options?: WorkerOptions) {
         super(url, options);
         if (String(url).includes('storyCompositionWorker')) {
+          const send = this.postMessage.bind(this);
+          this.postMessage = message => {
+            if (document.body.dataset.holdStoryWorker === 'yes') document.body.dataset.storyWorkerResult = 'pending';
+            else send(message);
+          };
           this.addEventListener('message', event => {
             document.body.dataset.storyWorkerResult = event.data?.frames?.length === 2 ? 'composed' : 'fallback';
           });
@@ -848,6 +910,34 @@ test('composes long threaded edits in a worker and preserves the frame split and
   await page.getByTitle('Undo (Ctrl+Z)', { exact: true }).click();
   const [oldHead, oldTail] = (await savedProject(page)).spreads[0].elements;
   expect(oldHead.text + oldTail.text).toBe(draft);
+
+  const openFind = () => page.getByTitle('Find / Change (GREP) (Ctrl+F)').click();
+  await openFind();
+  await page.getByPlaceholder('Text to find...').fill('draft');
+  await page.getByPlaceholder('Replacement text...').fill('manuscript');
+  const changeAll = page.getByRole('button', { name: 'Change All', exact: true });
+  await page.evaluate(() => { document.body.dataset.holdStoryWorker = 'yes'; });
+  await changeAll.click();
+  await expect(page.locator('body')).toHaveAttribute('data-story-worker-result', 'pending');
+  await expect(changeAll).toBeDisabled();
+  await page.getByRole('button', { name: 'Close Find / Change' }).click();
+  const [cancelledHead, cancelledTail] = (await savedProject(page)).spreads[0].elements;
+  expect(cancelledHead.text + cancelledTail.text).toBe(draft);
+
+  await page.evaluate(() => { delete document.body.dataset.holdStoryWorker; });
+  await openFind();
+  await changeAll.click();
+  await expect(page.getByRole('status').filter({ hasText: 'Replaced 141 occurrence(s) across 2 stories' })).toBeVisible({ timeout: 25_000 });
+  await expect(page.locator('body')).toHaveAttribute('data-story-worker-result', 'composed');
+  await page.getByRole('button', { name: 'Close Find / Change' }).click();
+  const [replacedHead, replacedTail, replacedCaption] = (await savedProject(page)).spreads[0].elements;
+  expect(replacedHead.text + replacedTail.text).toBe(draft.replaceAll('draft', 'manuscript'));
+  expect(replacedCaption.text).toBe('A short manuscript.');
+  expect(replacedHead.storyContent.paragraphs[0]).toMatchObject({ id: 'chapter-paragraph-0', runs: [{ bold: true }] });
+  await page.getByTitle('Undo (Ctrl+Z)', { exact: true }).click();
+  const [undoneHead, undoneTail, undoneCaption] = (await savedProject(page)).spreads[0].elements;
+  expect(undoneHead.text + undoneTail.text).toBe(draft);
+  expect(undoneCaption.text).toBe('A short draft.');
 });
 
 test('imports a Word manuscript with source style mapping and explicit warnings', async ({ page }) => {

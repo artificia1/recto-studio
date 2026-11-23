@@ -4,6 +4,7 @@ import { storyText } from '../src/engine/storyContent';
 import { layoutFrameNotes, publicationHeadings, reflowStoryState } from '../src/engine/publicationReferences';
 import { parseProject } from '../src/state/projectValidation';
 import { composeStoryInBackground, compositionFontSamples, prepareStoryComposition } from '../src/engine/storyComposition';
+import { layoutStory } from '../src/engine/storyLayout';
 import type { TextElement } from '../src/types';
 
 function addFrame(manager: StateManager, id: string, text = '', height = 220): TextElement {
@@ -18,6 +19,63 @@ function addFrame(manager: StateManager, id: string, text = '', height = 220): T
 describe('live publication references', () => {
   let manager: StateManager;
   beforeEach(() => { manager = new StateManager(); manager.createBlankProject('A4', 'Reference test', false); });
+
+  it('only reflows stories that use a newly active font in a linked frame or character style', () => {
+    for (const id of ['head', 'tail', 'styled', 'independent']) addFrame(manager, id, '', 45);
+    manager.linkTextFrames('head', 'tail');
+    manager.updateElement('tail', { fontFamily: 'Missing Face, "Activated Face", serif' });
+    manager.createCharacterStyle({ id: 'activated', name: 'Activated', fontFamily: 'Activated Face' });
+    manager.setStoryContent('head', { version: 1, paragraphs: [{ runs: [{ text: 'Copy. '.repeat(300) }] }] });
+    manager.setStoryContent('styled', { version: 1, paragraphs: [{ runs: [{ text: 'Styled copy.', characterStyleId: 'activated' }] }] });
+    manager.setStoryContent('independent', { version: 1, paragraphs: [{ runs: [{ text: 'Independent copy.' }] }] });
+    const revision = manager.getDocumentRevision();
+    const reflow = vi.spyOn(manager, 'reflowStory');
+    try {
+      manager.refreshLayoutForFonts(['Activated Face']);
+      expect(reflow.mock.calls.map(([id]) => id)).toEqual(['head', 'styled']);
+      expect(manager.getDocumentRevision()).toBe(revision);
+    } finally { reflow.mockRestore(); }
+  });
+
+  it('keeps all overset text in a terminal frame without measuring it during story reflow', () => {
+    addFrame(manager, 'terminal', '', 5);
+    const text = 'Overset copy remains editable. '.repeat(100);
+    manager.setStoryContent('terminal', { version: 1, paragraphs: [{ runs: [{ text }] }] });
+    const measure = vi.fn(() => 10);
+    const [frame] = reflowStoryState(manager.getState(), 'terminal', undefined, measure)!;
+    expect(measure).not.toHaveBeenCalled();
+    expect(frame.storyStart).toBe(0);
+    expect(frame.storyEnd).toBe(text.length);
+    expect(storyText(frame.textContent!)).toBe(text);
+    expect(manager.runPreflightCheck().some(issue => issue.id.endsWith('-terminal') && issue.id.includes('overset'))).toBe(true);
+  });
+
+  it('keeps the same line breaks and overset when pagination skips paint positions', () => {
+    const frame = { ...addFrame(manager, 'geometry', '', 55), columns: 2, alignment: 'justify' as const, opticalMarginAlignment: true };
+    const content = { version: 1 as const, paragraphs: [{
+      formatting: { keepTogether: true, orphanLines: 2, widowLines: 2 },
+      runs: [{ text: '“Measured copy with repeated punctuation.” '.repeat(70) }],
+    }] };
+    const full = layoutStory(content, frame, []);
+    const geometry = layoutStory(content, frame, [], [], undefined, 0, { positionText: false });
+    expect(full.lines.some(line => line.segments.length > 0)).toBe(true);
+    expect(geometry).toEqual({ ...full, lines: full.lines.map(line => ({ ...line, segments: [] })) });
+  });
+
+  it('does not remeasure a complete paragraph for widow and orphan rules when the frame does not snap', () => {
+    const frame = { ...addFrame(manager, 'unsnapped'), snapToBaseline: false };
+    const content = { version: 1 as const, paragraphs: [{
+      formatting: { orphanLines: 2, widowLines: 2 }, runs: [{ text: 'A complete paragraph inside one column.' }],
+    }] };
+    const measure = vi.fn((text: string) => text.length);
+    const before = layoutStory(content, frame, [], [], measure);
+    const measurements = measure.mock.calls.length;
+    measure.mockClear();
+    const withGrid = layoutStory(content, frame, [], [], measure, 0,
+      { baselineGrid: { enabled: true, startMm: 2, incrementPt: 12 } });
+    expect(withGrid).toEqual(before);
+    expect(measure).toHaveBeenCalledTimes(measurements);
+  });
 
   it('scopes dimension and type changes to their story and matches a complete reflow', () => {
     const copy = Array.from({ length: 15 }, (_, index) => ({

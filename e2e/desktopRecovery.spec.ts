@@ -2,7 +2,8 @@ import { expect, test } from '@playwright/test';
 
 interface TestStateManager {
   createBlankProject(preset: 'A4', title: string, facingPages: boolean): void;
-  updateSettings(settings: { title: string }): void;
+  updateSettings(settings: { title?: string; author?: string }): void;
+  getState(): { settings: { author?: string } };
   autosave: { flush(): Promise<void> };
 }
 
@@ -40,4 +41,40 @@ test('desktop recovery resumes the latest document and retains earlier unsaved w
   await recovery.getByRole('button', { name: 'Recover Magazine with unsaved edits' }).click();
   await expect(recovery).toBeHidden();
   await expect(title).toHaveValue('Magazine with unsaved edits');
+});
+
+test('saves and resumes a large desktop checkpoint through the worker on a document switch', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {} });
+    const NativeWorker = window.Worker;
+    window.Worker = class extends NativeWorker {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        if (String(url).includes('autosaveWorker')) this.addEventListener('message', event => {
+          document.documentElement.dataset.recoveryWorker = event.data === true ? 'saved' : 'failed';
+        });
+      }
+    };
+  });
+  await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.abort());
+  await page.goto('/');
+  await page.waitForFunction(() => 'recto' in window);
+  await page.evaluate(async () => {
+    const { stateManager } = (window as Window & { recto?: { stateManager: TestStateManager } }).recto!;
+    stateManager.createBlankProject('A4', 'Large draft', false);
+    stateManager.updateSettings({ author: 'a'.repeat(600_000) });
+    stateManager.createBlankProject('A4', 'Small draft', false);
+    await stateManager.autosave.flush();
+  });
+  await expect(page.locator('html')).toHaveAttribute('data-recovery-worker', 'saved');
+  await page.reload();
+  const title = page.getByTitle('Click to rename document');
+  await expect(title).toHaveValue('Small draft');
+  await page.getByTitle('File Management, Project IO, and Document Imports').click();
+  await page.getByRole('button', { name: /^Recover Unsaved Projects/ }).click();
+  await page.getByRole('button', { name: 'Recover Large draft' }).click();
+  await expect(title).toHaveValue('Large draft');
+  const authorLength = await page.evaluate(() =>
+    (window as Window & { recto?: { stateManager: TestStateManager } }).recto!.stateManager.getState().settings.author?.length);
+  expect(authorLength).toBe(600_000);
 });

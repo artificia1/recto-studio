@@ -32,6 +32,30 @@ test('preflight groups stay readable and inside a narrow light workspace', async
   await expect(audit.getByRole('button', { name: /Page 1 · Spread 1/ })).toHaveCount(2);
 });
 
+test('preflight pages large finding groups and still locates the last frame', async ({ page }) => {
+  await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.abort());
+  await page.goto('/');
+  const project = projectFixture();
+  const frame = project.spreads[0].elements[0];
+  project.spreads[0].elements = Array.from({ length: 85 }, (_, index) => ({ ...frame, id: `trim-frame-${index}`, x: 2 }));
+  await importProject(page, project);
+  await page.getByRole('button', { name: /^Preflight: / }).click();
+  const audit = page.getByRole('region', { name: 'Print Preflight Audit' });
+  const summary = audit.getByText(/TRIM_HAZARD · 85 findings/);
+  const group = audit.locator('details').filter({ hasText: /TRIM_HAZARD · 85 findings/ });
+  await expect(group.locator('.preflight-item')).toHaveCount(0);
+  await summary.click();
+  await expect(group.locator('.preflight-item')).toHaveCount(40);
+  await group.getByRole('button', { name: 'Next findings' }).click();
+  await group.getByRole('button', { name: 'Next findings' }).click();
+  await expect(group.locator('.preflight-item')).toHaveCount(5);
+  await group.locator('.preflight-item-locate').last().click();
+  const selected = await page.evaluate(() => (window as unknown as { recto: { stateManager: {
+    getState(): { selectedElementId: string | null };
+  } } }).recto.stateManager.getState().selectedElementId);
+  expect(selected).toBe('trim-frame-84');
+});
+
 for (const [theme, inputBackground] of [['light', 'rgb(255, 255, 255)'], ['oled', 'rgb(11, 11, 13)']] as const) {
   test(`the ${theme} Story Editor keeps manuscript text and Minimal controls readable`, async ({ page }) => {
     await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.abort());

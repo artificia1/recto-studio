@@ -7,8 +7,8 @@
 import { pageLabel, type PublicationSection } from '../engine/pageLabels';
 import { revisedStory, revisionIsStale } from '../engine/storyRevisions';
 import { tableThread } from '../engine/tableCells';
-import { searchManuscripts, replaceManuscriptMatches } from '../engine/manuscriptSearch';
-import { cascadeStyles } from '../engine/styleInheritance';
+import { manuscriptReplacementSteps, searchManuscripts, replaceManuscriptMatches } from '../engine/manuscriptSearch';
+import { cascadeStyles, changedParagraphFormatting, storiesUsingParagraphStyles } from '../engine/styleInheritance';
 import {
   ProjectState,
   PagePreset,
@@ -49,10 +49,11 @@ import { layoutStory } from '../engine/storyLayout';
 import { calculateTacPercentage, runEditorPreflight } from '../engine/editorPreflight';
 import { instantiateMasterItem, resolveMaster } from '../engine/masterInheritance';
 import { arrangeSelection, lockedArtworkIds, restorePlacedPasteboard, selectionUnits } from '../engine/selectionGeometry';
-import { elementUsesFont, primaryFont, visitDocumentFonts } from '../engine/documentFonts';
+import { elementUsesFont, primaryFont, storyHeadsUsingFontFamilies, visitDocumentFonts } from '../engine/documentFonts';
 import { prepareSpreadTemplate } from '../engine/spreadTemplate';
 import { validateBinding, type DataRefreshChange } from '../engine/dataRefresh';
-import { contentOf, insertRun, layoutFrameNotes, migrateLegacyNotes, noteMarker, notesForFrame, publicationHeadings, reflowStoryState, refreshPublication, storyHeads, textFrames, type StoryReflowRange } from '../engine/publicationReferences';
+import { contentOf, insertRun, layoutFrameNotes, migrateLegacyNotes, noteMarker, notesForFrame, publicationHeadings, reflowStoryFrames, reflowStoryState, refreshPublication, storyHeads, textFrames, type StoryReflowRange } from '../engine/publicationReferences';
+import { layoutKernels } from '../engine/layoutRuntime';
 import { reconcileFrameStoryEdits } from './frameStoryEdits';
 import { generateEan13DataUrl } from '../engine/barcodeEngine';
 import { RectoDB } from './persistence';
@@ -66,7 +67,7 @@ import {
   DEFAULT_CONDITIONS,
   INITIAL_STATE,
 } from './defaults';
-import { parseProject } from './projectValidation';
+import { parseProject, validateProjectValue } from './projectValidation';
 import { fontManager } from '../fontManager';
 import { parseMergeData, generateMergedSpreads, substituteElementTokens } from '../dataMerge';
 import { KnuthPlassComposer, ComposerOptions } from '../engine/knuthPlass';
@@ -177,10 +178,16 @@ export class StateManager {
 
   public async recoverAutosave(): Promise<void> {
     const revision = this.documentRevision, request = this.openRequest;
+    const current = () => revision === this.documentRevision && request === this.openRequest;
     const recovered = await this.autosave.recover(this.hasValidLocalSave);
-    if (recovered && revision === this.documentRevision && request === this.openRequest) {
+    if (recovered && current()) {
       try {
-        this.loadFromJson(JSON.stringify(recovered));
+        // IndexedDB already returns an isolated value. Validate and migrate it
+        // directly instead of making a second copy through JSON.
+        const project = validateProjectValue(recovered, INITIAL_STATE);
+        const prepared = await this.prepareProjectLayout(project, current);
+        if (!current()) return;
+        this.installProject(project, isDesktop(), prepared);
         this.autosave.finishDesktopRestore(recovered);
       } catch (error) {
         console.warn('Invalid autosave backup skipped:', error);
@@ -604,7 +611,7 @@ export class StateManager {
     return barcodeEl;
   }
 
-  public fitFrameToContent(elementId?: string): boolean {
+  public fitFrameToContent(elementId?: string, recordHistory = true): boolean {
     const targetId = elementId || this.state.selectedElementId;
     if (!targetId) return false;
     const el = this.getElementById(targetId);
@@ -618,7 +625,8 @@ export class StateManager {
       const notes = this.getFootnotesForElement(textEl.id);
       const reserve = layoutFrameNotes(this.state, textEl, notes).height;
       const fits = (height: number) => !layoutStory(content, { ...textEl, height }, this.state.paragraphStyles,
-        this.state.characterStyles, undefined, reserve, { obstacles: spread?.elements, baselineGrid: this.state.settings.baselineGrid }).overset;
+        this.state.characterStyles, undefined, reserve,
+        { obstacles: spread?.elements, baselineGrid: this.state.settings.baselineGrid, positionText: false }).overset;
       let high = Math.max(15, textEl.height);
       while (!fits(high) && high < 10000) high *= 2;
       if (!fits(high)) return false;
@@ -631,8 +639,7 @@ export class StateManager {
       // line-breaking, drop caps and font-metric differences.
       const required = textEl.textContent ? high + 1 : high * 1.5 + 4;
       textEl.height = Math.ceil(Math.max(15, required) * 10) / 10;
-      this.pushHistory();
-      this.notify();
+      if (recordHistory) { this.pushHistory(); this.notify(); }
       return true;
     }
     return false;
@@ -669,7 +676,8 @@ export class StateManager {
 
   public createParagraphStyle(style: ParagraphStyle) {
     this.state.paragraphStyles = cascadeStyles([...this.state.paragraphStyles, style]);
-    this.pushHistory();
+    for (const id of storiesUsingParagraphStyles(this.state, new Set([style.id]))) this.reflowStory(id);
+    this.pushHistory(undefined, true);
     this.notify();
   }
 
@@ -677,19 +685,23 @@ export class StateManager {
     const idx = this.state.paragraphStyles.findIndex(s => s.id === id);
     if (idx === -1) return;
 
-    const previousStyles = this.state.paragraphStyles;
     const candidate = this.state.paragraphStyles.map(style => ({ ...style }));
     candidate[idx] = {
       ...this.state.paragraphStyles[idx],
       ...updates,
     };
     if (updates.inheritedProperties === undefined && candidate[idx].inheritedProperties) candidate[idx].inheritedProperties = candidate[idx].inheritedProperties!.filter(key => !Object.hasOwn(updates, key));
-    this.state.paragraphStyles = cascadeStyles(candidate);
+    const previous = new Map(this.state.paragraphStyles.map(style => [style.id, style]));
+    const styles = cascadeStyles(candidate);
+    const byId = new Map(styles.map(style => [style.id, style]));
+    const changed = new Set(styles.filter(style => changedParagraphFormatting(previous.get(style.id), style)).map(style => style.id));
+    for (const id of previous.keys()) if (!byId.has(id)) changed.add(id);
+    this.state.paragraphStyles = styles;
 
     for (const spread of [...this.state.spreads, ...this.state.masterSpreads]) for (const frame of spread.elements) {
-      if (frame.type !== 'text' || !frame.paragraphStyleId) continue;
-      const style = this.state.paragraphStyles.find(style => style.id === frame.paragraphStyleId);
-      const before = previousStyles.find(style => style.id === frame.paragraphStyleId);
+      if (frame.type !== 'text' || !frame.paragraphStyleId || !changed.has(frame.paragraphStyleId)) continue;
+      const style = byId.get(frame.paragraphStyleId);
+      const before = previous.get(frame.paragraphStyleId);
       if (!style) continue;
       if (style.cjkLineBreak && !frame.prevFrameId && !frame.storyContent) {
         frame.storyContent = plainStory(frame.rawStoryText ?? frame.text, style.id); frame.rawStoryText = storyText(frame.storyContent);
@@ -698,13 +710,14 @@ export class StateManager {
         if (style[key] !== before?.[key]) (frame as unknown as Record<string, unknown>)[key] = structuredClone(style[key]);
       }
     }
-    this.reflowFormattedStories();
-    this.pushHistory();
+    for (const id of storiesUsingParagraphStyles(this.state, changed)) this.reflowStory(id);
+    this.pushHistory(undefined, true);
     this.notify();
   }
 
   public deleteParagraphStyle(id: string) {
     if (this.state.paragraphStyles.some(style => style.basedOnId === id)) throw new Error('Detach child styles before deleting their parent.');
+    const affected = storiesUsingParagraphStyles(this.state, new Set([id]));
     this.state.paragraphStyles = this.state.paragraphStyles.filter(s => s.id !== id);
     for (const spread of this.state.spreads) {
       for (const el of spread.elements) {
@@ -713,8 +726,8 @@ export class StateManager {
         }
       }
     }
-    this.reflowFormattedStories();
-    this.pushHistory();
+    for (const id of affected) this.reflowStory(id);
+    this.pushHistory(undefined, true);
     this.notify();
   }
 
@@ -733,7 +746,7 @@ export class StateManager {
       }
     }
     const before = this.state;
-    try { this.state = validated; this.reflowFormattedStories(); this.pushHistory(); this.notify(); }
+    try { this.state = validated; this.reflowFormattedStories(); this.pushHistory(undefined, true); this.notify(); }
     catch (reason) { this.state = before; throw reason; }
   }
 
@@ -1319,7 +1332,7 @@ export class StateManager {
         const notes = layoutFrameNotes(this.state, tail);
         const layout = layoutStory(tail.textContent!, tail, this.state.paragraphStyles, this.state.characterStyles,
           undefined, notes.height,
-          { obstacles: found.spread.elements, baselineGrid: this.state.settings.baselineGrid });
+          { obstacles: found.spread.elements, baselineGrid: this.state.settings.baselineGrid, positionText: false });
         if (!layout.overset && !notes.remaining) break;
         if (added >= maxPages) throw new Error(`This story needs more than ${maxPages} additional pages. No pages were added.`);
         const insertionIndex = this.state.spreads.indexOf(found.spread) + 1;
@@ -1580,8 +1593,8 @@ export class StateManager {
     this.notify();
   }
 
-  private applyStoryComposition(head: TextElement, result: StoryComposition) {
-    const frames = new Map(textFrames(this.state).map(frame => [frame.id, frame]));
+  private applyStoryComposition(head: TextElement, result: StoryComposition,
+    frames: ReadonlyMap<string, TextElement> = new Map(textFrames(this.state).map(frame => [frame.id, frame]))) {
     if (result.frames.some(composition => !frames.has(composition.id))) throw new Error('A linked story frame changed during layout.');
     head.storyContent = result.content;
     head.rawStoryText = result.rawText;
@@ -2422,20 +2435,20 @@ export class StateManager {
     this.notify();
   }
 
-  public renumberPages() {
+  public renumberPages(state = this.state) {
     // Bind legacy positional pins before spread indices change, then derive their
     // compatibility index from the stable spread identity.
-    this.state.comments = (this.state.comments || []).filter(comment => {
-      comment.spreadId ||= this.state.spreads.find(spread => spread.spreadIndex === comment.spreadIndex)?.id;
-      const index = this.state.spreads.findIndex(spread => spread.id === comment.spreadId);
+    state.comments = (state.comments || []).filter(comment => {
+      comment.spreadId ||= state.spreads.find(spread => spread.spreadIndex === comment.spreadIndex)?.id;
+      const index = state.spreads.findIndex(spread => spread.id === comment.spreadId);
       if (index < 0) return false;
       comment.spreadIndex = index;
       return true;
     });
     let curPage = 1;
-    const isFacing = Boolean(this.state.settings.facingPages);
+    const isFacing = Boolean(state.settings.facingPages);
 
-    this.state.spreads.forEach((spread, sIdx) => {
+    state.spreads.forEach((spread, sIdx) => {
       spread.spreadIndex = sIdx;
       const numPages = spread.pages.length;
 
@@ -2737,34 +2750,72 @@ export class StateManager {
     this.notify();
   }
 
-  private installProject(project: ProjectState) {
+  private async prepareProjectLayout(project: ProjectState, current: () => boolean): Promise<boolean> {
+    if (project.spreads.length < 24) return false;
+    const fontGeneration = fontManager.generation;
+    const kernels = layoutKernels;
+    this.renumberPages(project);
+    const channel = typeof window !== 'undefined' && typeof MessageChannel !== 'undefined' ? new MessageChannel() : undefined;
+    const nextTask = () => new Promise<void>(resolve => {
+      if (!channel) { setTimeout(resolve, 0); return; }
+      channel.port1.onmessage = () => resolve();
+      channel.port2.postMessage(null);
+    });
+    let deadline = performance.now() + 8;
+    try {
+      for (const head of storyHeads(project)) {
+        if (!head.storyContent) continue;
+        for (const _frame of reflowStoryFrames(project, head.id)) {
+          if (performance.now() >= deadline) {
+            await nextTask();
+            if (!current() || fontManager.generation !== fontGeneration || layoutKernels !== kernels) return false;
+            deadline = performance.now() + 8;
+          }
+        }
+      }
+      return true;
+    } finally {
+      channel?.port1.close();
+      channel?.port2.close();
+    }
+  }
+
+  private installProject(project: ProjectState, persist = true, layoutPrepared = false) {
     const previous = this.state;
     const desktop = isDesktop();
     if (desktop) void this.autosave.flush();
     try {
       this.state = project;
-      this.renumberPages();
-      this.reflowFormattedStories();
+      if (!layoutPrepared) {
+        this.renumberPages();
+        this.reflowFormattedStories();
+      }
       if (desktop) this.history.clear();
       this.pushHistory(undefined, true);
     } catch (error) { this.state = previous; throw error; }
     if (desktop) this.autosave.beginDesktopDocument();
     this.documentSession++;
-    this.notify();
+    if (!persist) this.documentRevision++;
+    this.notify(persist);
   }
 
   private async openProject(read: () => Promise<ProjectState>, restoreFonts = false) {
     const request = ++this.openRequest, revision = this.documentRevision;
+    const current = () => request === this.openRequest && revision === this.documentRevision;
     const check = () => {
-      if (request !== this.openRequest || revision !== this.documentRevision) {
+      if (!current()) {
         throw new Error('The document changed while this file was opening. Open the file again to replace the current document.');
       }
     };
     const project = await read();
     check();
+    const previousFonts = fontManager.generation;
     if (restoreFonts) await fontManager.restoreFonts(project.embeddedFonts, check);
     check();
-    this.installProject(project);
+    // Keep the install in the same task when opening activated new font faces.
+    const prepared = previousFonts === fontManager.generation && await this.prepareProjectLayout(project, current);
+    check();
+    this.installProject(project, true, prepared);
   }
 
   private collaborativeHistory: { undo(): void; redo(): void; stopCapturing?(): void } | null = null;
@@ -2791,7 +2842,7 @@ export class StateManager {
       this.documentSession++;
     }
     this.state = candidate;
-    this.reflowFormattedStories(); this.refreshPublicationReferences(false); this.notify();
+    this.reflowFormattedStories(); this.refreshPublicationReferences(false, undefined, true); this.notify();
   }
 
   /** Validate remote edits before committing, without changing the local viewport. */
@@ -2951,7 +3002,19 @@ export class StateManager {
   public autoFixPreflightIssue(issue: PreflightIssue): boolean {
     if (!issue.elementId) return false;
     const el = this.getElementById(issue.elementId);
-    if (!el) return false;
+    if (!el || !this.applyPreflightFix(issue, el)) return false;
+    this.pushHistory(undefined, !this.preflightFixAffectsLayout(issue, el));
+    this.notify();
+    return true;
+  }
+
+  private preflightFixAffectsLayout(issue: PreflightIssue, element: CanvasElement): boolean {
+    return (element.type === 'text' && issue.code !== 'TAC_INK_DENSITY') ||
+      (!!element.textWrap?.mode && element.textWrap.mode !== 'none' && issue.code !== 'MISSING_ALT_TEXT');
+  }
+
+  private applyPreflightFix(issue: PreflightIssue, el: CanvasElement): boolean {
+    if (el.locked || this.state.layers.some(layer => layer.id === (el.layerId || 'layer-1') && layer.locked)) return false;
 
     if (issue.code === 'LOW_RES_IMAGE' && el.type === 'image') {
       const img = el as ImageElement;
@@ -2959,24 +3022,21 @@ export class StateManager {
         img.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="600" height="440" viewBox="0 0 600 440"><rect width="100%" height="100%" fill="%23242424"/><line x1="0" y1="0" x2="600" y2="440" stroke="%233a3a3a" stroke-width="2"/><line x1="600" y1="0" x2="0" y2="440" stroke="%233a3a3a" stroke-width="2"/><circle cx="300" cy="220" r="80" fill="%231a1a1a" stroke="%230d99ff" stroke-width="3"/><text x="300" y="226" font-family="sans-serif" font-size="16" fill="%23e0e0e0" text-anchor="middle" letter-spacing="2">PUBLICATION ARTWORK</text></svg>';
         img.caption = img.caption || 'Vector artwork illustration';
         img.altText = img.altText || 'Editorial vector artwork illustration';
-        this.pushHistory();
-        this.notify();
         return true;
       }
     }
 
     if (issue.code === 'MISSING_ALT_TEXT' && el.type === 'image') {
       const img = el as ImageElement;
+      if (img.decorative || img.altText?.trim()) return false;
       img.altText = img.caption || img.name || 'Editorial publication graphic';
-      this.pushHistory();
-      this.notify();
       return true;
     }
 
     if (issue.code === 'OVERSET_TEXT' && el.type === 'text') {
       const textEl = el as TextElement;
       try {
-        this.copyfitTextFrame(textEl.id);
+        this.copyfitTextFrame(textEl.id, false);
       } catch {
         // Continue to robust auto-expansion
       }
@@ -3027,8 +3087,6 @@ export class StateManager {
         textEl.fontSizePt = fontPt;
       }
 
-      this.pushHistory();
-      this.notify();
       return true;
     }
 
@@ -3056,8 +3114,6 @@ export class StateManager {
         el.y = Math.max(trimMargin, Math.round((pageH - trimMargin - el.height) * 10) / 10);
       }
 
-      this.pushHistory();
-      this.notify();
       return true;
     }
 
@@ -3079,16 +3135,12 @@ export class StateManager {
       if (Math.abs((el.y + el.height) - pageH) <= 1.0) {
         el.height = (pageH + bleed) - el.y;
       }
-      this.pushHistory();
-      this.notify();
       return true;
     }
 
     if (issue.code === 'HEADING_ORDER_HAZARD' && el.type === 'text') {
       const txt = el as TextElement;
       txt.paragraphStyleId = 'style-h1';
-      this.pushHistory();
-      this.notify();
       return true;
     }
 
@@ -3113,8 +3165,6 @@ export class StateManager {
           txt.borderColor = '#1a1a1a';
         }
       }
-      this.pushHistory();
-      this.notify();
       return true;
     }
 
@@ -3127,8 +3177,6 @@ export class StateManager {
         s = s.replace(/(^|[\s(\[{<])'/g, '$1\u2018');
         s = s.replace(/'/g, '\u2019');
         txt.text = s;
-        this.pushHistory();
-        this.notify();
         return true;
       }
     }
@@ -3137,8 +3185,6 @@ export class StateManager {
       const txt = el as TextElement;
       if (txt.text) {
         txt.text = txt.text.replace(/  +/g, ' ');
-        this.pushHistory();
-        this.notify();
         return true;
       }
     }
@@ -3151,15 +3197,27 @@ export class StateManager {
     let totalFixed = 0;
     for (let pass = 0; pass < 3 && issues.length > 0; pass++) {
       let passFixed = 0;
+      let layoutDirty = false;
+      const elements = new Map<string, CanvasElement>();
+      for (const spread of [...this.state.masterSpreads, ...this.state.spreads]) {
+        for (const element of spread.elements) elements.set(element.id, element);
+      }
       for (const issue of issues) {
-        if (this.autoFixPreflightIssue(issue)) {
+        const element = issue.elementId ? elements.get(issue.elementId) : undefined;
+        if (element && this.applyPreflightFix(issue, element)) {
           passFixed++;
+          layoutDirty ||= this.preflightFixAffectsLayout(issue, element);
         }
       }
       totalFixed += passFixed;
       if (passFixed === 0) break;
+      if (layoutDirty) {
+        reconcileFrameStoryEdits(this.state, id => this.getStoryHead(id), id => this.getStoryContent(id), id => this.reflowStory(id));
+        this.reflowFormattedStories();
+      }
       issues = this.runPreflightCheck();
     }
+    if (totalFixed) { this.pushHistory(undefined, true); this.notify(); }
     return totalFixed;
   }
 
@@ -3209,7 +3267,7 @@ export class StateManager {
     try {
       visitDocumentFonts(this.state, owner => { if (owner.fontFamily && primaryFont(owner.fontFamily) === primaryFont(from)) owner.fontFamily = to; });
       this.state.embeddedFonts = fontManager.getFontAssets();
-      this.reflowFormattedStories(); this.pushHistory(); this.notify();
+      this.reflowFormattedStories(); this.pushHistory(undefined, true); this.notify();
     } catch (error) { this.state = backup; throw error; }
   }
 
@@ -3537,13 +3595,22 @@ export class StateManager {
       head.rawStoryText = storyText(head.storyContent);
     }
     this.state.settings.footnotes = this.getFootnotes().filter(note => note.id !== id);
-    this.reflowFormattedStories(); this.pushHistory(); this.notify();
+    this.reflowFormattedStories(); this.pushHistory(undefined, true); this.notify();
   }
 
   public renumberFootnotes() {
     migrateLegacyNotes(this.state);
     refreshPublication(this.state);
     this.reflowFormattedStories();
+  }
+
+  public refreshLayoutForFonts(families: readonly string[]) {
+    if (this.state.settings.footnotes?.length || storyHeads(this.state).some(head => head.autoExtendStory)) {
+      this.refreshPublicationReferences(false);
+      return;
+    }
+    for (const head of storyHeadsUsingFontFamilies(this.state, families)) this.reflowStory(head.id);
+    this.refreshPublicationReferences(false, undefined, true);
   }
 
   public refreshPublicationReferences(recordHistory = true, composedStoryId?: string, reuseCurrentLayout = false) {
@@ -3690,7 +3757,7 @@ export class StateManager {
     this.notify();
   }
 
-  public copyfitTextFrame(elementId: string): CopyfitResult {
+  public copyfitTextFrame(elementId: string, recordHistory = true): CopyfitResult {
     const el = this.getElementById(elementId);
     if (!el || el.type !== 'text') {
       throw new Error(`Cannot copyfit element: ${elementId} is not a valid text element`);
@@ -3778,7 +3845,7 @@ export class StateManager {
     } else {
       // Underset or loose frame: Snugly fit frame height to content (Fit Frame to Content)
       const prevHeight = txt.height;
-      fittedFrame = this.fitFrameToContent(txt.id);
+      fittedFrame = this.fitFrameToContent(txt.id, recordHistory);
       if (fittedFrame && Math.abs(txt.height - prevHeight) >= 0.5) {
         adjustments.push(`Fit frame height to content (${Math.round(prevHeight)}mm to ${Math.round(txt.height)}mm)`);
       }
@@ -3786,15 +3853,14 @@ export class StateManager {
 
     if (!fittedFrame && !txt.prevFrameId && !txt.nextFrameId) {
       const previousHeight = txt.height;
-      fittedFrame = this.fitFrameToContent(txt.id);
+      fittedFrame = this.fitFrameToContent(txt.id, recordHistory);
       if (fittedFrame && Math.abs(txt.height - previousHeight) >= 0.5) {
         adjustments.push(`Fit frame height to content (${Math.round(previousHeight)}mm to ${Math.round(txt.height)}mm)`);
       }
     }
 
     if (adjustments.length > 0 && !fittedFrame) {
-      this.pushHistory();
-      this.notify();
+      if (recordHistory) { this.pushHistory(); this.notify(); }
     } else if (adjustments.length === 0) {
       adjustments.push('Clean fit: frame geometry matches copy with zero overflow');
     }
@@ -4079,25 +4145,168 @@ export class StateManager {
    * Batch replaces all occurrences matching the query in scope.
    */
   public changeAll(query: FindChangeQuery): { replacementsCount: number; elementsAffected: number } {
-    const expression = this.compileFindRegex(query);
-    if (!expression) return { replacementsCount: 0, elementsAffected: 0 };
-    const found = searchManuscripts(this.state, expression, query.isGrep ? query.changeText : query.changeText.replace(/\$/g, '$$$$'), query);
-    const heads = [...new Set(found.map(match => match.elementId))];
-    this.applyReviewedStoryEdits(this.documentRevision, heads.map(elementId => ({
+    const { changes, result } = this.prepareChangeAll(query);
+    this.applyReviewedStoryEdits(this.documentRevision, changes);
+    return result;
+  }
+
+  private prepareChangeAll(query: FindChangeQuery) {
+    const { matchesByStory, result } = this.findReplacementMatches(query);
+    const changes = Array.from(matchesByStory, ([elementId, matches]) => ({
       elementId,
-      content: replaceManuscriptMatches(this.getStoryContent(elementId), found.filter(match => match.elementId === elementId)),
-    })));
-    return { replacementsCount: found.length, elementsAffected: heads.length };
+      content: replaceManuscriptMatches(this.getStoryContent(elementId), matches),
+    }));
+    return { changes, result };
+  }
+
+  private findReplacementMatches(query: FindChangeQuery) {
+    const expression = this.compileFindRegex(query);
+    const found = expression ? searchManuscripts(this.state, expression,
+      query.isGrep ? query.changeText : query.changeText.replace(/\$/g, '$$$$'), query) : [];
+    const matchesByStory = new Map<string, typeof found>();
+    for (const match of found) {
+      const matches = matchesByStory.get(match.elementId);
+      if (matches) matches.push(match);
+      else matchesByStory.set(match.elementId, [match]);
+    }
+    return { matchesByStory, result: { replacementsCount: found.length, elementsAffected: matchesByStory.size } };
+  }
+
+  public async changeAllInBackground(query: FindChangeQuery, signal: AbortSignal) {
+    const source = this.state;
+    const revision = this.documentRevision;
+    const stillCurrent = () => {
+      if (signal.aborted) return false;
+      if (source !== this.state || revision !== this.documentRevision) {
+        throw new Error('The document changed during layout. Run the search again.');
+      }
+      return true;
+    };
+    if (!stillCurrent()) return;
+    const { matchesByStory, result } = this.findReplacementMatches(query);
+    if (!matchesByStory.size) return result;
+    const paragraphIds = new Set<string>();
+    for (const head of storyHeads(source)) {
+      if (matchesByStory.has(head.id)) continue;
+      for (const paragraph of head.storyContent?.paragraphs ?? []) {
+        if (paragraph.id) paragraphIds.add(paragraph.id);
+      }
+    }
+    const targets: { elementId: string; content: StoryContent; head: TextElement }[] = [];
+    let deadline = performance.now() + 8;
+    for (const [elementId, matches] of matchesByStory) {
+      const head = this.assertStoryEditable(elementId);
+      const steps = manuscriptReplacementSteps(this.getStoryContent(elementId), matches);
+      let step = steps.next();
+      while (!step.done) {
+        if (performance.now() >= deadline) {
+          await new Promise<void>(resolve => setTimeout(resolve, 0));
+          if (!stillCurrent()) return;
+          deadline = performance.now() + 8;
+        }
+        step = steps.next();
+      }
+      const content = step.value;
+      const paragraphs = content.paragraphs.map(paragraph => {
+        const id = !paragraph.id || paragraphIds.has(paragraph.id) ? `paragraph-${crypto.randomUUID()}` : paragraph.id;
+        paragraphIds.add(id);
+        return id === paragraph.id ? paragraph : { ...paragraph, id };
+      });
+      targets.push({ elementId, content: { ...content, paragraphs }, head });
+    }
+    const layouts = new Map<string, StoryComposition>();
+    const generation = fontManager.generation;
+    const longStories = targets.filter(({ head }) => head.nextFrameId && (head.rawStoryText?.length ?? 0) >= 8000);
+    if (longStories.length && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined') {
+      const { prepareStoryComposition, fontMeasurementsMatch } = await import('../engine/storyComposition');
+      const { requestStoryComposition } = await import('../engine/storyCompositionClient');
+      for (const { elementId, content, head } of longStories) {
+        if (!stillCurrent()) return;
+        const request = await prepareStoryComposition(source, head, { content }, signal);
+        if (!stillCurrent()) return;
+        if (!request) continue;
+        const layout = await requestStoryComposition(request, signal);
+        if (!stillCurrent()) return;
+        if (layout && fontMeasurementsMatch(request) && request.fonts.every(asset => fontManager.getFontAsset(asset.family) === asset)) {
+          layouts.set(elementId, layout);
+        }
+      }
+    }
+    if (!stillCurrent()) return;
+    if (targets.length > 1 && !source.settings.footnotes?.length && !targets.some(({ head }) => head.autoExtendStory)) {
+      const pending = targets.filter(({ elementId }) => !layouts.has(elementId));
+      if (pending.length) {
+        // Stage the remaining layout without exposing any partially replaced text.
+        const draft = { ...source, spreads: source.spreads.map(spread => ({ ...spread,
+          elements: spread.elements.map(frame => frame.type === 'text' ? { ...frame } : frame),
+        })) };
+        const draftFrames = new Map(textFrames(draft).map(frame => [frame.id, frame]));
+        let deadline = performance.now() + 8;
+        for (const { elementId, content } of pending) {
+          if (performance.now() >= deadline) {
+            await new Promise<void>(resolve => setTimeout(resolve, 0));
+            if (!stillCurrent()) return;
+            deadline = performance.now() + 8;
+          }
+          const head = draftFrames.get(elementId)!;
+          head.storyContent = content;
+          const frames = reflowStoryState(draft, elementId);
+          if (frames && head.rawStoryText !== undefined) {
+            layouts.set(elementId, { content, rawText: head.rawStoryText,
+              frames: frames.map(({ id, text, textContent, storyStart, storyEnd }) => ({ id, text, textContent, storyStart, storyEnd })) });
+          }
+        }
+      }
+    }
+    if (!stillCurrent()) return;
+    const composed = generation === fontManager.generation ? layouts : undefined;
+    let backup: ProjectState | undefined;
+    if (source.spreads.length >= 24 && composed?.size === targets.length) {
+      // Capture the rollback before the atomic commit. Viewport fields are
+      // copied last because navigation can continue without editing the document.
+      const spreads: Spread[] = [];
+      let deadline = performance.now() + 8;
+      for (const spread of source.spreads) {
+        if (performance.now() >= deadline) {
+          await new Promise<void>(resolve => setTimeout(resolve, 0));
+          if (!stillCurrent()) return;
+          deadline = performance.now() + 8;
+        }
+        spreads.push(structuredClone(spread));
+      }
+      backup = structuredClone({ ...source, spreads: [] });
+      backup.spreads = spreads;
+    }
+    if (!stillCurrent()) return;
+    this.commitReviewedStoryEdits(revision, targets, generation === fontManager.generation ? composed : undefined, backup);
+    return result;
   }
 
   public applyReviewedStoryEdits(expectedRevision: number, changes: { elementId: string; content: StoryContent }[]) {
+    this.commitReviewedStoryEdits(expectedRevision, changes);
+  }
+
+  private commitReviewedStoryEdits(expectedRevision: number, changes: { elementId: string; content: StoryContent }[],
+    layouts?: ReadonlyMap<string, StoryComposition>, stagedBackup?: ProjectState) {
     if (expectedRevision !== this.documentRevision) throw new Error('The document changed. Review the edits again.');
     if (!changes.length) return;
     const edits = changes.map(({ elementId, content }) => ({ head: this.assertStoryEditable(elementId), content }));
-    const backup = structuredClone(this.state);
+    const backup = stagedBackup ?? structuredClone(this.state);
     try {
-      for (const { head, content } of edits) { head.storyContent = content; head.rawStoryText = storyText(content); }
-      this.reflowFormattedStories(); this.pushHistory(); this.notify();
+      const needsLayout = new Set<string>();
+      const frames = layouts?.size ? new Map(textFrames(this.state).map(frame => [frame.id, frame])) : undefined;
+      for (const { head, content } of edits) {
+        const layout = layouts?.get(head.id);
+        if (layout) this.applyStoryComposition(head, layout, frames);
+        else {
+          head.storyContent = content;
+          head.rawStoryText = storyText(content);
+          needsLayout.add(head.id);
+        }
+      }
+      for (const id of needsLayout) this.reflowStory(id);
+      this.pushHistory(undefined, true);
+      this.notify();
     } catch (reason) { this.state = backup; throw reason; }
   }
 
