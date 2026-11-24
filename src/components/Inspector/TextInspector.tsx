@@ -7,6 +7,7 @@ import { CommitNumberInput } from '../common/CommitNumberInput';
 import { MathInput } from '../common/MathInput';
 import { lazy, Suspense } from 'preact/compat';
 import { FONT_FILES, useFontFileImport } from '../common/useFontFileImport';
+import { LocalFontPicker } from '../common/LocalFontPicker';
 const VariableFontPanel = lazy(() => import('./VariableFontPanel'));
 
 export default function TextInspector({
@@ -25,6 +26,7 @@ export default function TextInspector({
   const { importFile: importFont, choice, error: fontError } = useFontFileImport(family => stateManager.applyImportedFont(element.id, family));
   const fontFileRef = useRef<HTMLInputElement>(null);
   const [, setFontVer] = useState(0);
+  const [localFontError, setLocalFontError] = useState('');
 
   useEffect(() => {
     return fontManager.subscribe(() => setFontVer((v) => v + 1));
@@ -221,6 +223,15 @@ export default function TextInspector({
         >
           {isFontHover ? 'Drop font file to install' : 'Import font: TTF, OTF, WOFF, WOFF2'}
         </div>
+        <LocalFontPicker onLoaded={(family) => {
+          try {
+            stateManager.applyImportedFont(element.id, family);
+            setLocalFontError('');
+          } catch (reason) {
+            setLocalFontError(reason instanceof Error ? reason.message : String(reason));
+          }
+        }} />
+        {localFontError && <p role="alert" style={{ color: '#ff7878', fontSize: '11px' }}>{localFontError}</p>}
       </div>
 
       <div className="input-grid-2" style={{ marginTop: '8px' }}>
