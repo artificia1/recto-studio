@@ -1,6 +1,7 @@
 /**
  * Paragraph layout cases for the features the shared composer does not have yet: indents, space
- * before and after, tab stops, auto leading per line, and caps as a style property.
+ * before and after, tab stops, auto leading per line, caps as a style property, and non-breaking
+ * spaces in justified text.
  *
  * The reference is a real InDesign 21.4 document, `tests/fixtures/idml/layout-cases.idml`, with the
  * PDF InDesign exported from it, `layout-cases.pdf`: one page per case, styles from two
@@ -22,6 +23,19 @@ const PT = 25.4 / 72;
 const mm = (pt: number) => Math.round(pt * PT * 100) / 100;
 /** Left edge of the text frames in the reference document: 20 mm from the page edge, no inset. */
 export const FRAME_LEFT_PT = 56.69;
+/** Width of those frames: 120 mm. */
+export const FRAME_WIDTH_PT = 340.16;
+
+/**
+ * The text of the non-breaking space case, with "_" where InDesign has a non-breaking space. In
+ * InDesign: paste it, then Find/Change "_" to "^S". `NON_BREAKING_TEXT` is the text as it is set.
+ */
+export const NON_BREAKING_SOURCE = 'Утром он с_братом вышел из_дома и_пошёл к_реке. Я_видел, как они шли по_тропинке, ' +
+  'а_потом свернули в_лес, где у_старого дуба стояла скамейка. Мы не_стали их догонять: о_том, что они вернутся ' +
+  'к_обеду, нам сказали ещё вечером, и_мы спокойно занялись своими делами в_саду.';
+export const NON_BREAKING_TEXT = NON_BREAKING_SOURCE.replace(/_/g, '\u00A0');
+/** Each short word with the word it is joined to, as one non-breaking pair. */
+export const NON_BREAKING_PAIRS = NON_BREAKING_TEXT.match(/[^\s\u00A0]+\u00A0[^\s\u00A0]+/g)!;
 
 export interface LayoutCase {
   /** Page of the reference document that shows the case. */
@@ -75,6 +89,13 @@ export const LAYOUT_CASES = {
     page: 6, frameId: 'idml-tabs',
     title: 'Auto leading follows the largest type on the line: 9 pt runs in a 12 pt style advance 10.8 pt',
     expect: { lineAdvancePt: 10.8, styleSizePt: 12, runSizePt: 9 },
+  },
+  nonBreakingSpaces: {
+    page: 10, frameId: 'idml-nbsp',
+    title: '"Text", justified: a non-breaking space after each short word, as Russian books set them',
+    // A non-breaking space joins its two words on one line, and in justified text it stretches with
+    // the ordinary spaces of the line ("Nonbreaking Space", ^S, not the fixed-width one).
+    expect: { rightEdgePt: FRAME_WIDTH_PT, pairsOnOneLine: 'every pair', stretchesWithSpaces: 'yes' },
   },
   allCaps: {
     page: 8, frameId: 'idml-caps',
@@ -157,6 +178,7 @@ const stories: Record<string, string> = {
   contents: paragraph('Содержание%3aНазвание стиха в оглавлении', run('Название рассказа\t5')) +
     paragraph('Содержание%3aНазвание стиха в оглавлении', run('Другой рассказ с длинным названием\t127')),
   caps: paragraph('Рассказ', run('Название рассказа')) + paragraph('Master%3aLine UP', run('Название книги', ' Capitalization="AllCaps"')),
+  nbsp: paragraph('Text', run(NON_BREAKING_TEXT)),
 };
 
 const PAGE_HEIGHT = 623.6220472440947, PAGE_WIDTH = 453.5433070866142;

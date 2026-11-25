@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseIdmlPackage } from '../src/idmlImport';
-import type { TextElement } from '../src/types';
-import { FRAME_LEFT_PT, LAYOUT_CASES, REFERENCE, inDesignLayoutCases } from './fixtures/inDesignLayoutCases';
+import { layoutStory } from '../src/engine/storyLayout';
+import type { ParagraphStyle, TextElement } from '../src/types';
+import { FRAME_LEFT_PT, LAYOUT_CASES, NON_BREAKING_PAIRS, NON_BREAKING_TEXT, REFERENCE, inDesignLayoutCases } from './fixtures/inDesignLayoutCases';
 
 const textFrames = (project: Awaited<ReturnType<typeof parseIdmlPackage>>) =>
   project.spreads.flatMap(spread => spread.elements).filter((element): element is TextElement => element.type === 'text');
@@ -20,6 +21,42 @@ describe('InDesign layout cases: the code-built package', () => {
     // Caps are a style property: the story keeps the text as typed.
     expect(byId('idml-caps').text).toBe('Название рассказа\nНазвание книги');
     expect(byId('idml-first-line')).toMatchObject({ x: 20, y: 27, width: 120, height: 166, paddingMm: 0 });
+    // Non-breaking spaces come in as U+00A0, one after each short word.
+    expect(byId('idml-nbsp').text).toBe(NON_BREAKING_TEXT);
+    expect(NON_BREAKING_PAIRS).toHaveLength(14);
+  });
+});
+
+// The composer gets both wrong today (#6). These are expected to fail until it handles non-breaking
+// spaces: when they start to pass, change `it.fails` to `it`. Widths are fixed per character, so the
+// result does not depend on the fonts of the machine.
+describe('InDesign layout cases: Recto\'s composer and non-breaking spaces', () => {
+  const measure = (text: string) => Array.from(text).length;
+  const frame = { id: 'nbsp', type: 'text', x: 0, y: 0, width: 7, height: 100, rotation: 0, opacity: 1, zIndex: 1, text: '',
+    fontFamily: 'serif', fontSizePt: 10, lineHeight: 1.2, letterSpacingPt: 0, color: '#000', alignment: 'justify', columns: 1,
+    columnGutterMm: 4, paddingMm: 0, borderColor: 'transparent', borderWidthMm: 0, backgroundColor: 'transparent' } as unknown as TextElement;
+  const justified = { id: 'justified', name: 'Text', fontFamily: 'serif', fontSizePt: 10, lineHeight: 1.2, letterSpacingPt: 0,
+    color: '#000', alignment: 'justify', snapToBaseline: false } as ParagraphStyle;
+  const layout = (text: string, width: number) => layoutStory({ version: 1, paragraphs: [{ styleId: justified.id, runs: [{ text }] }] },
+    { ...frame, width }, [justified], [], measure).lines;
+  /** Left edge of every character of the first line, in the order of the text. */
+  const characterEdges = (line: ReturnType<typeof layout>[number]) =>
+    line.segments.flatMap(segment => Array.from(segment.text).map((character, index) => ({ character, x: segment.x + index })));
+
+  it.fails('does not break a line at a non-breaking space', () => {
+    // "аааа в" fits the line, "аааа в бббб" does not: the joined pair "в бббб" has to go down together.
+    const lines = layout('аааа в\u00A0бббб', 7).map(line => line.segments.map(segment => segment.text).join('').trim());
+    expect(lines).toEqual(['аааа', 'в\u00A0бббб']);
+  });
+
+  it.fails('stretches a non-breaking space with the ordinary spaces of a justified line', () => {
+    // The first line, "аа бб вв", is narrower than the frame: the space and the non-breaking space
+    // between its words take the same share of what is left.
+    const [first] = layout('аа бб\u00A0вв гггггггг', 10);
+    const edges = characterEdges(first);
+    const start = (index: number) => edges[index].x;
+    // "бб" starts after "аа" and its space; "вв" after "бб" and its non-breaking space.
+    expect(start(3) - start(1) - 1).toBeCloseTo(start(6) - start(4) - 1, 5);
   });
 });
 
@@ -27,7 +64,7 @@ describe('InDesign layout cases: the reference document', () => {
   it('imports with a text frame on every case page', async () => {
     const project = await parseIdmlPackage(new Uint8Array(readFileSync(REFERENCE.idml)), 'layout-cases.idml');
     const pages = project.spreads.flatMap(spread => spread.pages);
-    expect(pages.map(page => page.pageNumber)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(pages.map(page => page.pageNumber)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     const frames = textFrames(project);
     for (const layoutCase of Object.values(LAYOUT_CASES)) {
       const page = pages.find(item => item.pageNumber === layoutCase.page)!;
@@ -43,7 +80,7 @@ describe('InDesign layout cases: the reference document', () => {
     const task = engine.getDocument({ data: new Uint8Array(readFileSync(REFERENCE.pdf)), useSystemFonts: false });
     try {
       const pdf = await task.promise;
-      expect(pdf.numPages).toBe(9);
+      expect(pdf.numPages).toBe(10);
       /** Body lines of a page, top first: baseline, left edge from the frame, text, right edge from the frame. */
       const lines = async (pageNumber: number) => {
         const content = await (await pdf.getPage(pageNumber)).getTextContent();
@@ -98,6 +135,14 @@ describe('InDesign layout cases: the reference document', () => {
       const contents = (await lines(LAYOUT_CASES.rightTabWithLeader.page)).filter(line => line.text.includes('....'));
       expect(contents).toHaveLength(2);
       for (const line of contents) close(line.right, LAYOUT_CASES.rightTabWithLeader.expect.pageNumberRightEdgePt, 'page number right edge');
+
+      // Non-breaking spaces: every joined pair stays on one line, and justified lines reach the right edge.
+      const spaces = LAYOUT_CASES.nonBreakingSpaces;
+      const joined = (await lines(spaces.page)).map(line => ({ ...line, text: line.text.replace(/[\s\u00A0]+/g, ' ').trim() }));
+      for (const pair of NON_BREAKING_PAIRS) {
+        expect(joined.some(line => line.text.includes(pair.replace('\u00A0', ' '))), `"${pair}" on one line`).toBe(true);
+      }
+      for (const line of joined.slice(0, -1)) close(line.right, spaces.expect.rightEdgePt, `justified line "${line.text}"`);
 
       const capsPage = await (await pdf.getPage(LAYOUT_CASES.allCaps.page)).getTextContent();
       expect(capsPage.items.map(item => 'str' in item ? item.str : '').join('')).toContain(LAYOUT_CASES.allCaps.expect.paragraphStyleShows);
