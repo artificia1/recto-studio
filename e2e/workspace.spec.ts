@@ -266,6 +266,33 @@ test('creates a child master and edits its inherited source without creating a c
   expect((await savedProject(page)).masterSpreads[0].parentMasterId).toBeUndefined();
 });
 
+test('tells master items apart by page, position and text', async ({ page }) => {
+  const project = projectFixture();
+  const [sample] = project.spreads[0].elements;
+  const pages = (prefix: string) => [
+    { id: `${prefix}-left`, pageNumber: 1, side: 'left' }, { id: `${prefix}-right`, pageNumber: 2, side: 'right' }];
+  const item = (id: string, pageId: string, y: number, text: string) => ({ ...sample, id, pageId, x: 20, y, width: 150, height: 6, text });
+  // Two masters with the same name, as InDesign files often have ("A-Parent" and "B-Parent").
+  await importProject(page, { ...project, masterSpreads: [
+    { id: 'master-a', name: 'Parent', prefix: 'A', pages: pages('a'), elements: [] },
+    { id: 'master-b', name: 'Parent', prefix: 'B', parentMasterId: 'master-a', pages: pages('b'), elements: [
+      item('folio-right', 'b-right', 280, '{{page}}'),
+      item('header-left', 'b-left', 8, 'Running header of the book title, long enough to be shortened'),
+      item('folio-left', 'b-left', 280, '{{page}}'),
+    ] },
+  ] } as unknown as ReturnType<typeof projectFixture>);
+  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  await page.getByText('Edit master items', { exact: true }).click();
+  const masters = page.getByLabel('Master to edit');
+  await expect(masters.locator('option')).toHaveText(['[A] Parent', '[B] Parent']);
+  await masters.selectOption('master-b');
+
+  const items = page.locator('.reference-note');
+  await expect(items.locator('strong')).toHaveText(['text “Running header of the book tit…”', 'text “{{page}}”', 'text “{{page}}”']);
+  await expect(items.locator('.master-item-place')).toHaveText(['Left page · top', 'Left page · bottom', 'Right page · bottom']);
+  await expect(items.locator('strong').first()).toHaveAttribute('title', 'header-left');
+});
+
 test('persists object blending and exports a live PDF blend state', async ({ page }) => {
   await importProject(page);
   await page.getByLabel('Object blend', { exact: true }).selectOption('multiply');
