@@ -44,6 +44,9 @@ Vitest explicitly excludes e2e files; `npm test` remains the engine/unit suite.
 - Deferred manuscript imports, print-dialog loading, and export module failure feedback.
 - Startup resource sizes and absence of deferred tools, with diagnostic timing logs.
 - Responsive inspector opening/closing at a 390px viewport.
+- In-place text editing with real clicks and keys: styled paragraphs, caret and selection by
+  composed lines, copy/paste, applying a paragraph style mid-edit, and the textarea fallback
+  (switched off, or the on-demand editor module slow or failing to load).
 
 Remote Google font requests are blocked for deterministic offline checks. Real
 font files are uploaded through the same input used by the user. Assertions use
