@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { stateManager, numberToSuperscript } from '../../state';
+import { applyParagraphStyleToSelection } from '../../utils/paragraphStyleApply';
 import { fontManager } from '../../fontManager';
 import { getAllFreeToneColors } from '../../engine/spotColors';
 import type { ProjectState, TextElement, ParagraphStyle } from '../../types';
@@ -7,6 +8,7 @@ import { CommitNumberInput } from '../common/CommitNumberInput';
 import { MathInput } from '../common/MathInput';
 import { lazy, Suspense } from 'preact/compat';
 import { FONT_FILES, useFontFileImport } from '../common/useFontFileImport';
+import { liveTextEditingEnabled, setLiveTextEditingEnabled } from '../../engine/liveTextEditingSupport';
 const VariableFontPanel = lazy(() => import('./VariableFontPanel'));
 
 export default function TextInspector({
@@ -25,6 +27,7 @@ export default function TextInspector({
   const { importFile: importFont, choice, error: fontError } = useFontFileImport(family => stateManager.applyImportedFont(element.id, family));
   const fontFileRef = useRef<HTMLInputElement>(null);
   const [, setFontVer] = useState(0);
+  const [editInPlace, setEditInPlace] = useState(liveTextEditingEnabled);
 
   useEffect(() => {
     return fontManager.subscribe(() => setFontVer((v) => v + 1));
@@ -51,7 +54,7 @@ export default function TextInspector({
           onChange={(e) => {
             const val = (e.target as HTMLSelectElement).value;
             if (val) {
-              stateManager.applyParagraphStyle(element.id, val);
+              applyParagraphStyleToSelection(element.id, val);
             } else {
               stateManager.updateElement(element.id, { paragraphStyleId: undefined });
             }
@@ -64,6 +67,25 @@ export default function TextInspector({
             </option>
           ))}
         </select>
+      </label>
+
+      <label
+        style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', marginBottom: '8px' }}
+        title="Double-click a text frame to type directly on the page, with every paragraph in its own style. Turn off to use the plain text box editor."
+      >
+        <input
+          type="checkbox"
+          checked={editInPlace}
+          onChange={(e) => {
+            const enabled = (e.target as HTMLInputElement).checked;
+            const canvas = window.recto?.spreadCanvas;
+            // Through the canvas when it exists, so an open editor is committed before the mode changes.
+            if (canvas) canvas.liveTextEditing = enabled;
+            else setLiveTextEditingEnabled(enabled);
+            setEditInPlace(enabled);
+          }}
+        />
+        Edit text in place with styles
       </label>
 
       {/* Extended Font Picker & Custom Dropzone */}

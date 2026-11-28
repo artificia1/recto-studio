@@ -1,5 +1,6 @@
 import { useState, useRef } from 'preact/hooks';
 import { stateManager } from '../../state';
+import { applyParagraphStyleToSelection } from '../../utils/paragraphStyleApply';
 import { fontManager } from '../../fontManager';
 import { ProjectState, ParagraphStyle, GrepStyleRule } from '../../types';
 import StyleExchangePanel from './StyleExchangePanel';
@@ -515,7 +516,7 @@ export function StylesTab({ state }: StylesTabProps) {
                     disabled={!isTextSelected}
                     onClick={() => {
                       if (selectedEl) {
-                        stateManager.applyParagraphStyle(selectedEl.id, style.id);
+                        applyParagraphStyleToSelection(selectedEl.id, style.id);
                       }
                     }}
                     title={isTextSelected ? 'Apply to selected text frame' : 'Select a text frame to apply'}

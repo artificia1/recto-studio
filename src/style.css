@@ -1669,6 +1669,27 @@ kbd {
   box-shadow: 0 0 20px rgba(13, 153, 255, 0.65) !important;
 }
 
+/* In-place editing: the textarea only receives input; the canvas draws the text, selection and caret. */
+.canvas-inline-editor--live {
+  opacity: 0;
+  pointer-events: none;
+  resize: none;
+  overflow: hidden;
+  caret-color: transparent;
+}
+
+.canvas-live-caret {
+  position: absolute;
+  width: 1.5px;
+  pointer-events: none;
+  z-index: 1000;
+  animation: canvas-live-caret-blink 1.06s steps(1) infinite;
+}
+
+@keyframes canvas-live-caret-blink {
+  50% { opacity: 0; }
+}
+
 .canvas-inline-cell-editor {
   position: absolute;
   box-sizing: border-box;
